@@ -32,7 +32,7 @@ Clients store the hub's address at pairing time. No hostname appears in the code
 query the store directly instead of going through use cases.
 
 ## Contexts (modules in atlas-core)
-- **Catalog**: skills, instruction files, memory.
+- **Catalog**: skills, instruction files, memory, hooks.
 - **Release**: numbered, signed snapshots of what goes out to machines.
 - **Distribution**: targets (machine × login × harness), plans and drift.
 - **Gateway**: MCP servers, tool allowlists, scoped tokens.
@@ -56,7 +56,8 @@ Memory skips steps 3–5 by default: agents write it straight to git (decision 0
   releases, so a compromised hub cannot push changes to every machine.
 - GitHub is untrusted storage.
 - atlasd runs as a user service, never as root, and never executes content it receives.
-  A local stdio MCP server starts only if it arrived in a signed release (decision 0009).
+  A local stdio MCP server starts, and a hook is installed, only if it arrived in a
+  signed release (decisions 0009, 0010).
 - MCP keys never leave the hub. The gateway adds them to upstream calls. The UI can
   replace a key but never show it.
 
@@ -95,7 +96,7 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 |---|---|
 | Hub compromise | Hub cannot sign releases; keys stay in the keystore and are never shown. |
 | Another tailnet device | Tailscale WhoIs plus passkey sign-in; per-login client tokens. |
-| Poisoned content (skills, memory) | Scanner flags; `Untrusted<Markdown>`; sanitised rendering. |
+| Poisoned content (skills, memory, hooks) | Scanner flags; `Untrusted<Markdown>`; sanitised rendering. |
 | Secret leaks | `Secret<T>`; secrets never in git or logs. |
 | Bad client writes | Pure plans, dry runs, managed entries only, atomic writes. |
 | Replay of an old release | Release numbers must increase. |
@@ -109,6 +110,7 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 | Project skills | `<repo>/.agents/skills/<name>/SKILL.md` |
 | Instructions | `<knowledge>/AGENTS.md`; each project's `AGENTS.md` / `CLAUDE.md` |
 | Memory | `<knowledge>/memory/**.md` (frontmatter: name, description, metadata.type/host) |
+| Hooks | `<knowledge>/hooks/<name>/` and `<repo>/.agents/hooks/<name>/`: a manifest (event, matcher, harnesses) plus its script |
 | MCP servers | `mcp.toml` (phase 4), secrets in the hub keystore |
 | Projects, machines | `atlas.toml` in the hub's data repo |
 

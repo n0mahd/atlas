@@ -43,3 +43,9 @@ setting lets a user require a release for memory too.
 A machine starts a local (stdio) MCP server only if it arrived in a release the user
 signed. Hub-only was ruled out because servers that need local files, a browser or git
 couldn't work.
+
+## 0010 · 2026-11-27 · Hooks are in scope
+Atlas manages harness hooks alongside skills, instructions, memory and MCPs: one hook
+definition, rendered into each harness's own hook config by its adapter, global or per
+project. Hooks run commands on the machine, so like local MCP servers they reach a
+machine only through a signed release, and the scanner flags every hook change.

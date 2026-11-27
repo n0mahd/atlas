@@ -1,13 +1,14 @@
 # Strategy
 
 ## Purpose
-One place to manage agent skills, instruction files, memory and MCP servers, and carry
+One place to manage agent skills, instruction files, memory, hooks and MCP servers, and carry
 them to every machine, harness and login, so the user maintains each thing once.
 
 ## Priorities (in order)
 1. Nothing is lost: every change is a git commit and can be undone.
 2. Harnesses keep working when the hub is down (local copies, not live reads).
-3. Easy to review and edit: one UI for skills, instructions, memory and MCPs.
+3. Easy to review and edit: one UI for skills, instructions, memory, hooks
+   and MCPs.
 4. One project owns everything. No second tool alongside it (no Toolport).
 
 ## Invariants
