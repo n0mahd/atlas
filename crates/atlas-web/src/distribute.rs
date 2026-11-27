@@ -150,11 +150,15 @@ pub(crate) async fn waiting(s: &AppState) -> Option<Waiting> {
             .iter()
             .filter_map(|(id, root)| {
                 let pin = latest.source(id)?;
-                atlas_git::Repo::open(root)
-                    .ok()?
-                    .commits_since(pin.commit.as_str())
-                    .ok()
-                    .flatten()
+                let repo = atlas_git::Repo::open(root).ok()?;
+                let since = repo.commits_since(pin.commit.as_str()).ok().flatten()?;
+                // Count only what Send can deliver: Send pushes Knowledge, but public
+                // skills reach machines only once the owner has pushed them.
+                let held_back = match id {
+                    SourceId::PublicSkills => repo.unpushed().ok().flatten().unwrap_or(0),
+                    _ => 0,
+                };
+                Some(since.saturating_sub(held_back))
             })
             .sum();
         Waiting::Changes(count)
@@ -957,9 +961,10 @@ mod tests {
         assert!(!settings.to_lowercase().contains("release"), "{settings}");
         commit(&hub.knowledge, "another.md");
         let (_, home) = call(&hub.app, hub.get("/")).await;
-        // The public skill commit (not pushed) and the new Knowledge commit.
+        // Only the new Knowledge commit: the public skill commit isn't pushed, so Send
+        // couldn't deliver it and it isn't counted.
         assert!(
-            home.contains("2 changes aren&#39;t on your machines yet"),
+            home.contains("1 change isn&#39;t on your machines yet"),
             "{home}"
         );
         assert!(home.contains(r#"data-action="send""#));

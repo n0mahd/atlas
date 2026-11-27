@@ -219,7 +219,7 @@ release number are saved only after everything applied. With the hub unreachable
 changes, so harnesses keep working from the local copies. On a machine running atlasd,
 `~/Knowledge/bin/sync` must stop calling `link-agents`, or both would manage the same links.
 
-## 0022 · 2026-11-27 · Save sends; updates instead of releases in the UI
+## 0024 · 2026-11-27 · Save sends; updates instead of releases in the UI
 Non-technical owners never meet the word "release": the UI says "update", and there is no
 Releases page (`/releases` redirects to Settings → Updates). With "Send changes to my
 machines when I save" on (the default), Save on an edit page asks for the passkey once and
