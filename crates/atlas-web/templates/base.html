@@ -26,7 +26,7 @@
     </div>
     <ul class="nav">
       {% for n in page.nav %}
-      <li><a href="{{ n.href }}" title="{{ n.label }}"{% if n.active %} class="active" aria-current="page"{% endif %}{% if n.later %} data-later{% endif %}><span class="num">{{ n.num }}</span><span class="label">{{ n.label }}</span></a></li>
+      <li><a href="{{ n.href }}" title="{{ n.label }}"{% if n.active %} class="active" aria-current="page"{% endif %}{% if n.later %} data-later{% endif %}><span class="num">{{ n.num }}</span>{{ n.icon|safe }}<span class="label">{{ n.label }}</span></a></li>
       {% endfor %}
     </ul>
     <div class="rail-foot" title="The hub this page reads from">
@@ -47,11 +47,11 @@
           <select id="scope-pick" name="scope" data-autosubmit>
             {% for c in page.scopes %}<option value="{{ c.value }}"{% if c.checked %} selected{% endif %}>{{ c.label }}</option>{% endfor %}
           </select>
-          <span>on</span>
+          <span class="nowrap"><span>on</span>
           <label class="sr" for="machine-pick">Machine</label>
           <select id="machine-pick" name="machine" data-autosubmit>
             {% for m in page.machines %}<option value="{{ m.value }}"{% if m.checked %} selected{% endif %}{% if m.disabled %} disabled{% endif %}>{{ m.label }}</option>{% endfor %}
-          </select>
+          </select></span>
           <noscript><button type="submit">Go</button></noscript>
         </form>
         {% endif %}

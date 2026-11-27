@@ -332,7 +332,7 @@ async fn memory(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageRe
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
     let mut page = s.page("/memory", "Memory", &snap, &scope, true);
-    page.totals = format!("{} pages", v.total);
+    page.totals = format!("{} notes", v.total);
     Ok(Html(MemoryPage { page, v }.render()?))
 }
 

@@ -25,13 +25,14 @@
               <span class="row-name">{{ r.name }}</span>
               <span class="row-desc">{{ r.description }}</span>
             </span>
+            {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
             {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
             <span class="marks{% if r.all %} all{% endif %}">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
             <span class="chev" aria-hidden="true"></span>
           </summary>
           <div class="drawer">
             <ul class="chips">
-              {% for a in r.agents %}<li class="chip {{ a.class }}">{{ a.icon|safe }}<span class="chip-name">{{ a.name }}</span><span class="chip-state">{{ a.state }}</span></li>{% endfor %}
+              {% for a in r.agents %}<li class="chip {{ a.class }}">{{ a.icon|safe }}<span class="chip-name">{{ a.name }}</span>{% if a.class != "ok" %}<span class="chip-state">{{ a.state }}</span>{% endif %}</li>{% endfor %}
             </ul>
             <div class="drawer-foot">
               {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files > 0 %} · {{ r.files }} more files{% endif %}</span>{% endif %}

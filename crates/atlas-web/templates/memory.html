@@ -5,7 +5,7 @@
       hx-target="#results" hx-select="#results" hx-swap="outerHTML" hx-push-url="true">
   <input type="hidden" name="scope" value="{{ page.scope }}">
   <label class="sr" for="memory-search">Filter memory</label>
-  <input id="memory-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Filter facts…" autocomplete="off">
+  <input id="memory-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Filter notes…" autocomplete="off">
   {% if v.project.is_none() %}
   <label class="sr" for="memory-host">Host</label>
   <select id="memory-host" class="select" name="host">
@@ -25,7 +25,7 @@
     <div class="section-head"><span class="mark" aria-hidden="true">{{ k.icon|safe }}</span><h2>{{ k.label }}</h2><span class="count">{{ v.rows.len() }}</span></div>
     {% endif %}
     {% if v.rows.is_empty() %}
-    <p class="empty">{% if v.total == 0 %}No memory for this {% if v.project.is_some() %}project{% else %}scope{% endif %} yet.{% else %}No page matches.{% endif %}</p>
+    <p class="empty">{% if v.total == 0 %}No memory for this {% if v.project.is_some() %}project{% else %}scope{% endif %} yet.{% else %}No note matches.{% endif %}</p>
     {% else %}
     <ul class="rows">
       {% for r in v.rows %}

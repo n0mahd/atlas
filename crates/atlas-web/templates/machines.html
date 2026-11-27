@@ -16,7 +16,7 @@
           <summary>
             <span class="mark lead" aria-hidden="true">{{ h.icon|safe }}</span>
             <span class="row-name agent-name">{{ h.name }}</span>
-            <span class="cell {{ h.skills_class }}">{{ h.skills }}</span>
+            <span class="cell">{{ h.skills }}{% if !h.skills_warn.is_empty() %} · <span class="warn">{{ h.skills_warn }}</span>{% endif %}</span>
             <span class="cell {{ h.instructions_class }}">{{ h.instructions }}</span>
             <span class="cell muted">{{ h.hooks }}</span>
             <span class="chev" aria-hidden="true"></span>

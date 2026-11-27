@@ -157,5 +157,5 @@ async fn wiki_links_and_search_work() {
     let (_, _, page) = get(&app, "/memory/fact", Some(OWNER)).await;
     assert!(page.contains(r#"<a href="/memory/fact""#));
     let (_, _, none) = get(&app, "/memory?q=zzz", Some(OWNER)).await;
-    assert!(none.contains("No page matches."));
+    assert!(none.contains("No note matches."));
 }

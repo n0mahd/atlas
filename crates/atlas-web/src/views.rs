@@ -52,6 +52,7 @@ fn join_names(kinds: &[HarnessKind]) -> String {
 #[derive(Debug, Clone)]
 pub struct NavItem {
     pub num: &'static str,
+    pub icon: &'static str,
     pub label: &'static str,
     pub href: String,
     pub active: bool,
@@ -130,6 +131,7 @@ impl Page {
             .into_iter()
             .map(|(num, label, href, scoped_page, later)| NavItem {
                 num,
+                icon: icons::section(label),
                 label,
                 href: carry(href, scoped_page),
                 active: href == section,
@@ -321,7 +323,7 @@ pub fn overview(snap: &Snapshot) -> Overview {
                 num: "III",
                 label: "Memory",
                 count: store_memory,
-                detail: "pages in the store".to_owned(),
+                detail: "notes in the store".to_owned(),
                 href: "/memory",
             },
             Tile {
@@ -358,6 +360,8 @@ pub struct SkillRow {
     pub agents: Vec<AgentState>,
     pub path: String,
     pub files: usize,
+    /// A project skill with the same name as a global one.
+    pub also_global: bool,
 }
 
 #[derive(Debug)]
@@ -425,6 +429,7 @@ fn global_row(snap: &Snapshot, skill: &Skill, present: &[HarnessKind]) -> SkillR
         agents: agent_states(&have, present),
         path: skill.path.clone(),
         files: skill.files.len(),
+        also_global: false,
     }
 }
 
@@ -544,6 +549,11 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
                 agents: agent_states(&have, &present),
                 path: s.path.clone(),
                 files: s.files.len(),
+                also_global: snap
+                    .catalog
+                    .skills
+                    .iter()
+                    .any(|g| g.home.scope() == Scope::Global && g.name == s.name),
             }
         })
         .collect();
@@ -554,9 +564,12 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
         title: "This project".to_owned(),
         rows,
         notice: (n > 0).then(|| {
-            format!(
-                "Claude can't use {n} of this project's skills: they sit only in .agents/skills."
-            )
+            if n == 1 {
+                "Claude can't use 1 of this project's skills: it sits only in .agents/skills."
+                    .to_owned()
+            } else {
+                format!("Claude can't use {n} of this project's skills: they sit only in .agents/skills.")
+            }
         }),
     }
 }
@@ -608,6 +621,7 @@ pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
                     all,
                     path: String::new(),
                     files: 0,
+                    also_global: false,
                 }
             })
             .collect();
@@ -1139,8 +1153,10 @@ pub fn hooks(snap: &Snapshot) -> Hooks {
 pub struct HarnessLine {
     pub icon: &'static str,
     pub name: &'static str,
+    /// Skills from Atlas, in ink.
     pub skills: String,
-    pub skills_class: &'static str,
+    /// Outside or broken skills, in oxblood; empty when there are none.
+    pub skills_warn: String,
     pub instructions: String,
     pub instructions_class: &'static str,
     pub hooks: String,
@@ -1182,14 +1198,14 @@ pub fn machines(snap: &Snapshot, hub: &str, others: &[String]) -> Vec<Machine> {
             .iter()
             .filter(|e| matches!(e, InstalledSkill::Broken { .. }))
             .count();
-        let mut parts = vec![format!("{} skills from Atlas", from.len())];
+        let mut parts = Vec::new();
         if !outside.is_empty() {
             parts.push(format!("{} outside", outside.len()));
         }
         if broken > 0 {
             parts.push(format!("{broken} broken"));
         }
-        let skills = parts.join(", ");
+        let skills_warn = parts.join(", ");
         let (instructions, instructions_class) = match h.instructions.first().map(|i| &i.link) {
             Some(InstructionLink::Linked) => ("Global AGENTS.md linked".to_owned(), "ok"),
             Some(InstructionLink::Imports) => ("Global AGENTS.md imported".to_owned(), "ok"),
@@ -1199,12 +1215,8 @@ pub fn machines(snap: &Snapshot, hub: &str, others: &[String]) -> Vec<Machine> {
         lines.push(HarnessLine {
             icon: icons::icon(k),
             name: short(k),
-            skills,
-            skills_class: if outside.is_empty() && broken == 0 {
-                "ok"
-            } else {
-                "warn"
-            },
+            skills: format!("{} skills from Atlas", from.len()),
+            skills_warn,
             instructions,
             instructions_class,
             hooks: match h.hooks.len() {
