@@ -1,8 +1,16 @@
 # Strategy
 
 ## Purpose
-One place to manage agent skills, instruction files, memory, hooks and MCP servers, and carry
-them to every machine, harness and login, so the user maintains each thing once.
+One place for your complete agent setup: skills, instruction files, memory, hooks and MCP
+servers, kept once in your own hub and carried to every machine, harness and login. Planned
+next in scope: subagents and slash commands, once Atlas writes harness configs (phase 3).
+Permissions and harness defaults (allowed tools, model, sandbox) need their own decision
+first, because they are security-sensitive.
+
+## Position
+Tools like Toolport cover MCP servers, skills and rules for many harnesses through a local
+gateway and a paid sync service. Atlas covers fewer harnesses but the whole setup, memory and
+hooks included, with a self-hosted hub as the source of truth instead of a hosted service.
 
 ## Priorities (in order)
 1. Nothing is lost: every change is a git commit and can be undone.
