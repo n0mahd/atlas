@@ -298,6 +298,45 @@ impl Repo {
         Ok(trimmed(&out.stdout).parse().ok())
     }
 
+    /// The commit the branch's upstream points at and its tree: what a machine fetching
+    /// the remote would get. None when the branch tracks nothing.
+    ///
+    /// # Errors
+    /// If git fails for another reason.
+    pub fn upstream_head(&self) -> Result<Option<(String, String)>, GitError> {
+        let out = self.run(
+            &["rev-parse", "@{upstream}", "@{upstream}^{tree}"],
+            LOCAL_TIMEOUT,
+        )?;
+        if !out.status.success() {
+            return Ok(None);
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut lines = text.lines().map(str::trim);
+        Ok(match (lines.next(), lines.next()) {
+            (Some(c), Some(t)) if !c.is_empty() && !t.is_empty() => {
+                Some((c.to_owned(), t.to_owned()))
+            }
+            _ => None,
+        })
+    }
+
+    /// How many commits HEAD has that `base` doesn't. None if `base` isn't known here.
+    ///
+    /// # Errors
+    /// Not a full commit id.
+    pub fn commits_since(&self, base: &str) -> Result<Option<u32>, GitError> {
+        check_oid(base)?;
+        let out = self.run(
+            &["rev-list", "--count", &format!("{base}..HEAD")],
+            LOCAL_TIMEOUT,
+        )?;
+        if !out.status.success() {
+            return Ok(None);
+        }
+        Ok(trimmed(&out.stdout).parse().ok())
+    }
+
     /// The commit HEAD points at and its tree, as full object ids.
     ///
     /// # Errors

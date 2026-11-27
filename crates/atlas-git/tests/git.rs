@@ -341,3 +341,40 @@ fn a_client_copy_follows_a_pinned_commit() {
     assert!(repo.checkout_detached("--help").is_err());
     assert!(atlas_git::Repo::clone_or_open("--upload-pack=x", &tmp.path().join("bad")).is_err());
 }
+
+#[test]
+fn upstream_and_waiting_commits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = tmp.path().join("remote.git");
+    let dir = tmp.path().join("work");
+    let git = |at: &std::path::Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(at)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "-q", "--bare", "-b", "main"]);
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["config", "user.name", "T"]);
+    git(&dir, &["config", "user.email", "t@example.com"]);
+    git(&dir, &["commit", "-q", "--allow-empty", "-m", "one"]);
+    let repo = atlas_git::Repo::open(&dir).unwrap();
+    assert_eq!(repo.upstream_head().unwrap(), None);
+    git(&dir, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&dir, &["push", "-q", "-u", "origin", "main"]);
+    let one = git(&dir, &["rev-parse", "HEAD"]);
+    git(&dir, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let (up, _) = repo.upstream_head().unwrap().unwrap();
+    assert_eq!(up, one, "the upstream is what machines can fetch");
+    assert_eq!(repo.commits_since(&one).unwrap(), Some(1));
+    assert_eq!(repo.commits_since(&"0".repeat(40)).unwrap(), None);
+}
