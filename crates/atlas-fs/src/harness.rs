@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use atlas_core::catalog::SkillHome;
 use atlas_core::distribution::{
-    FoundHook, HarnessView, InstalledSkill, InstructionLink, InstructionView, SkillDir,
+    FoundHook, HarnessView, InstalledSkill, InstructionLink, InstructionView, ProjectHarness,
+    ProjectView, SkillDir,
 };
 use atlas_core::kernel::Slug;
 use serde_json::Value;
@@ -207,4 +208,51 @@ fn read_hooks(config: &Path) -> Vec<FoundHook> {
         }
     }
     found
+}
+
+/// For each project, what each harness loads from inside the repo: skill names from its
+/// project skill folders and the instruction file it reads.
+#[must_use]
+pub fn scan_projects(sources: &Sources) -> Vec<ProjectView> {
+    sources
+        .projects
+        .iter()
+        .map(|project| ProjectView {
+            project: project.name.clone(),
+            harnesses: atlas_harness::layouts()
+                .iter()
+                .filter(|l| !l.project_skill_dirs.is_empty())
+                .map(|layout| {
+                    let mut skills: Vec<String> = layout
+                        .project_skill_dirs
+                        .iter()
+                        .flat_map(|d| skill_names(&project.root.join(d)))
+                        .collect();
+                    skills.sort();
+                    skills.dedup();
+                    ProjectHarness {
+                        kind: layout.kind,
+                        skills,
+                        instructions: layout
+                            .project_instructions
+                            .iter()
+                            .find(|f| project.root.join(f).is_file())
+                            .map(|f| (*f).to_owned()),
+                    }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Names of skill folders (or links to them) in a folder; nothing is read inside them.
+fn skill_names(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.'))
+        .filter(|n| dir.join(n).join("SKILL.md").exists())
+        .collect()
 }

@@ -25,6 +25,9 @@ struct Config {
     public_skills: Option<String>,
     /// Folder whose git repos with agent files count as projects.
     projects_dir: Option<String>,
+    /// The user's other machines, shown as not paired until they pair (phase 3).
+    #[serde(default)]
+    machines: Vec<String>,
 }
 
 fn expand(home: &Path, p: &str) -> PathBuf {
@@ -80,7 +83,7 @@ async fn main() {
     };
     let hub_name = config.hub_name.unwrap_or_else(hostname);
     let app = atlas_web::router(
-        AppState::new(sources, &hub_name),
+        AppState::new(sources, &hub_name, config.machines),
         Access::new(config.allowed_logins),
     );
 

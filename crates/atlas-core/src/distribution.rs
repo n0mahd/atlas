@@ -84,3 +84,19 @@ impl HarnessView {
         self.skill_names().any(|n| n == name)
     }
 }
+
+/// What one harness reads inside one project repo on this machine.
+#[derive(Clone, Debug)]
+pub struct ProjectHarness {
+    pub kind: HarnessKind,
+    /// Skill names it can load from the repo's skill folders.
+    pub skills: Vec<String>,
+    /// The instruction file it reads in the repo root, if any.
+    pub instructions: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectView {
+    pub project: Slug,
+    pub harnesses: Vec<ProjectHarness>,
+}

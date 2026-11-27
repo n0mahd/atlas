@@ -5,7 +5,7 @@ use atlas_core::catalog::{
     Catalog, HookDef, HookManifest, InstructionFile, MemoryFrontmatter, MemoryPage, Problem, Skill,
     SkillFrontmatter, SkillHome, split_frontmatter,
 };
-use atlas_core::kernel::{Scope, Slug};
+use atlas_core::kernel::{HarnessKind, Scope, Slug};
 use atlas_core::untrusted::{Markdown, Untrusted};
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
@@ -43,7 +43,13 @@ pub fn load_catalog(sources: &Sources) -> Catalog {
             "skills",
             &SkillHome::Private,
         );
-        r.load_memory(&knowledge, &sources.knowledge);
+        r.load_memory(
+            &knowledge,
+            &sources.knowledge,
+            "memory",
+            &Scope::Global,
+            None,
+        );
         r.load_hooks(&knowledge, &sources.knowledge, "hooks", &Scope::Global);
     }
     if let Some(public) = &sources.public_skills
@@ -52,6 +58,18 @@ pub fn load_catalog(sources: &Sources) -> Catalog {
         r.load_skills(&dir, public, ".", &SkillHome::Public);
     }
     for project in &sources.projects {
+        // Claude Code keeps its own notes per repo, outside the repo.
+        let claude_memory = atlas_harness::claude_project_memory(&sources.home, &project.root);
+        if let Ok(dir) = Dir::open_ambient_dir(&claude_memory, ambient_authority()) {
+            let scope = Scope::Project(project.name.clone());
+            r.load_memory(
+                &dir,
+                &claude_memory,
+                ".",
+                &scope,
+                Some(HarnessKind::ClaudeCode),
+            );
+        }
         let Some(dir) = r.open_root(&project.root) else {
             continue;
         };
@@ -278,11 +296,22 @@ impl Reader<'_> {
         }
     }
 
-    fn load_memory(&mut self, knowledge: &Dir, root: &Path) {
-        let Some(memory) = self.open_sub(knowledge, root, "memory") else {
+    fn load_memory(
+        &mut self,
+        root_dir: &Dir,
+        root: &Path,
+        rel: &str,
+        scope: &Scope,
+        kept_by: Option<HarnessKind>,
+    ) {
+        let Some(memory) = self.open_sub(root_dir, root, rel) else {
             return;
         };
-        let base = root.join("memory");
+        let base = if rel == "." {
+            root.to_path_buf()
+        } else {
+            root.join(rel)
+        };
         let mut files = Vec::new();
         self.walk(&memory, &base, "", 0, MAX_MEMORY_PAGES, &mut files);
         if files.len() >= MAX_MEMORY_PAGES {
@@ -295,11 +324,17 @@ impl Reader<'_> {
             let Some(stem) = rel.strip_suffix(".md") else {
                 continue;
             };
-            if rel == "index.md" || rel.ends_with("/index.md") {
+            // Index pages are maps of the other pages, not facts.
+            let file = rel.rsplit('/').next().unwrap_or(&rel);
+            if file == "index.md" || file == "MEMORY.md" {
                 continue;
             }
             let shown = base.join(&rel);
-            let Some(text) = self.read_text(knowledge, &shown, &format!("memory/{rel}")) else {
+            let Some(text) = self.read_text(
+                root_dir,
+                &shown,
+                &join(rel_dir(rel_base(&base, root)), &rel),
+            ) else {
                 continue;
             };
             let (fm, body): (MemoryFrontmatter, String) = self.parse_front(&shown, &text);
@@ -310,9 +345,10 @@ impl Reader<'_> {
                 .clone()
                 .filter(|n| !n.trim().is_empty())
                 .unwrap_or_else(|| stem.rsplit('/').next().unwrap_or(stem).to_owned());
-            self.catalog
-                .memory
-                .push(MemoryPage::new(name, format!("memory/{rel}"), fm, &body));
+            let mut page = MemoryPage::new(name, self.sources.display(&shown), fm, &body);
+            page.scope = scope.clone();
+            page.kept_by = kept_by;
+            self.catalog.memory.push(page);
         }
     }
 
@@ -522,5 +558,17 @@ fn describe(e: &io::Error) -> String {
         "it points outside the repo or isn't allowed".to_owned()
     } else {
         text
+    }
+}
+
+/// The memory folder's path relative to the root it was opened from, or `.`.
+fn rel_base<'a>(base: &'a Path, root: &Path) -> &'a Path {
+    base.strip_prefix(root).unwrap_or(base)
+}
+
+fn rel_dir(p: &Path) -> &str {
+    match p.to_str() {
+        Some("") | None => ".",
+        Some(s) => s,
     }
 }

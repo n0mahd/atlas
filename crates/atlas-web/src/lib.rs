@@ -4,8 +4,8 @@
 //! Access: the hub sits behind `tailscale serve`, which sets `Tailscale-User-Login`;
 //! only logins in [`Access`] get in.
 
+mod icons;
 mod markdown;
-mod roman;
 pub mod views;
 
 use std::sync::Arc;
@@ -19,6 +19,8 @@ use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
+
+use atlas_core::kernel::Scope;
 
 use crate::views::{Page, Snapshot};
 
@@ -46,14 +48,17 @@ impl Access {
 pub struct AppState {
     sources: Arc<Sources>,
     hub: Arc<str>,
+    /// Other machines, shown as not paired until phase 3.
+    others: Arc<[String]>,
 }
 
 impl AppState {
     #[must_use]
-    pub fn new(sources: Sources, hub: &str) -> Self {
+    pub fn new(sources: Sources, hub: &str, others: Vec<String>) -> Self {
         Self {
             sources: Arc::new(sources),
             hub: Arc::from(hub),
+            others: others.into(),
         }
     }
 
@@ -62,9 +67,21 @@ impl AppState {
         tokio::task::spawn_blocking(move || Snapshot {
             catalog: atlas_fs::load_catalog(&sources),
             harnesses: atlas_fs::scan_harnesses(&sources),
+            projects: atlas_fs::scan_projects(&sources),
         })
         .await
         .map_err(|_| AppError::Internal)
+    }
+
+    fn page(
+        &self,
+        section: &'static str,
+        title: impl Into<String>,
+        snap: &Snapshot,
+        scope: &Scope,
+        scoped: bool,
+    ) -> Page {
+        Page::new(section, title, &self.hub, &self.others, snap, scope, scoped)
     }
 }
 
@@ -194,7 +211,7 @@ struct SkillPage {
 #[template(path = "instructions.html")]
 struct InstructionsPage {
     page: Page,
-    rows: Vec<views::InstructionRow>,
+    sections: Vec<views::InstructionSection>,
 }
 
 #[derive(Template)]
@@ -235,14 +252,27 @@ struct McpPage {
 #[template(path = "machines.html")]
 struct MachinesPage {
     page: Page,
-    cards: Vec<views::HarnessCard>,
+    machines: Vec<views::Machine>,
 }
 
 // ---------------------------------------------------------------- handlers
 
+#[derive(Debug, Default, Deserialize)]
+struct ListQuery {
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    host: String,
+}
+
 async fn overview(State(s): State<AppState>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/", "Frontispiece", &s.hub, &snap);
+    let mut page = s.page("/", "Home", &snap, &Scope::Global, false);
+    page.totals = format!("Hub · {}", page.hub);
     Ok(Html(
         OverviewPage {
             page,
@@ -252,28 +282,13 @@ async fn overview(State(s): State<AppState>) -> PageResult {
     ))
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ListQuery {
-    #[serde(default)]
-    q: String,
-    #[serde(default)]
-    f: String,
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    host: String,
-}
-
 async fn skills(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/skills", "Skills", &s.hub, &snap);
-    Ok(Html(
-        SkillsPage {
-            page,
-            v: views::skills(&snap, &q.q, &q.f),
-        }
-        .render()?,
-    ))
+    let scope = views::resolve_scope(&snap, &q.scope);
+    let v = views::skills(&snap, &scope, &q.q);
+    let mut page = s.page("/skills", "Skills", &snap, &scope, true);
+    page.totals = format!("{} skills", v.total);
+    Ok(Html(SkillsPage { page, v }.render()?))
 }
 
 async fn skill_detail(
@@ -282,17 +297,20 @@ async fn skill_detail(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
-    let page = Page::new("/skills", v.name.clone(), &s.hub, &snap);
+    let scope = views::resolve_scope(&snap, &home);
+    let page = s.page("/skills", v.name.clone(), &snap, &scope, false);
     Ok(Html(SkillPage { page, v }.render()?))
 }
 
-async fn instructions(State(s): State<AppState>) -> PageResult {
+async fn instructions(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/instructions", "Instructions", &s.hub, &snap);
+    let scope = views::resolve_scope(&snap, &q.scope);
+    let mut page = s.page("/instructions", "Instructions", &snap, &scope, true);
+    page.totals = format!("{} files", snap.catalog.instructions.len());
     Ok(Html(
         InstructionsPage {
             page,
-            rows: views::instructions(&snap),
+            sections: views::instructions(&snap, &scope),
         }
         .render()?,
     ))
@@ -300,61 +318,56 @@ async fn instructions(State(s): State<AppState>) -> PageResult {
 
 async fn instruction_detail(
     State(s): State<AppState>,
-    Path((scope, file)): Path<(String, String)>,
+    Path((scope_key, file)): Path<(String, String)>,
 ) -> PageResult {
     let snap = s.snapshot().await?;
-    let v = views::instruction_detail(&snap, &scope, &file).ok_or(AppError::NotFound)?;
-    let page = Page::new("/instructions", v.title.clone(), &s.hub, &snap);
+    let v = views::instruction_detail(&snap, &scope_key, &file).ok_or(AppError::NotFound)?;
+    let scope = views::resolve_scope(&snap, &scope_key);
+    let page = s.page("/instructions", v.title.clone(), &snap, &scope, false);
     Ok(Html(InstructionPage { page, v }.render()?))
 }
 
 async fn memory(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/memory", "Memory", &s.hub, &snap);
-    Ok(Html(
-        MemoryPage {
-            page,
-            v: views::memory(&snap, &q.q, &q.kind, &q.host),
-        }
-        .render()?,
-    ))
+    let scope = views::resolve_scope(&snap, &q.scope);
+    let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
+    let mut page = s.page("/memory", "Memory", &snap, &scope, true);
+    page.totals = format!("{} pages", v.total);
+    Ok(Html(MemoryPage { page, v }.render()?))
 }
 
-async fn memory_detail(State(s): State<AppState>, Path(name): Path<String>) -> PageResult {
+async fn memory_detail(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
-    let v = views::memory_detail(&snap, &name).ok_or(AppError::NotFound)?;
-    let page = Page::new("/memory", v.name.clone(), &s.hub, &snap);
+    let scope = views::resolve_scope(&snap, &q.scope);
+    let v = views::memory_detail(&snap, &scope, &name).ok_or(AppError::NotFound)?;
+    let page = s.page("/memory", v.name.clone(), &snap, &scope, false);
     Ok(Html(MemoryDetailPage { page, v }.render()?))
 }
 
 async fn hooks(State(s): State<AppState>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/hooks", "Hooks", &s.hub, &snap);
-    Ok(Html(
-        HooksPage {
-            page,
-            v: views::hooks(&snap),
-        }
-        .render()?,
-    ))
+    let v = views::hooks(&snap);
+    let mut page = s.page("/hooks", "Hooks", &snap, &Scope::Global, false);
+    page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
+    Ok(Html(HooksPage { page, v }.render()?))
 }
 
 async fn mcp(State(s): State<AppState>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/mcp", "MCP servers", &s.hub, &snap);
+    let page = s.page("/mcp", "MCP servers", &snap, &Scope::Global, false);
     Ok(Html(McpPage { page }.render()?))
 }
 
 async fn machines(State(s): State<AppState>) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = Page::new("/machines", "Machines", &s.hub, &snap);
-    Ok(Html(
-        MachinesPage {
-            page,
-            cards: views::machines(&snap),
-        }
-        .render()?,
-    ))
+    let mut page = s.page("/machines", "Machines", &snap, &Scope::Global, false);
+    page.totals = format!("{} machines · 1 paired", s.others.len() + 1);
+    let machines = views::machines(&snap, &s.hub, &s.others);
+    Ok(Html(MachinesPage { page, machines }.render()?))
 }
 
 // ---------------------------------------------------------------- static files
@@ -379,6 +392,16 @@ const STATIC: &[(&str, &str, &[u8])] = &[
         "key.svg",
         "image/svg+xml",
         include_bytes!("../static/key.svg"),
+    ),
+    (
+        "atlas.js",
+        "text/javascript; charset=utf-8",
+        include_bytes!("../static/atlas.js"),
+    ),
+    (
+        "antigravity.png",
+        "image/png",
+        include_bytes!("../static/antigravity.png"),
     ),
     (
         "emblem.svg",

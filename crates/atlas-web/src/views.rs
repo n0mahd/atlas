@@ -2,37 +2,48 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use atlas_core::catalog::{Catalog, MemoryKind, Skill, SkillHome};
-use atlas_core::distribution::{HarnessView, InstalledSkill, InstructionLink};
+use atlas_core::catalog::{Catalog, MemoryKind, MemoryPage, Skill, SkillHome};
+use atlas_core::distribution::{HarnessView, InstalledSkill, InstructionLink, ProjectView};
 use atlas_core::kernel::{HarnessKind, Scope};
 
+use crate::icons;
 use crate::markdown;
-use crate::roman::roman;
 
 /// Everything read for one request.
 #[derive(Debug)]
 pub struct Snapshot {
     pub catalog: Catalog,
     pub harnesses: Vec<HarnessView>,
+    pub projects: Vec<ProjectView>,
 }
 
-/// The harnesses that get a column on the Skills page. T3 Code runs the others.
-pub const COLUMNS: [HarnessKind; 5] = [
+/// The agents Atlas shows marks for. T3 Code runs the others, so it has none of its own.
+pub const AGENTS: [HarnessKind; 5] = [
     HarnessKind::ClaudeCode,
     HarnessKind::Codex,
     HarnessKind::OpenCode,
     HarnessKind::Pi,
-    HarnessKind::Gemini,
+    HarnessKind::Antigravity,
 ];
 
-const fn letter(kind: HarnessKind) -> &'static str {
+/// Short names, as people say them.
+const fn short(kind: HarnessKind) -> &'static str {
     match kind {
-        HarnessKind::ClaudeCode => "C",
-        HarnessKind::Codex => "X",
-        HarnessKind::OpenCode => "O",
-        HarnessKind::Pi => "P",
-        HarnessKind::Gemini => "G",
-        HarnessKind::T3 => "T",
+        HarnessKind::ClaudeCode => "Claude",
+        HarnessKind::Codex => "Codex",
+        HarnessKind::OpenCode => "OpenCode",
+        HarnessKind::Pi => "Pi",
+        HarnessKind::Antigravity => "Antigravity",
+        HarnessKind::T3 => "T3 Code",
+    }
+}
+
+fn join_names(kinds: &[HarnessKind]) -> String {
+    let names: Vec<&str> = kinds.iter().map(|&k| short(k)).collect();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -42,38 +53,85 @@ const fn letter(kind: HarnessKind) -> &'static str {
 pub struct NavItem {
     pub num: &'static str,
     pub label: &'static str,
-    pub href: &'static str,
+    pub href: String,
     pub active: bool,
     pub later: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Choice {
+    pub value: String,
+    pub label: String,
+    pub checked: bool,
+    pub disabled: bool,
 }
 
 /// What every page's frame shows.
 #[derive(Debug, Clone)]
 pub struct Page {
     pub title: String,
+    pub section: &'static str,
     pub folio: String,
+    pub totals: String,
     pub hub: String,
     pub nav: Vec<NavItem>,
     pub problems: usize,
+    /// The scope this page shows: `global` or a project name.
+    pub scope: String,
+    pub scopes: Vec<Choice>,
+    pub show_scope: bool,
+    pub machines: Vec<Choice>,
+}
+
+/// The scope a request asked for, if it names a known project; otherwise global.
+#[must_use]
+pub fn resolve_scope(snap: &Snapshot, asked: &str) -> Scope {
+    snap.projects
+        .iter()
+        .find(|p| p.project.as_str() == asked)
+        .map_or(Scope::Global, |p| Scope::Project(p.project.clone()))
+}
+
+fn scope_key(scope: &Scope) -> String {
+    scope
+        .project()
+        .map_or_else(|| "global".to_owned(), ToString::to_string)
 }
 
 impl Page {
+    /// `section` is the nav path; `scoped` pages carry the scope in links and show the picker.
     #[must_use]
-    pub fn new(section: &str, title: impl Into<String>, hub: &str, snap: &Snapshot) -> Self {
+    pub fn new(
+        section: &'static str,
+        title: impl Into<String>,
+        hub: &str,
+        others: &[String],
+        snap: &Snapshot,
+        scope: &Scope,
+        scoped: bool,
+    ) -> Self {
+        let key = scope_key(scope);
+        let carry = |href: &str, scoped_page: bool| {
+            if scoped_page && key != "global" {
+                format!("{href}?scope={key}")
+            } else {
+                href.to_owned()
+            }
+        };
         let items = [
-            ("I", "Skills", "/skills", false),
-            ("II", "Instructions", "/instructions", false),
-            ("III", "Memory", "/memory", false),
-            ("IV", "Hooks", "/hooks", false),
-            ("V", "MCP servers", "/mcp", true),
-            ("VI", "Machines", "/machines", false),
+            ("I", "Skills", "/skills", true, false),
+            ("II", "Instructions", "/instructions", true, false),
+            ("III", "Memory", "/memory", true, false),
+            ("IV", "Hooks", "/hooks", false, false),
+            ("V", "Machines", "/machines", false, false),
+            ("VI", "MCP", "/mcp", false, true),
         ];
         let nav: Vec<NavItem> = items
             .into_iter()
-            .map(|(num, label, href, later)| NavItem {
+            .map(|(num, label, href, scoped_page, later)| NavItem {
                 num,
                 label,
-                href,
+                href: carry(href, scoped_page),
                 active: href == section,
                 later,
             })
@@ -82,32 +140,44 @@ impl Page {
             || "Frontispiece".to_owned(),
             |n| format!("Folio {} · {}", n.num, n.label),
         );
+        let mut scope_choices = vec![Choice {
+            value: "global".into(),
+            label: "Global".into(),
+            checked: key == "global",
+            disabled: false,
+        }];
+        scope_choices.extend(snap.projects.iter().map(|p| Choice {
+            value: p.project.to_string(),
+            label: p.project.to_string(),
+            checked: p.project.as_str() == key,
+            disabled: false,
+        }));
+        let mut machines = vec![Choice {
+            value: hub.to_owned(),
+            label: hub.to_owned(),
+            checked: true,
+            disabled: false,
+        }];
+        machines.extend(others.iter().map(|m| Choice {
+            value: m.clone(),
+            label: format!("{m} (not paired)"),
+            checked: false,
+            disabled: true,
+        }));
         Self {
             title: title.into(),
+            section,
             folio,
+            totals: String::new(),
             hub: hub.to_owned(),
             nav,
             problems: snap.catalog.problems.len(),
+            scope: key,
+            scopes: scope_choices,
+            show_scope: scoped,
+            machines,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Choice {
-    pub value: String,
-    pub label: String,
-    pub checked: bool,
-}
-
-fn choices(options: &[(&str, &str)], current: &str) -> Vec<Choice> {
-    options
-        .iter()
-        .map(|(value, label)| Choice {
-            value: (*value).to_owned(),
-            label: (*label).to_owned(),
-            checked: *value == current,
-        })
-        .collect()
 }
 
 fn matches(q: &str, fields: &[&str]) -> bool {
@@ -115,23 +185,60 @@ fn matches(q: &str, fields: &[&str]) -> bool {
     q.is_empty() || fields.iter().any(|f| f.to_lowercase().contains(&q))
 }
 
-fn scope_label(scope: &Scope) -> String {
-    match scope {
-        Scope::Global => "Global".to_owned(),
-        Scope::Project(p) => format!("Project · {p}"),
-    }
-}
-
-fn home_label(home: &SkillHome) -> String {
-    match home {
-        SkillHome::Private => "Global · private".to_owned(),
-        SkillHome::Public => "Global · public".to_owned(),
-        SkillHome::Project(p) => format!("Project · {p}"),
-    }
-}
-
 fn memory_names(catalog: &Catalog) -> HashSet<&str> {
     catalog.memory.iter().map(|m| m.name.as_str()).collect()
+}
+
+fn harness(snap: &Snapshot, kind: HarnessKind) -> Option<&HarnessView> {
+    snap.harnesses.iter().find(|h| h.kind == kind)
+}
+
+/// Agents set up for this login on the hub.
+fn present_agents(snap: &Snapshot) -> Vec<HarnessKind> {
+    AGENTS
+        .iter()
+        .copied()
+        .filter(|&k| harness(snap, k).is_some_and(|h| h.present))
+        .collect()
+}
+
+// ---------------------------------------------------------------- agent marks
+
+#[derive(Debug, Clone)]
+pub struct AgentMark {
+    pub icon: &'static str,
+    pub label: String,
+}
+
+/// The marks for a set of agents: one sparkles mark when every agent present has it.
+fn marks(have: &[HarnessKind], present: &[HarnessKind]) -> (Vec<AgentMark>, bool) {
+    let all = !present.is_empty() && present.iter().all(|k| have.contains(k));
+    if all {
+        return (
+            vec![AgentMark {
+                icon: icons::ALL_AGENTS,
+                label: "Every agent has it".to_owned(),
+            }],
+            true,
+        );
+    }
+    let marks = have
+        .iter()
+        .map(|&k| AgentMark {
+            icon: icons::icon(k),
+            label: format!("{} has it", short(k)),
+        })
+        .collect();
+    (marks, false)
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentState {
+    pub icon: &'static str,
+    pub name: &'static str,
+    pub state: String,
+    /// `ok`, `warn` or `muted`.
+    pub class: &'static str,
 }
 
 // ---------------------------------------------------------------- overview
@@ -155,57 +262,73 @@ pub struct ProblemRow {
 pub struct Overview {
     pub tiles: Vec<Tile>,
     pub problems: Vec<ProblemRow>,
-    pub outside: usize,
-    pub harnesses_present: usize,
+    pub notices: Vec<Notice>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Notice {
+    pub text: String,
+    pub href: String,
+    pub action: &'static str,
 }
 
 #[must_use]
 pub fn overview(snap: &Snapshot) -> Overview {
     let c = &snap.catalog;
-    let projects: BTreeSet<_> = c
-        .skills
-        .iter()
-        .filter_map(|s| s.home.scope().project().cloned())
-        .collect();
     let global = c
         .skills
         .iter()
         .filter(|s| s.home.scope() == Scope::Global)
         .count();
-    let hosts: BTreeSet<_> = c.memory.iter().map(|m| m.host.as_str()).collect();
+    let store_memory = c.memory.iter().filter(|m| m.scope == Scope::Global).count();
     let found_hooks: usize = snap.harnesses.iter().map(|h| h.hooks.len()).sum();
+    let mut notices = Vec::new();
+    let outside = outside_skills(snap).len();
+    if outside > 0 {
+        notices.push(Notice {
+            text: format!("{outside} skills on this machine aren't in Atlas."),
+            href: "/skills#outside".to_owned(),
+            action: "Show",
+        });
+    }
+    for p in &snap.projects {
+        let n = claude_missing(snap, p);
+        if n > 0 {
+            notices.push(Notice {
+                text: format!("Claude can't use {n} of {}'s skills.", p.project),
+                href: format!("/skills?scope={}", p.project),
+                action: "Show",
+            });
+        }
+    }
     Overview {
         tiles: vec![
             Tile {
                 num: "I",
                 label: "Skills",
                 count: c.skills.len(),
-                detail: format!(
-                    "{global} global · {} in {} projects",
-                    c.skills.len() - global,
-                    projects.len()
-                ),
+                detail: format!("{global} global, {} in projects", c.skills.len() - global),
                 href: "/skills",
             },
             Tile {
                 num: "II",
                 label: "Instructions",
                 count: c.instructions.len(),
-                detail: "AGENTS.md and CLAUDE.md files".to_owned(),
+                detail: "files".to_owned(),
                 href: "/instructions",
             },
             Tile {
                 num: "III",
                 label: "Memory",
-                count: c.memory.len(),
-                detail: format!("pages across {} hosts", hosts.len()),
+                count: store_memory,
+                detail: "pages in the store".to_owned(),
                 href: "/memory",
             },
             Tile {
                 num: "IV",
                 label: "Hooks",
-                count: c.hooks.len(),
-                detail: format!("in Atlas · {found_hooks} found in harness configs"),
+                count: c.hooks.len() + found_hooks,
+                detail: format!("{found_hooks} outside Atlas"),
                 href: "/hooks",
             },
         ],
@@ -217,238 +340,297 @@ pub fn overview(snap: &Snapshot) -> Overview {
                 message: p.message.clone(),
             })
             .collect(),
-        outside: outside_skills(snap).len(),
-        harnesses_present: snap
-            .harnesses
-            .iter()
-            .filter(|h| h.present && h.kind != HarnessKind::T3)
-            .count(),
+        notices,
     }
 }
 
 // ---------------------------------------------------------------- skills
 
 #[derive(Debug, Clone)]
-pub struct Mark {
-    pub letter: &'static str,
-    pub label: String,
-    /// `on`, `off` or `na`.
-    pub class: &'static str,
-}
-
-#[derive(Debug, Clone)]
 pub struct SkillRow {
-    pub plate: String,
     pub name: String,
     pub description: String,
     pub href: Option<String>,
-    pub scope_label: String,
-    /// `global`, `project` or `outside`.
-    pub scope_class: &'static str,
-    pub marks: Vec<Mark>,
-    pub status: String,
-    /// `ok`, `muted` or `warn`.
-    pub status_class: &'static str,
+    pub marks: Vec<AgentMark>,
+    pub all: bool,
+    /// A short warning shown on the row, such as "Not in Pi".
+    pub flag: String,
+    pub agents: Vec<AgentState>,
+    pub path: String,
+    pub files: usize,
+}
+
+#[derive(Debug)]
+pub struct SkillSection {
+    pub id: &'static str,
+    pub num: &'static str,
+    pub title: String,
+    pub rows: Vec<SkillRow>,
+    pub notice: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct SkillsList {
-    pub rows: Vec<SkillRow>,
+    pub sections: Vec<SkillSection>,
     pub total: usize,
     pub q: String,
-    pub filters: Vec<Choice>,
-    pub columns: Vec<(&'static str, &'static str)>,
-    pub outside: usize,
 }
 
-fn view(snap: &Snapshot, kind: HarnessKind) -> Option<&HarnessView> {
-    snap.harnesses.iter().find(|h| h.kind == kind)
-}
-
-fn atlas_marks(snap: &Snapshot, skill: &Skill) -> (Vec<Mark>, String, &'static str) {
-    if let SkillHome::Project(p) = &skill.home {
-        let marks = COLUMNS
-            .iter()
-            .map(|&k| Mark {
-                letter: letter(k),
-                label: format!("{} reads it inside the {p} repo", k.display_name()),
-                class: "na",
-            })
-            .collect();
-        return (marks, "read in the repo".to_owned(), "muted");
-    }
-    let mut missing = Vec::new();
-    let mut installed = 0;
-    let marks = COLUMNS
+fn agent_states(have: &[HarnessKind], present: &[HarnessKind]) -> Vec<AgentState> {
+    AGENTS
         .iter()
         .map(|&k| {
-            let v = view(snap, k);
-            let present = v.is_some_and(|v| v.present);
-            let on = v.is_some_and(|v| v.sees(skill.name.as_str()));
-            if present && on {
-                installed += 1;
-            } else if present {
-                missing.push(k.display_name());
-            }
-            let label = match (present, on) {
-                (false, _) => format!("{} isn't set up on this hub", k.display_name()),
-                (true, true) => format!("{} has {}", k.display_name(), skill.name),
-                (true, false) => format!("{} doesn't have {}", k.display_name(), skill.name),
+            let (state, class) = if !present.contains(&k) {
+                ("not set up here".to_owned(), "muted")
+            } else if have.contains(&k) {
+                ("has it".to_owned(), "ok")
+            } else {
+                ("doesn't have it".to_owned(), "warn")
             };
-            Mark {
-                letter: letter(k),
-                label,
-                class: if on {
-                    "on"
-                } else if present {
-                    "off"
-                } else {
-                    "na"
-                },
+            AgentState {
+                icon: icons::icon(k),
+                name: short(k),
+                state,
+                class,
             }
         })
-        .collect();
-    let (status, class) = if missing.is_empty() {
-        (format!("✓ all {installed}"), "ok")
-    } else {
-        (format!("△ not in {}", missing.join(", ")), "warn")
-    };
-    (marks, status, class)
+        .collect()
 }
 
-/// Skills a harness on this hub has that don't come from the store.
-fn outside_skills(snap: &Snapshot) -> Vec<(String, Vec<HarnessKind>, bool)> {
+fn global_row(snap: &Snapshot, skill: &Skill, present: &[HarnessKind]) -> SkillRow {
+    let have: Vec<HarnessKind> = present
+        .iter()
+        .copied()
+        .filter(|&k| harness(snap, k).is_some_and(|h| h.sees(skill.name.as_str())))
+        .collect();
+    let missing: Vec<HarnessKind> = present
+        .iter()
+        .copied()
+        .filter(|k| !have.contains(k))
+        .collect();
+    let (marks, all) = marks(&have, present);
+    SkillRow {
+        name: skill.name.to_string(),
+        description: skill.description.clone(),
+        href: Some(format!("/skills/{}/{}", skill.home.key(), skill.name)),
+        marks,
+        all,
+        flag: if have.is_empty() {
+            "No agent has it".to_owned()
+        } else if missing.is_empty() {
+            String::new()
+        } else {
+            format!("Not in {}", join_names(&missing))
+        },
+        agents: agent_states(&have, present),
+        path: skill.path.clone(),
+        files: skill.files.len(),
+    }
+}
+
+fn project_view<'a>(snap: &'a Snapshot, scope: &Scope) -> Option<&'a ProjectView> {
+    let p = scope.project()?;
+    snap.projects.iter().find(|v| &v.project == p)
+}
+
+fn project_have(view: &ProjectView, name: &str, present: &[HarnessKind]) -> Vec<HarnessKind> {
+    view.harnesses
+        .iter()
+        .filter(|h| present.contains(&h.kind) && h.skills.iter().any(|s| s == name))
+        .map(|h| h.kind)
+        .collect()
+}
+
+/// How many of a project's skills Claude Code can't load (they sit only in `.agents/skills`).
+fn claude_missing(snap: &Snapshot, view: &ProjectView) -> usize {
+    let present = present_agents(snap);
+    if !present.contains(&HarnessKind::ClaudeCode) {
+        return 0;
+    }
+    snap.catalog
+        .skills
+        .iter()
+        .filter(|s| s.home == SkillHome::Project(view.project.clone()))
+        .filter(|s| {
+            !project_have(view, s.name.as_str(), &present).contains(&HarnessKind::ClaudeCode)
+        })
+        .count()
+}
+
+/// A skill an agent on this hub has that doesn't come from the store.
+#[derive(Debug)]
+struct Outside {
+    name: String,
+    kinds: Vec<HarnessKind>,
+    broken: bool,
+    /// Where it comes from, in words.
+    source: String,
+}
+
+fn outside_skills(snap: &Snapshot) -> Vec<Outside> {
     let known: HashSet<&str> = snap
         .catalog
         .skills
         .iter()
         .map(|s| s.name.as_str())
         .collect();
-    let mut found: Vec<(String, Vec<HarnessKind>, bool)> = Vec::new();
+    let mut found: Vec<Outside> = Vec::new();
     for h in &snap.harnesses {
-        for entry in h.skill_dirs.iter().flat_map(|d| &d.entries) {
-            let broken = matches!(entry, InstalledSkill::Broken { .. });
-            let foreign = matches!(entry, InstalledSkill::Outside { .. }) || broken;
-            if !foreign || known.contains(entry.name()) {
-                continue;
-            }
-            match found.iter_mut().find(|(n, ..)| n == entry.name()) {
-                Some((_, kinds, b)) => {
-                    if !kinds.contains(&h.kind) {
-                        kinds.push(h.kind);
+        for dir in &h.skill_dirs {
+            for entry in &dir.entries {
+                let (broken, source) = match entry {
+                    InstalledSkill::FromAtlas { .. } => continue,
+                    InstalledSkill::Broken { target, .. } => {
+                        (true, format!("Broken link to {target}"))
                     }
-                    *b |= broken;
+                    InstalledSkill::Outside { detail, .. } => match detail.strip_prefix("link to ")
+                    {
+                        Some(target) => (false, format!("Linked from {target}")),
+                        None => (false, format!("Its own folder in {}", dir.path)),
+                    },
+                };
+                if known.contains(entry.name()) {
+                    continue;
                 }
-                None => found.push((entry.name().to_owned(), vec![h.kind], broken)),
+                match found.iter_mut().find(|o| o.name == entry.name()) {
+                    Some(o) => {
+                        if !o.kinds.contains(&h.kind) {
+                            o.kinds.push(h.kind);
+                        }
+                        o.broken |= broken;
+                    }
+                    None => found.push(Outside {
+                        name: entry.name().to_owned(),
+                        kinds: vec![h.kind],
+                        broken,
+                        source,
+                    }),
+                }
             }
         }
     }
-    found.sort();
+    found.sort_by(|a, b| a.name.cmp(&b.name));
     found
 }
 
-#[must_use]
-pub fn skills(snap: &Snapshot, q: &str, filter: &str) -> SkillsList {
-    let mut rows: Vec<SkillRow> = snap
+/// The "This project" section: the repo's skills and which agents load them.
+fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind]) -> SkillSection {
+    let present = present.to_vec();
+    let home = SkillHome::Project(view.project.clone());
+    let rows: Vec<SkillRow> = snap
         .catalog
         .skills
         .iter()
+        .filter(|s| s.home == home)
         .map(|s| {
-            let (marks, status, status_class) = atlas_marks(snap, s);
+            let have = project_have(view, s.name.as_str(), &present);
+            let missing: Vec<HarnessKind> = present
+                .iter()
+                .copied()
+                .filter(|k| !have.contains(k))
+                .collect();
+            let (marks, all) = marks(&have, &present);
             SkillRow {
-                plate: String::new(),
                 name: s.name.to_string(),
                 description: s.description.clone(),
                 href: Some(format!("/skills/{}/{}", s.home.key(), s.name)),
-                scope_label: home_label(&s.home),
-                scope_class: if matches!(s.home, SkillHome::Project(_)) {
-                    "project"
-                } else {
-                    "global"
-                },
                 marks,
-                status,
-                status_class,
+                all,
+                flag: if missing.is_empty() {
+                    String::new()
+                } else {
+                    format!("Not in {}", join_names(&missing))
+                },
+                agents: agent_states(&have, &present),
+                path: s.path.clone(),
+                files: s.files.len(),
             }
         })
         .collect();
-    let outside = outside_skills(snap);
-    let outside_count = outside.len();
-    rows.extend(outside.into_iter().map(|(name, kinds, broken)| {
-        SkillRow {
-            plate: String::new(),
-            marks: COLUMNS
-                .iter()
-                .map(|&k| Mark {
-                    letter: letter(k),
-                    label: format!(
-                        "{} {} {name}",
-                        k.display_name(),
-                        if kinds.contains(&k) {
-                            "has"
-                        } else {
-                            "doesn't have"
-                        }
-                    ),
-                    class: if kinds.contains(&k) { "on" } else { "off" },
-                })
-                .collect(),
-            description: if broken {
-                "A link in a harness folder whose target is gone.".to_owned()
-            } else {
-                "Sits in a harness's own folder on this hub, not in the store.".to_owned()
-            },
-            name,
-            href: None,
-            scope_label: "Outside Atlas".to_owned(),
-            scope_class: "outside",
-            status: if broken {
-                "broken link".to_owned()
-            } else {
-                "this hub only".to_owned()
-            },
-            status_class: "warn",
-        }
-    }));
-    let total = rows.len();
-    rows.retain(|r| {
-        let by_filter = match filter {
-            "global" => r.scope_class == "global",
-            "project" => r.scope_class == "project",
-            "outside" => r.scope_class == "outside",
-            _ => true,
-        };
-        by_filter && matches(q, &[&r.name, &r.description, &r.scope_label])
-    });
-    for (i, row) in rows.iter_mut().enumerate() {
-        row.plate = roman(i + 1);
-    }
-    SkillsList {
+    let n = claude_missing(snap, view);
+    SkillSection {
+        id: "project",
+        num: "I",
+        title: "This project".to_owned(),
         rows,
-        total,
-        q: q.to_owned(),
-        filters: choices(
-            &[
-                ("all", "All"),
-                ("global", "Global"),
-                ("project", "Project"),
-                ("outside", "Outside Atlas"),
-            ],
-            if filter.is_empty() { "all" } else { filter },
-        ),
-        columns: COLUMNS
-            .iter()
-            .map(|&k| (letter(k), k.display_name()))
-            .collect(),
-        outside: outside_count,
+        notice: (n > 0).then(|| {
+            format!(
+                "Claude can't use {n} of this project's skills: they sit only in .agents/skills."
+            )
+        }),
     }
 }
 
-#[derive(Debug)]
-pub struct SeenBy {
-    pub harness: &'static str,
-    pub detail: String,
-    pub class: &'static str,
+#[must_use]
+pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
+    let present = present_agents(snap);
+    let mut sections = Vec::new();
+    let mut total = 0;
+
+    if let Some(view) = project_view(snap, scope) {
+        let section = project_section(snap, view, &present);
+        total += section.rows.len();
+        sections.push(section);
+    }
+
+    let global: Vec<SkillRow> = snap
+        .catalog
+        .skills
+        .iter()
+        .filter(|s| s.home.scope() == Scope::Global)
+        .map(|s| global_row(snap, s, &present))
+        .collect();
+    total += global.len();
+    sections.push(SkillSection {
+        id: "global",
+        num: if sections.is_empty() { "I" } else { "II" },
+        title: "Global".to_owned(),
+        rows: global,
+        notice: None,
+    });
+
+    if scope == &Scope::Global {
+        let outside: Vec<SkillRow> = outside_skills(snap)
+            .into_iter()
+            .map(|o| {
+                let (marks, all) = marks(&o.kinds, &present);
+                SkillRow {
+                    flag: if o.broken {
+                        "Broken link".to_owned()
+                    } else {
+                        String::new()
+                    },
+                    description: o.source,
+                    agents: agent_states(&o.kinds, &present),
+                    name: o.name,
+                    href: None,
+                    marks,
+                    all,
+                    path: String::new(),
+                    files: 0,
+                }
+            })
+            .collect();
+        total += outside.len();
+        if !outside.is_empty() {
+            sections.push(SkillSection {
+                id: "outside",
+                num: "II",
+                title: "Outside Atlas".to_owned(),
+                rows: outside,
+                notice: None,
+            });
+        }
+    }
+
+    for s in &mut sections {
+        s.rows.retain(|r| matches(q, &[&r.name, &r.description]));
+    }
+    SkillsList {
+        sections,
+        total,
+        q: q.to_owned(),
+    }
 }
 
 #[derive(Debug)]
@@ -456,10 +638,10 @@ pub struct SkillDetail {
     pub name: String,
     pub description: String,
     pub declared_name: Option<String>,
-    pub scope_label: String,
+    pub lives_in: String,
     pub path: String,
     pub files: Vec<String>,
-    pub seen_by: Vec<SeenBy>,
+    pub agents: Vec<AgentState>,
     pub body_html: String,
 }
 
@@ -470,37 +652,27 @@ pub fn skill_detail(snap: &Snapshot, home: &str, name: &str) -> Option<SkillDeta
         .skills
         .iter()
         .find(|s| s.home.key() == home && s.name.as_str() == name)?;
-    let seen_by = COLUMNS
-        .iter()
-        .map(|&k| {
-            let v = view(snap, k);
-            let (detail, class) = match (&skill.home, v) {
-                (SkillHome::Project(p), _) => (format!("reads it inside the {p} repo"), "muted"),
-                (_, Some(v)) if !v.present => ("not set up on this hub".to_owned(), "muted"),
-                (_, Some(v)) => v
-                    .skill_dirs
-                    .iter()
-                    .find(|d| d.entries.iter().any(|e| e.name() == name))
-                    .map_or(("doesn't have it".to_owned(), "warn"), |d| {
-                        (format!("linked in {}", d.path), "ok")
-                    }),
-                (_, None) => ("unknown".to_owned(), "muted"),
-            };
-            SeenBy {
-                harness: k.display_name(),
-                detail,
-                class,
-            }
-        })
-        .collect();
+    let present = present_agents(snap);
+    let agents = match &skill.home {
+        SkillHome::Project(p) => {
+            let view = snap.projects.iter().find(|v| &v.project == p);
+            let have = view.map_or_else(Vec::new, |v| project_have(v, name, &present));
+            agent_states(&have, &present)
+        }
+        _ => global_row(snap, skill, &present).agents,
+    };
     Some(SkillDetail {
         name: skill.name.to_string(),
         description: skill.description.clone(),
         declared_name: skill.declared_name.clone(),
-        scope_label: home_label(&skill.home),
+        lives_in: match &skill.home {
+            SkillHome::Private => "Global, private".to_owned(),
+            SkillHome::Public => "Global, public".to_owned(),
+            SkillHome::Project(p) => format!("The {p} repo"),
+        },
         path: skill.path.clone(),
         files: skill.files.clone(),
-        seen_by,
+        agents,
         body_html: markdown::render(&skill.body, &memory_names(&snap.catalog)),
     })
 }
@@ -509,99 +681,134 @@ pub fn skill_detail(snap: &Snapshot, home: &str, name: &str) -> Option<SkillDeta
 
 #[derive(Debug)]
 pub struct InstructionRow {
-    pub plate: String,
-    pub title: String,
-    pub scope_label: String,
-    pub scope_class: &'static str,
-    pub path: String,
+    pub name: String,
     pub href: String,
+    pub marks: Vec<AgentMark>,
+    pub flag: String,
     pub lines: usize,
-    pub readers: String,
 }
 
 #[derive(Debug)]
-pub struct Reader {
-    pub harness: &'static str,
-    pub path: String,
-    pub state: &'static str,
-    pub class: &'static str,
+pub struct InstructionSection {
+    pub num: &'static str,
+    pub title: &'static str,
+    pub rows: Vec<InstructionRow>,
+    pub empty: &'static str,
 }
 
-fn instruction_key(scope: &Scope, file: &str) -> String {
-    match scope {
-        Scope::Global => format!("/instructions/global/{file}"),
-        Scope::Project(p) => format!("/instructions/{p}/{file}"),
-    }
-}
-
-fn global_readers(snap: &Snapshot) -> Vec<Reader> {
-    snap.harnesses
+/// Agents whose global instruction file is (or imports) the store's.
+fn global_readers(snap: &Snapshot) -> (Vec<HarnessKind>, Vec<HarnessKind>) {
+    let present = present_agents(snap);
+    let reading: Vec<HarnessKind> = present
         .iter()
-        .filter(|h| h.kind != HarnessKind::T3)
-        .flat_map(|h| {
-            h.instructions.iter().map(move |i| {
-                let (state, class) = match i.link {
-                    InstructionLink::Linked => ("linked to the store", "ok"),
-                    InstructionLink::Imports => ("imports the store's file", "ok"),
-                    InstructionLink::Separate => ("its own file, not from Atlas", "warn"),
-                    InstructionLink::Missing if h.present => ("missing", "warn"),
-                    InstructionLink::Missing => ("harness not set up", "muted"),
-                };
-                Reader {
-                    harness: h.kind.display_name(),
-                    path: i.path.clone(),
-                    state,
-                    class,
-                }
+        .copied()
+        .filter(|&k| {
+            harness(snap, k).is_some_and(|h| {
+                h.instructions
+                    .iter()
+                    .any(|i| matches!(i.link, InstructionLink::Linked | InstructionLink::Imports))
             })
         })
-        .collect()
+        .collect();
+    let not: Vec<HarnessKind> = present
+        .iter()
+        .copied()
+        .filter(|k| !reading.contains(k))
+        .collect();
+    (reading, not)
 }
 
 #[must_use]
-pub fn instructions(snap: &Snapshot) -> Vec<InstructionRow> {
-    let readers = global_readers(snap);
-    let reading: Vec<&str> = readers
-        .iter()
-        .filter(|r| r.class == "ok")
-        .map(|r| r.harness)
-        .collect();
-    snap.catalog
+pub fn instructions(snap: &Snapshot, scope: &Scope) -> Vec<InstructionSection> {
+    let present = present_agents(snap);
+    let mut sections = Vec::new();
+    if let Some(view) = project_view(snap, scope) {
+        let rows = snap
+            .catalog
+            .instructions
+            .iter()
+            .filter(|f| &f.scope == scope)
+            .map(|f| {
+                let readers: Vec<HarnessKind> = view
+                    .harnesses
+                    .iter()
+                    .filter(|h| {
+                        present.contains(&h.kind) && h.instructions.as_deref() == Some(&f.file_name)
+                    })
+                    .map(|h| h.kind)
+                    .collect();
+                let skipped: Vec<HarnessKind> = view
+                    .harnesses
+                    .iter()
+                    .filter(|h| {
+                        present.contains(&h.kind)
+                            && !readers.contains(&h.kind)
+                            && h.instructions.is_some()
+                    })
+                    .map(|h| h.kind)
+                    .collect();
+                let (marks, _) = marks(&readers, &present);
+                InstructionRow {
+                    name: f.file_name.clone(),
+                    href: format!("/instructions/{}/{}", view.project, f.file_name),
+                    marks,
+                    flag: if readers.is_empty() {
+                        "No agent reads it".to_owned()
+                    } else if skipped.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "{} read{} the other file",
+                            join_names(&skipped),
+                            if skipped.len() == 1 { "s" } else { "" }
+                        )
+                    },
+                    lines: f.body.raw().as_str().lines().count(),
+                }
+            })
+            .collect();
+        sections.push(InstructionSection {
+            num: "I",
+            title: "This project",
+            rows,
+            empty: "This repo has no AGENTS.md or CLAUDE.md.",
+        });
+    }
+    let (reading, not) = global_readers(snap);
+    let rows = snap
+        .catalog
         .instructions
         .iter()
-        .enumerate()
-        .map(|(i, f)| InstructionRow {
-            plate: roman(i + 1),
-            title: match &f.scope {
-                Scope::Global => format!("Global {}", f.file_name),
-                Scope::Project(p) => format!("{p} · {}", f.file_name),
-            },
-            scope_label: scope_label(&f.scope),
-            scope_class: if f.scope == Scope::Global {
-                "global"
-            } else {
-                "project"
-            },
-            path: f.path.clone(),
-            href: instruction_key(&f.scope, &f.file_name),
-            lines: f.body.raw().as_str().lines().count(),
-            readers: match f.scope {
-                Scope::Global if reading.is_empty() => {
-                    "No harness on this hub reads it yet".to_owned()
-                }
-                Scope::Global => format!("Read by {}", reading.join(", ")),
-                Scope::Project(_) => "Read by agents working in the repo".to_owned(),
-            },
+        .filter(|f| f.scope == Scope::Global)
+        .map(|f| {
+            let (marks, _) = marks(&reading, &present);
+            InstructionRow {
+                name: f.file_name.clone(),
+                href: format!("/instructions/global/{}", f.file_name),
+                marks,
+                flag: if not.is_empty() {
+                    String::new()
+                } else {
+                    format!("Not used by {}", join_names(&not))
+                },
+                lines: f.body.raw().as_str().lines().count(),
+            }
         })
-        .collect()
+        .collect();
+    sections.push(InstructionSection {
+        num: if sections.is_empty() { "I" } else { "II" },
+        title: "Global",
+        rows,
+        empty: "The store has no AGENTS.md.",
+    });
+    sections
 }
 
 #[derive(Debug)]
 pub struct InstructionDetail {
     pub title: String,
-    pub scope_label: String,
     pub path: String,
-    pub readers: Vec<Reader>,
+    pub agents: Vec<AgentState>,
     pub body_html: String,
 }
 
@@ -614,18 +821,61 @@ pub fn instruction_detail(snap: &Snapshot, scope: &str, file: &str) -> Option<In
                 Scope::Project(p) => p.as_str() == scope,
             }
     })?;
+    let present = present_agents(snap);
+    let agents = match &f.scope {
+        Scope::Global => AGENTS
+            .iter()
+            .map(|&k| {
+                let view = harness(snap, k);
+                let (state, class) = match view.and_then(|h| h.instructions.first()) {
+                    _ if !present.contains(&k) => ("not set up here".to_owned(), "muted"),
+                    Some(i) => match i.link {
+                        InstructionLink::Linked => (format!("linked from {}", i.path), "ok"),
+                        InstructionLink::Imports => (format!("imported by {}", i.path), "ok"),
+                        InstructionLink::Separate => (format!("uses its own {}", i.path), "warn"),
+                        InstructionLink::Missing => (format!("no {}", i.path), "warn"),
+                    },
+                    None => ("not set up here".to_owned(), "muted"),
+                };
+                AgentState {
+                    icon: icons::icon(k),
+                    name: short(k),
+                    state,
+                    class,
+                }
+            })
+            .collect(),
+        Scope::Project(p) => {
+            let view = snap.projects.iter().find(|v| &v.project == p);
+            AGENTS
+                .iter()
+                .map(|&k| {
+                    let reads = view
+                        .and_then(|v| v.harnesses.iter().find(|h| h.kind == k))
+                        .and_then(|h| h.instructions.clone());
+                    let (state, class) = match reads {
+                        _ if !present.contains(&k) => ("not set up here".to_owned(), "muted"),
+                        Some(r) if r == file => ("reads it".to_owned(), "ok"),
+                        Some(r) => (format!("reads {r} instead"), "warn"),
+                        None => ("reads neither".to_owned(), "warn"),
+                    };
+                    AgentState {
+                        icon: icons::icon(k),
+                        name: short(k),
+                        state,
+                        class,
+                    }
+                })
+                .collect()
+        }
+    };
     Some(InstructionDetail {
         title: match &f.scope {
             Scope::Global => format!("Global {}", f.file_name),
             Scope::Project(p) => format!("{p} · {}", f.file_name),
         },
-        scope_label: scope_label(&f.scope),
         path: f.path.clone(),
-        readers: if f.scope == Scope::Global {
-            global_readers(snap)
-        } else {
-            Vec::new()
-        },
+        agents,
         body_html: markdown::render(&f.body, &memory_names(&snap.catalog)),
     })
 }
@@ -634,7 +884,6 @@ pub fn instruction_detail(snap: &Snapshot, scope: &str, file: &str) -> Option<In
 
 #[derive(Debug)]
 pub struct MemoryRow {
-    pub plate: String,
     pub name: String,
     pub description: String,
     pub kind: String,
@@ -650,6 +899,9 @@ pub struct MemoryList {
     pub q: String,
     pub kinds: Vec<Choice>,
     pub hosts: Vec<Choice>,
+    /// For a project: the agent whose notes these are.
+    pub kept_by: Option<AgentMark>,
+    pub project: Option<String>,
 }
 
 const fn kind_class(kind: &MemoryKind) -> &'static str {
@@ -659,24 +911,62 @@ const fn kind_class(kind: &MemoryKind) -> &'static str {
     }
 }
 
+fn memory_href(m: &MemoryPage) -> String {
+    match &m.scope {
+        Scope::Global => format!("/memory/{}", m.name),
+        Scope::Project(p) => format!("/memory/{}?scope={p}", m.name),
+    }
+}
+
 #[must_use]
-pub fn memory(snap: &Snapshot, q: &str, kind: &str, host: &str) -> MemoryList {
-    let pages = &snap.catalog.memory;
-    let mut hosts: Vec<(String, String)> = vec![("all".into(), "Every host".into())];
-    let names: BTreeSet<&str> = pages
+pub fn memory(snap: &Snapshot, scope: &Scope, q: &str, kind: &str, host: &str) -> MemoryList {
+    let pages: Vec<&MemoryPage> = snap
+        .catalog
+        .memory
+        .iter()
+        .filter(|m| &m.scope == scope)
+        .collect();
+    let kind_now = if kind.is_empty() { "all" } else { kind };
+    let host_now = if host.is_empty() { "all" } else { host };
+    let host_names: BTreeSet<&str> = pages
         .iter()
         .map(|m| m.host.as_str())
         .filter(|h| *h != "all")
         .collect();
-    hosts.push(("shared".into(), "Shared (all)".into()));
-    hosts.extend(names.into_iter().map(|h| (h.to_owned(), h.to_owned())));
-    let host_opts: Vec<(&str, &str)> = hosts
+    let mut hosts = vec![
+        Choice {
+            value: "all".into(),
+            label: "Every host".into(),
+            checked: host_now == "all",
+            disabled: false,
+        },
+        Choice {
+            value: "shared".into(),
+            label: "Shared".into(),
+            checked: host_now == "shared",
+            disabled: false,
+        },
+    ];
+    hosts.extend(host_names.into_iter().map(|h| Choice {
+        value: h.to_owned(),
+        label: h.to_owned(),
+        checked: host_now == h,
+        disabled: false,
+    }));
+    let kinds = ["all", "user", "feedback", "project", "reference", "untyped"]
         .iter()
-        .map(|(v, l)| (v.as_str(), l.as_str()))
+        .map(|k| Choice {
+            value: (*k).to_owned(),
+            label: if *k == "all" {
+                "All".to_owned()
+            } else {
+                (*k).to_owned()
+            },
+            checked: *k == kind_now,
+            disabled: false,
+        })
         .collect();
-    let kind_now = if kind.is_empty() { "all" } else { kind };
-    let host_now = if host.is_empty() { "all" } else { host };
-    let rows: Vec<MemoryRow> = pages
+    let rows = pages
         .iter()
         .filter(|m| kind_now == "all" || m.kind.label() == kind_now)
         .filter(|m| match host_now {
@@ -685,33 +975,30 @@ pub fn memory(snap: &Snapshot, q: &str, kind: &str, host: &str) -> MemoryList {
             h => m.host == h,
         })
         .filter(|m| matches(q, &[&m.name, &m.description]))
-        .enumerate()
-        .map(|(i, m)| MemoryRow {
-            plate: roman(i + 1),
+        .map(|m| MemoryRow {
             name: m.name.clone(),
             description: m.description.clone(),
             kind: m.kind.label().to_owned(),
             kind_class: kind_class(&m.kind),
-            host: m.host.clone(),
-            href: format!("/memory/{}", m.name),
+            host: if m.host == "all" {
+                String::new()
+            } else {
+                m.host.clone()
+            },
+            href: memory_href(m),
         })
         .collect();
     MemoryList {
         rows,
         total: pages.len(),
         q: q.to_owned(),
-        kinds: choices(
-            &[
-                ("all", "All"),
-                ("user", "User"),
-                ("feedback", "Feedback"),
-                ("project", "Project"),
-                ("reference", "Reference"),
-                ("untyped", "Untyped"),
-            ],
-            kind_now,
-        ),
-        hosts: choices(&host_opts, host_now),
+        kinds,
+        hosts,
+        kept_by: pages.iter().find_map(|m| m.kept_by).map(|k| AgentMark {
+            icon: icons::icon(k),
+            label: format!("{}'s notes", short(k)),
+        }),
+        project: scope.project().map(ToString::to_string),
     }
 }
 
@@ -735,9 +1022,9 @@ pub struct MemoryDetail {
 }
 
 #[must_use]
-pub fn memory_detail(snap: &Snapshot, name: &str) -> Option<MemoryDetail> {
+pub fn memory_detail(snap: &Snapshot, scope: &Scope, name: &str) -> Option<MemoryDetail> {
     let pages = &snap.catalog.memory;
-    let page = pages.iter().find(|m| m.name == name)?;
+    let page = pages.iter().find(|m| m.name == name && &m.scope == scope)?;
     let names = memory_names(&snap.catalog);
     Some(MemoryDetail {
         name: page.name.clone(),
@@ -767,7 +1054,6 @@ pub fn memory_detail(snap: &Snapshot, name: &str) -> Option<MemoryDetail> {
 
 #[derive(Debug)]
 pub struct AtlasHookRow {
-    pub plate: String,
     pub name: String,
     pub scope_label: String,
     pub description: String,
@@ -782,7 +1068,7 @@ pub struct AtlasHookRow {
 
 #[derive(Debug)]
 pub struct FoundHookRow {
-    pub plate: String,
+    pub icon: &'static str,
     pub harness: &'static str,
     pub event: String,
     pub matcher: String,
@@ -803,11 +1089,12 @@ pub fn hooks(snap: &Snapshot) -> Hooks {
         .catalog
         .hooks
         .iter()
-        .enumerate()
-        .map(|(i, h)| AtlasHookRow {
-            plate: roman(i + 1),
+        .map(|h| AtlasHookRow {
             name: h.name.to_string(),
-            scope_label: scope_label(&h.scope),
+            scope_label: match &h.scope {
+                Scope::Global => "Global".to_owned(),
+                Scope::Project(p) => p.to_string(),
+            },
             description: h.manifest.description.clone(),
             event: h.manifest.event.label(),
             matcher: h
@@ -821,13 +1108,8 @@ pub fn hooks(snap: &Snapshot) -> Hooks {
                 .timeout
                 .map_or_else(|| "default".to_owned(), |t| format!("{t}s")),
             harnesses: h.manifest.harnesses.as_ref().map_or_else(
-                || "every harness with this event".to_owned(),
-                |hs| {
-                    hs.iter()
-                        .map(|k| k.display_name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                },
+                || "every agent with this event".to_owned(),
+                |hs| join_names(hs),
             ),
             path: h.path.clone(),
             ok: h.script_present,
@@ -837,25 +1119,15 @@ pub fn hooks(snap: &Snapshot) -> Hooks {
         .harnesses
         .iter()
         .flat_map(|h| {
-            h.hooks.iter().map(move |f| {
-                (
-                    h.kind.display_name(),
-                    h.hook_config.clone().unwrap_or_default(),
-                    f,
-                )
+            h.hooks.iter().map(move |f| FoundHookRow {
+                icon: icons::icon(h.kind),
+                harness: short(h.kind),
+                event: f.event.clone(),
+                matcher: f.matcher.clone().unwrap_or_else(|| "every tool".to_owned()),
+                command: mask_secrets(&f.command),
+                timeout: f.timeout.map_or_else(String::new, |t| format!("{t}s")),
+                config: h.hook_config.clone().unwrap_or_default(),
             })
-        })
-        .enumerate()
-        .map(|(i, (harness, config, f))| FoundHookRow {
-            plate: roman(i + 1),
-            harness,
-            event: f.event.clone(),
-            matcher: f.matcher.clone().unwrap_or_else(|| "every tool".to_owned()),
-            command: mask_secrets(&f.command),
-            timeout: f
-                .timeout
-                .map_or_else(|| "default".to_owned(), |t| format!("{t}s")),
-            config,
         })
         .collect();
     Hooks { atlas, found }
@@ -864,75 +1136,118 @@ pub fn hooks(snap: &Snapshot) -> Hooks {
 // ---------------------------------------------------------------- machines
 
 #[derive(Debug)]
-pub struct DirRow {
-    pub path: String,
-    pub exists: bool,
-    pub from_atlas: usize,
-    pub outside: usize,
-    pub broken: usize,
+pub struct HarnessLine {
+    pub icon: &'static str,
+    pub name: &'static str,
+    pub skills: String,
+    pub skills_class: &'static str,
+    pub instructions: String,
+    pub instructions_class: &'static str,
+    pub hooks: String,
+    pub dirs: Vec<String>,
 }
 
 #[derive(Debug)]
-pub struct HarnessCard {
-    pub plate: String,
-    pub name: &'static str,
-    pub present: bool,
-    pub runs_others: bool,
-    pub dirs: Vec<DirRow>,
-    pub readers: Vec<Reader>,
-    pub hook_config: Option<String>,
-    pub hooks: usize,
+pub struct Machine {
+    pub name: String,
+    pub hub: bool,
+    pub summary: String,
+    pub harnesses: Vec<HarnessLine>,
+    pub absent: Vec<&'static str>,
 }
 
 #[must_use]
-pub fn machines(snap: &Snapshot) -> Vec<HarnessCard> {
-    let readers = global_readers(snap);
-    snap.harnesses
-        .iter()
-        .enumerate()
-        .map(|(i, h)| HarnessCard {
-            plate: roman(i + 1),
-            name: h.kind.display_name(),
-            present: h.present,
-            runs_others: h.kind == HarnessKind::T3,
+pub fn machines(snap: &Snapshot, hub: &str, others: &[String]) -> Vec<Machine> {
+    let mut lines = Vec::new();
+    let mut absent = Vec::new();
+    let outside_total = outside_skills(snap).len();
+    for &k in &AGENTS {
+        let Some(h) = harness(snap, k) else { continue };
+        if !h.present {
+            absent.push(short(k));
+            continue;
+        }
+        let entries: Vec<&InstalledSkill> = h.skill_dirs.iter().flat_map(|d| &d.entries).collect();
+        let from: BTreeSet<&str> = entries
+            .iter()
+            .filter(|e| matches!(e, InstalledSkill::FromAtlas { .. }))
+            .map(|e| e.name())
+            .collect();
+        let outside: BTreeSet<&str> = entries
+            .iter()
+            .filter(|e| matches!(e, InstalledSkill::Outside { .. }))
+            .map(|e| e.name())
+            .collect();
+        let broken = entries
+            .iter()
+            .filter(|e| matches!(e, InstalledSkill::Broken { .. }))
+            .count();
+        let mut parts = vec![format!("{} skills from Atlas", from.len())];
+        if !outside.is_empty() {
+            parts.push(format!("{} outside", outside.len()));
+        }
+        if broken > 0 {
+            parts.push(format!("{broken} broken"));
+        }
+        let skills = parts.join(", ");
+        let (instructions, instructions_class) = match h.instructions.first().map(|i| &i.link) {
+            Some(InstructionLink::Linked) => ("Global AGENTS.md linked".to_owned(), "ok"),
+            Some(InstructionLink::Imports) => ("Global AGENTS.md imported".to_owned(), "ok"),
+            Some(InstructionLink::Separate) => ("Own instructions file".to_owned(), "warn"),
+            Some(InstructionLink::Missing) | None => ("No global instructions".to_owned(), "warn"),
+        };
+        lines.push(HarnessLine {
+            icon: icons::icon(k),
+            name: short(k),
+            skills,
+            skills_class: if outside.is_empty() && broken == 0 {
+                "ok"
+            } else {
+                "warn"
+            },
+            instructions,
+            instructions_class,
+            hooks: match h.hooks.len() {
+                0 => String::new(),
+                1 => "1 hook".to_owned(),
+                n => format!("{n} hooks"),
+            },
             dirs: h
                 .skill_dirs
                 .iter()
-                .map(|d| DirRow {
-                    path: d.path.clone(),
-                    exists: d.exists,
-                    from_atlas: d
-                        .entries
-                        .iter()
-                        .filter(|e| matches!(e, InstalledSkill::FromAtlas { .. }))
-                        .count(),
-                    outside: d
-                        .entries
-                        .iter()
-                        .filter(|e| matches!(e, InstalledSkill::Outside { .. }))
-                        .count(),
-                    broken: d
-                        .entries
-                        .iter()
-                        .filter(|e| matches!(e, InstalledSkill::Broken { .. }))
-                        .count(),
-                })
+                .filter(|d| d.exists)
+                .map(|d| d.path.clone())
+                .chain(h.instructions.iter().map(|i| i.path.clone()))
+                .chain(h.hook_config.iter().cloned())
                 .collect(),
-            readers: readers
-                .iter()
-                .filter(|r| r.harness == h.kind.display_name())
-                .map(|r| Reader {
-                    harness: r.harness,
-                    path: r.path.clone(),
-                    state: r.state,
-                    class: r.class,
-                })
-                .collect(),
-            hook_config: h.hook_config.clone(),
-            hooks: h.hooks.len(),
-        })
-        .collect()
+        });
+    }
+    let mut out = vec![Machine {
+        name: hub.to_owned(),
+        hub: true,
+        summary: format!(
+            "{} agents{}",
+            lines.len(),
+            if outside_total > 0 {
+                format!(" · {outside_total} skills outside Atlas")
+            } else {
+                String::new()
+            }
+        ),
+        harnesses: lines,
+        absent,
+    }];
+    out.extend(others.iter().map(|m| Machine {
+        name: m.clone(),
+        hub: false,
+        summary: "Not paired yet".to_owned(),
+        harnesses: Vec::new(),
+        absent: Vec::new(),
+    }));
+    out
 }
+
+// ---------------------------------------------------------------- secrets
 
 /// Hides values that look like credentials in a command line before it's shown:
 /// `NAME=value` where the name mentions a key, token, secret or password, the word after
@@ -971,7 +1286,8 @@ pub fn mask_secrets(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::mask_secrets;
+    use super::{join_names, mask_secrets};
+    use atlas_core::kernel::HarnessKind;
 
     #[test]
     fn masks_credentials_but_keeps_ordinary_commands() {
@@ -987,6 +1303,15 @@ mod tests {
         assert_eq!(
             mask_secrets("notify ghp_abcdefghijklmnop1234567890"),
             "notify ••••"
+        );
+    }
+
+    #[test]
+    fn names_read_as_english() {
+        assert_eq!(join_names(&[HarnessKind::Pi]), "Pi");
+        assert_eq!(
+            join_names(&[HarnessKind::ClaudeCode, HarnessKind::Codex, HarnessKind::Pi]),
+            "Claude, Codex and Pi"
         );
     }
 }

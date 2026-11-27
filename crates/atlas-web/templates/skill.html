@@ -1,33 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="masthead">
-  <div class="folio"><span>{{ page.folio }}</span><span><a href="/skills">All skills</a></span></div>
-  <hr class="rule-double">
-  <div class="key" aria-hidden="true"></div>
-  <div class="title-row">
-    <div>
-      <h1>{{ v.name }}</h1>
-      <p class="lede">{{ v.description }}</p>
-    </div>
-  </div>
-</header>
 <div class="split">
-  <article class="prose">{{ v.body_html|safe }}</article>
+  <article class="prose">
+    {% if !v.description.is_empty() %}<p class="lede">{{ v.description }}</p>{% endif %}
+    {{ v.body_html|safe }}
+  </article>
   <aside class="aside">
     <dl class="facts">
-      <dt>Lives in</dt><dd><span class="tag">{{ v.scope_label }}</span></dd>
+      <dt>Lives in</dt><dd>{{ v.lives_in }}</dd>
       <dt>File</dt><dd class="mono">{{ v.path }}</dd>
-      {% if let Some(d) = v.declared_name %}<dt>Declared</dt><dd class="warn">Frontmatter calls it “{{ d }}”</dd>{% endif %}
+      {% if let Some(d) = v.declared_name %}<dt>Named</dt><dd class="warn">“{{ d }}” in its frontmatter</dd>{% endif %}
     </dl>
-    <div class="section-head"><span class="num">I</span><h2>Who has it</h2></div>
-    <ul class="list-plain">
-      {% for s in v.seen_by %}<li><b>{{ s.harness }}</b> · <span class="{{ s.class }}">{{ s.detail }}</span></li>{% endfor %}
+    <h2 class="aside-head">Agents</h2>
+    <ul class="chips stacked">
+      {% for a in v.agents %}<li class="chip {{ a.class }}">{{ a.icon|safe }}<span class="chip-name">{{ a.name }}</span><span class="chip-state">{{ a.state }}</span></li>{% endfor %}
     </ul>
     {% if !v.files.is_empty() %}
-    <div class="section-head"><span class="num">II</span><h2>Files</h2><span class="count">{{ v.files.len() }}</span></div>
-    <pre class="ink-block"><span class="cap">BESIDE SKILL.MD</span>{% for f in v.files %}{{ f }}
+    <h2 class="aside-head">Files</h2>
+    <pre class="ink-block">{% for f in v.files %}{{ f }}
 {% endfor %}</pre>
     {% endif %}
+    <a class="link-cap" href="/skills">All skills</a>
   </aside>
 </div>
 {% endblock %}

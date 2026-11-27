@@ -5,37 +5,60 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"refreshOnHistoryMiss":true}'>
-<title>{{ page.title }} · Atlas</title>
+<title>{% if page.section == "/" %}Atlas{% else %}{{ page.title }} · Atlas{% endif %}</title>
 <link rel="icon" href="/static/emblem.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/atlas.css">
+<script src="/static/atlas.js"></script>
 <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="frame">
   <nav class="rail" aria-label="Atlas sections">
-    <a class="brand" href="/" aria-label="Atlas, frontispiece">
-      <svg aria-hidden="true" viewBox="0 0 40 40" width="36" height="36"><circle cx="20" cy="20" r="18" fill="none" stroke="#B08A3E" stroke-width="1.5"/><ellipse cx="20" cy="20" rx="18" ry="6" fill="none" stroke="#ECEAE3" stroke-width="1"/><ellipse cx="20" cy="20" rx="18" ry="6" fill="none" stroke="#2E6B5E" stroke-width="2" transform="rotate(-23 20 20)"/><line x1="20" y1="1" x2="20" y2="39" stroke="#ECEAE3" stroke-width="1"/><circle cx="20" cy="20" r="3" fill="#B08A3E"/></svg>
-      <span class="brand-word">ATLAS</span>
-    </a>
-    <hr class="rule-gilt">
+    <div class="rail-head">
+      <a class="brand" href="/" aria-label="Atlas home">
+        <svg aria-hidden="true" viewBox="0 0 40 40" width="22" height="22"><circle cx="20" cy="20" r="18" fill="none" stroke="#B08A3E" stroke-width="2"/><ellipse cx="20" cy="20" rx="18" ry="6" fill="none" stroke="#ECEAE3" stroke-width="1.4"/><ellipse cx="20" cy="20" rx="18" ry="6" fill="none" stroke="#5FA392" stroke-width="2.4" transform="rotate(-23 20 20)"/><line x1="20" y1="1" x2="20" y2="39" stroke="#ECEAE3" stroke-width="1.4"/><circle cx="20" cy="20" r="3.5" fill="#B08A3E"/></svg>
+        <span class="brand-word">ATLAS</span>
+      </a>
+      <button class="rail-toggle" type="button" data-rail-toggle aria-label="Collapse or expand the menu" title="Collapse or expand the menu">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+      </button>
+    </div>
     <ul class="nav">
       {% for n in page.nav %}
-      <li><a href="{{ n.href }}"{% if n.active %} class="active" aria-current="page"{% endif %}><span class="num">{{ n.num }}</span><span>{{ n.label }}</span>{% if n.later %}<span class="later">LATER</span>{% endif %}</a></li>
+      <li><a href="{{ n.href }}" title="{{ n.label }}"{% if n.active %} class="active" aria-current="page"{% endif %}{% if n.later %} data-later{% endif %}><span class="num">{{ n.num }}</span><span class="label">{{ n.label }}</span></a></li>
       {% endfor %}
     </ul>
-    <div class="rail-foot">
-      <span class="hub">Hub · {{ page.hub }}</span>
-      <span>Read-only · phase I</span>
-      {% if page.problems > 0 %}<a href="/#problems">{{ page.problems }} to look at</a>{% else %}<span>Nothing to look at</span>{% endif %}
+    <div class="rail-foot" title="The hub this page reads from">
+      <span class="dot{% if page.problems > 0 %} warn-dot{% endif %}" aria-hidden="true"></span><span class="label">{{ page.hub }}</span>
     </div>
   </nav>
   <main id="main">
+    <header class="masthead">
+      <div class="running"><span>{{ page.folio }}</span><span>{{ page.totals }}</span></div>
+      <div class="key" aria-hidden="true"></div>
+      {% if page.section != "/" %}
+      <div class="title-row">
+        <h1>{{ page.title }}</h1>
+        {% if page.show_scope %}
+        <form class="scope" method="get" action="{{ page.section }}">
+          <span>Showing</span>
+          <label class="sr" for="scope-pick">Scope</label>
+          <select id="scope-pick" name="scope" data-autosubmit>
+            {% for c in page.scopes %}<option value="{{ c.value }}"{% if c.checked %} selected{% endif %}>{{ c.label }}</option>{% endfor %}
+          </select>
+          <span>on</span>
+          <label class="sr" for="machine-pick">Machine</label>
+          <select id="machine-pick" name="machine" data-autosubmit>
+            {% for m in page.machines %}<option value="{{ m.value }}"{% if m.checked %} selected{% endif %}{% if m.disabled %} disabled{% endif %}>{{ m.label }}</option>{% endfor %}
+          </select>
+          <noscript><button type="submit">Go</button></noscript>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </header>
     {% block content %}{% endblock %}
-    <footer class="colophon">
-      <hr class="rule-double">
-      <div class="folio"><span>Read live from git on every visit</span><span>Atlas · phase I</span></div>
-    </footer>
   </main>
 </div>
 </body>

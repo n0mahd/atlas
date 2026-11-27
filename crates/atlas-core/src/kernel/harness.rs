@@ -12,7 +12,7 @@ pub enum HarnessKind {
     Codex,
     OpenCode,
     Pi,
-    Gemini,
+    Antigravity,
     T3,
 }
 
@@ -26,7 +26,7 @@ impl HarnessKind {
         Self::Codex,
         Self::OpenCode,
         Self::Pi,
-        Self::Gemini,
+        Self::Antigravity,
         Self::T3,
     ];
 
@@ -38,7 +38,7 @@ impl HarnessKind {
             Self::Codex => "codex",
             Self::OpenCode => "open-code",
             Self::Pi => "pi",
-            Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::T3 => "t3",
         }
     }
@@ -51,7 +51,7 @@ impl HarnessKind {
             Self::Codex => "Codex",
             Self::OpenCode => "OpenCode",
             Self::Pi => "Pi",
-            Self::Gemini => "Gemini",
+            Self::Antigravity => "Antigravity",
             Self::T3 => "T3 Code",
         }
     }

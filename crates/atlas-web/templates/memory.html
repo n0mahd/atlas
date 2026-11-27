@@ -1,50 +1,48 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="masthead">
-  <div class="folio"><span>{{ page.folio }}</span><span>{{ v.total }} pages</span></div>
-  <hr class="rule-double">
-  <div class="key" aria-hidden="true"></div>
-  <div class="title-row">
-    <div>
-      <h1>Memory</h1>
-      <p class="lede">Durable facts the agents keep, one page each. Agents write these straight to git.</p>
-    </div>
-  </div>
-</header>
-
-<form class="controls" method="get" action="/memory" role="search"
-      hx-get="/memory" hx-trigger="input delay:250ms, change, submit"
+<form class="toolbar" method="get" action="/memory" role="search"
+      hx-get="/memory" hx-trigger="input delay:200ms from:input[name=q], change, submit"
       hx-target="#results" hx-select="#results" hx-swap="outerHTML" hx-push-url="true">
-  <label class="cap" for="memory-search">Search</label>
-  <input id="memory-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Find a fact" autocomplete="off">
-  <label class="cap" for="memory-host">Host</label>
+  <input type="hidden" name="scope" value="{{ page.scope }}">
+  <label class="sr" for="memory-search">Filter memory</label>
+  <input id="memory-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Filter facts…" autocomplete="off">
+  {% if v.project.is_none() %}
+  <label class="sr" for="memory-host">Host</label>
   <select id="memory-host" class="select" name="host">
     {% for h in v.hosts %}<option value="{{ h.value }}"{% if h.checked %} selected{% endif %}>{{ h.label }}</option>{% endfor %}
   </select>
-  <fieldset class="chips">
-    <legend>Kind</legend>
-    {% for c in v.kinds %}
-    <label class="chip"><input type="radio" name="kind" value="{{ c.value }}"{% if c.checked %} checked{% endif %}><span>{{ c.label }}</span></label>
-    {% endfor %}
+  {% endif %}
+  <fieldset class="tabs">
+    <legend class="sr">Kind</legend>
+    {% for c in v.kinds %}<label class="tab"><input type="radio" name="kind" value="{{ c.value }}"{% if c.checked %} checked{% endif %}><span>{{ c.label }}</span></label>{% endfor %}
   </fieldset>
-  <noscript><button class="chip no-js-submit" type="submit">Apply</button></noscript>
+  <noscript><button type="submit">Apply</button></noscript>
 </form>
 
-<div id="results" class="table-box">
-  <table class="plates">
-    <thead><tr><th scope="col">Plate</th><th scope="col">Fact</th><th scope="col">Kind</th><th scope="col">Host</th></tr></thead>
-    <tbody>
+<div id="results" class="sections">
+  <section class="section">
+    {% if let Some(k) = v.kept_by %}
+    <div class="section-head"><span class="mark" aria-hidden="true">{{ k.icon|safe }}</span><h2>{{ k.label }}</h2><span class="count">{{ v.rows.len() }}</span></div>
+    {% endif %}
+    {% if v.rows.is_empty() %}
+    <p class="empty">{% if v.total == 0 %}No memory for this {% if v.project.is_some() %}project{% else %}scope{% endif %} yet.{% else %}No page matches.{% endif %}</p>
+    {% else %}
+    <ul class="rows">
       {% for r in v.rows %}
-      <tr>
-        <td class="plate">{{ r.plate }}</td>
-        <td><span class="entry-name"><a href="{{ r.href }}">{{ r.name }}</a></span><span class="entry-desc">{{ r.description }}</span></td>
-        <td><span class="tag {{ r.kind_class }}">{{ r.kind }}</span></td>
-        <td class="mono">{{ r.host }}</td>
-      </tr>
-      {% else %}
-      <tr class="empty-row"><td colspan="4">No page matches.</td></tr>
+      <li>
+        <a class="row" href="{{ r.href }}">
+          <span class="row-main">
+            <span class="row-name">{{ r.name }}</span>
+            <span class="row-desc">{{ r.description }}</span>
+          </span>
+          {% if !r.host.is_empty() %}<span class="row-meta">{{ r.host }}</span>{% endif %}
+          <span class="row-kind {{ r.kind_class }}">{{ r.kind }}</span>
+          <span class="chev right" aria-hidden="true"></span>
+        </a>
+      </li>
       {% endfor %}
-    </tbody>
-  </table>
+    </ul>
+    {% endif %}
+  </section>
 </div>
 {% endblock %}

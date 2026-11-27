@@ -63,3 +63,17 @@ The hub listens only on a Unix socket (mode 0600 in a 0700 folder). `tailscale s
 gives it HTTPS on the ts.net name and sets `Tailscale-User-Login`; the hub admits only
 the logins in its config. Passkey sign-in, CSRF tokens and cookies arrive with editing in
 phase 2, when there is something to protect beyond reading. Recorded as debt.
+
+## 0013 · 2026-11-27 · The fifth harness is Antigravity
+The Google harness Atlas manages is Antigravity (`antigravity`), not the Gemini CLI. Its
+folders come from T3 Code's Antigravity driver: skills in `~/.gemini/config/skills` and
+`~/.gemini/antigravity-cli/skills`, instructions in `~/.gemini/config/AGENTS.md`, project
+skills in `.gemini/skills`, `.agents/skills` and `.agent/skills`.
+
+## 0014 · 2026-11-27 · Screens follow the T3 Skills information design
+Skills, Instructions and Memory show one scope at a time ("Showing [Global or a project]
+on [machine]"); a project scope lists the project's items first, then Global. Rows are one
+line plus a truncated description. Agents appear as brand marks only when they have the
+item, or as one gilt sparkles mark when every agent does; detail opens inline. Machines
+list machines, each with a row per agent. Project memory is the agent's own per-repo notes
+(Claude Code's `~/.claude/projects/<repo>/memory`), shown read-only.

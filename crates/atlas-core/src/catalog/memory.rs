@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::kernel::{HarnessKind, Scope};
 use crate::untrusted::{Markdown, Untrusted};
 
 /// The kind of fact a memory page holds, from its `metadata.type`.
@@ -48,6 +49,10 @@ pub struct MemoryPage {
     pub host: String,
     /// Path inside the memory folder, for display.
     pub path: String,
+    /// Global pages live in the store; project pages are an agent's notes on one repo.
+    pub scope: Scope,
+    /// The agent that keeps this page in its own folder, for project pages.
+    pub kept_by: Option<HarnessKind>,
     /// Other pages this one links to with `[[name]]`.
     pub links: Vec<String>,
     pub body: Untrusted<Markdown>,
@@ -92,6 +97,8 @@ impl MemoryPage {
     #[must_use]
     pub fn new(name: String, path: String, fm: MemoryFrontmatter, body: &str) -> Self {
         Self {
+            scope: Scope::Global,
+            kept_by: None,
             name,
             description: fm.description,
             kind: MemoryKind::parse(fm.metadata.kind.as_deref()),

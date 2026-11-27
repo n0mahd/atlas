@@ -356,3 +356,51 @@ fn links_to_hidden_files_in_a_repo_are_refused() {
         catalog.problems
     );
 }
+
+#[test]
+fn reads_claude_project_memory_and_project_agents() {
+    let (_tmp, sources) = fixture();
+    let repo = sources.projects[0].root.clone();
+    let mem = atlas_harness::claude_project_memory(&sources.home, &repo);
+    write(&mem.join("MEMORY.md"), "- [x](deploy-notes.md)\n");
+    write(
+        &mem.join("deploy-notes.md"),
+        "---\nname: deploy-notes\ndescription: How shop deploys\nmetadata:\n  type: project\n---\nUse the script.\n",
+    );
+    // Claude reads .claude/skills; the others read .agents/skills.
+    fs::create_dir_all(repo.join(".claude/skills")).unwrap();
+    symlink(
+        "../../.agents/skills/stock",
+        repo.join(".claude/skills/stock"),
+    )
+    .unwrap();
+    write(
+        &repo.join(".agents/skills/agents-only/SKILL.md"),
+        "---\ndescription: x\n---\n",
+    );
+
+    let catalog = load_catalog(&sources);
+    let shop = Scope::Project(Slug::new("shop").unwrap());
+    let project_pages: Vec<_> = catalog.memory.iter().filter(|m| m.scope == shop).collect();
+    assert_eq!(project_pages.len(), 1, "MEMORY.md is an index, not a page");
+    assert_eq!(project_pages[0].name, "deploy-notes");
+    assert_eq!(project_pages[0].kept_by, Some(HarnessKind::ClaudeCode));
+
+    let views = atlas_fs::scan_projects(&sources);
+    let agents = &views[0].harnesses;
+    let claude = agents
+        .iter()
+        .find(|h| h.kind == HarnessKind::ClaudeCode)
+        .unwrap();
+    assert_eq!(claude.skills, vec!["stock"]);
+    assert_eq!(
+        claude.instructions.as_deref(),
+        Some("AGENTS.md"),
+        "no CLAUDE.md, so Claude reads AGENTS.md"
+    );
+    let codex = agents
+        .iter()
+        .find(|h| h.kind == HarnessKind::Codex)
+        .unwrap();
+    assert_eq!(codex.skills, vec!["agents-only", "stock"]);
+}

@@ -9,5 +9,5 @@ mod harness;
 mod paths;
 
 pub use catalog::load_catalog;
-pub use harness::scan_harnesses;
+pub use harness::{scan_harnesses, scan_projects};
 pub use paths::{Project, Sources, discover_projects};

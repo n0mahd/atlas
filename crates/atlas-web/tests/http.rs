@@ -34,7 +34,7 @@ fn app() -> (tempfile::TempDir, axum::Router) {
         projects: Vec::new(),
     };
     let app = router(
-        AppState::new(sources, "test-hub"),
+        AppState::new(sources, "test-hub", vec!["other-box".to_owned()]),
         Access::new(vec![OWNER.to_owned()]),
     );
     (tmp, app)
@@ -109,8 +109,18 @@ async fn hostile_content_cannot_script_the_page() {
     let (_tmp, app) = app();
     let (_, _, body) = get(&app, "/skills/private/evil", Some(OWNER)).await;
     assert!(body.contains("<h1>Evil</h1>"));
-    // The only script tag is our own htmx.
-    assert_eq!(body.matches("<script").count(), 1, "{body}");
+    // The only script tags are our own two files.
+    let scripts: Vec<&str> = body
+        .match_indices("<script")
+        .map(|(i, _)| &body[i..i + 40])
+        .collect();
+    assert_eq!(scripts.len(), 2, "{scripts:?}");
+    assert!(
+        scripts
+            .iter()
+            .all(|t| t.starts_with("<script src=\"/static/")),
+        "{scripts:?}"
+    );
     // Escaped text may mention them; no tag or attribute may carry them.
     for bad in ["onerror=alert(1)>", "href=\"javascript", "<img src=x"] {
         assert!(!body.contains(bad), "{bad} reached the page");

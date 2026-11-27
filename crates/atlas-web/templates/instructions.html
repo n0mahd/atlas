@@ -1,32 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="masthead">
-  <div class="folio"><span>{{ page.folio }}</span><span>{{ rows.len() }} files</span></div>
-  <hr class="rule-double">
-  <div class="key" aria-hidden="true"></div>
-  <div class="title-row">
-    <div>
-      <h1>Instructions</h1>
-      <p class="lede">The standing orders every agent reads: one global file, and one per project.</p>
-    </div>
-  </div>
-</header>
-<div class="table-box">
-  <table class="plates">
-    <thead><tr><th scope="col">Plate</th><th scope="col">File</th><th scope="col">Scope</th><th scope="col">Read by</th><th scope="col">Lines</th></tr></thead>
-    <tbody>
-      {% for r in rows %}
-      <tr>
-        <td class="plate">{{ r.plate }}</td>
-        <td><span class="entry-name"><a href="{{ r.href }}">{{ r.title }}</a></span><span class="entry-desc mono">{{ r.path }}</span></td>
-        <td><span class="tag {{ r.scope_class }}">{{ r.scope_label }}</span></td>
-        <td>{{ r.readers }}</td>
-        <td class="mono">{{ r.lines }}</td>
-      </tr>
-      {% else %}
-      <tr class="empty-row"><td colspan="5">No instruction files found.</td></tr>
+<div class="sections">
+  {% for s in sections %}
+  <section class="section">
+    <div class="section-head"><span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2></div>
+    {% if s.rows.is_empty() %}
+    <p class="empty">{{ s.empty }}</p>
+    {% else %}
+    <ul class="rows">
+      {% for r in s.rows %}
+      <li>
+        <a class="row" href="{{ r.href }}">
+          <span class="row-main">
+            <span class="row-name">{{ r.name }}</span>
+            {% if !r.flag.is_empty() %}<span class="row-desc warn">{{ r.flag }}</span>{% endif %}
+          </span>
+          <span class="row-meta">{{ r.lines }} lines</span>
+          <span class="marks">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
+          <span class="chev right" aria-hidden="true"></span>
+        </a>
+      </li>
       {% endfor %}
-    </tbody>
-  </table>
+    </ul>
+    {% endif %}
+  </section>
+  {% endfor %}
 </div>
 {% endblock %}

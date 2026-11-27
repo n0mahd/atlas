@@ -28,8 +28,9 @@ Clients store the hub's address at pairing time. No hostname appears in the code
 | `atlas-gateway` | The MCP gateway (phase 4). |
 | `atlas-testkit` | Fakes for every port plus a contract suite each adapter must pass. |
 
-Built so far (phase 1): `atlas-core`, `atlas-harness` (layouts only), `atlas-fs` (reads
-only), `atlas-web`, and the `atlas-hub` binary.
+Built so far (phase 1): `atlas-core`, `atlas-harness` (home and project layouts per
+harness), `atlas-fs` (reads only: the store, each harness's folders, each project's agent
+folders and Claude Code's per-repo memory), `atlas-web`, and the `atlas-hub` binary.
 
 `atlas-hub` and `atlasd` are the composition roots. No DI framework. Read-only screens
 query the store directly instead of going through use cases.

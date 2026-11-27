@@ -1,68 +1,69 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="masthead">
-  <div class="folio"><span>{{ page.folio }}</span><span>{{ v.atlas.len() }} in Atlas · {{ v.found.len() }} found</span></div>
-  <hr class="rule-double">
-  <div class="key" aria-hidden="true"></div>
-  <div class="title-row">
-    <div>
-      <h1>Hooks</h1>
-      <p class="lede">Commands a harness runs at set moments. Define one once; Atlas will write it into each harness.</p>
-    </div>
-  </div>
-</header>
-
-<section class="aside">
-  <div class="section-head"><span class="num">I</span><h2>In Atlas</h2><span class="count">{{ v.atlas.len() }}</span></div>
-  {% if v.atlas.is_empty() %}
-  <p class="notice">No hooks in the store yet. A hook is a folder in <span class="mono">hooks/&lt;name&gt;/</span> of the knowledge repo, or in <span class="mono">.agents/hooks/&lt;name&gt;/</span> of a project, holding its script and a <span class="mono">hook.toml</span>:</p>
-  <pre class="ink-block"><span class="cap">HOOKS/NO-WORKTREES/HOOK.TOML</span>description = "Keep git worktrees out of project folders"
+<div class="sections">
+  <section class="section">
+    <div class="section-head"><span class="num">I</span><h2>In Atlas</h2><span class="count">{{ v.atlas.len() }}</span></div>
+    {% if v.atlas.is_empty() %}
+    <details class="row help">
+      <summary><span class="row-main"><span class="row-name">No hooks in Atlas yet</span><span class="row-desc">How to add one</span></span><span class="chev" aria-hidden="true"></span></summary>
+      <div class="drawer">
+        <pre class="ink-block">hooks/no-worktrees/hook.toml
+description = "Keep git worktrees out of project folders"
 event = "pre-tool-use"   # session-start, user-prompt, pre-tool-use, post-tool-use, stop
-matcher = "Bash"          # tool events only; leave out for every tool
+matcher = "Bash"
 run = "check.py"          # a file in this folder
-timeout = 10              # seconds
-harnesses = ["claude-code"]   # leave out for every harness with this event</pre>
-  {% else %}
-  <div class="table-box">
-    <table class="plates">
-      <thead><tr><th scope="col">Plate</th><th scope="col">Hook</th><th scope="col">When</th><th scope="col">Runs</th><th scope="col">Harnesses</th></tr></thead>
-      <tbody>
-        {% for h in v.atlas %}
-        <tr>
-          <td class="plate">{{ h.plate }}</td>
-          <td><span class="entry-name">{{ h.name }}</span><span class="entry-desc">{{ h.description }}</span><span class="tag">{{ h.scope_label }}</span></td>
-          <td>{{ h.event }}<br><span class="mono muted">{{ h.matcher }}</span></td>
-          <td class="mono"><span class="{% if h.ok %}ok{% else %}warn{% endif %}">{{ h.run }}</span><br><span class="muted">{{ h.timeout }}</span></td>
-          <td>{{ h.harnesses }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endif %}
-</section>
+timeout = 10
+harnesses = ["claude-code"]</pre>
+      </div>
+    </details>
+    {% else %}
+    <ul class="rows">
+      {% for h in v.atlas %}
+      <li>
+        <details class="row">
+          <summary>
+            <span class="row-main"><span class="row-name">{{ h.name }}</span><span class="row-desc">{{ h.description }}</span></span>
+            <span class="row-meta">{{ h.event }}</span>
+            {% if !h.ok %}<span class="row-flag">Script missing</span>{% endif %}
+            <span class="chev" aria-hidden="true"></span>
+          </summary>
+          <div class="drawer">
+            <dl class="facts">
+              <dt>Scope</dt><dd>{{ h.scope_label }}</dd>
+              <dt>Tools</dt><dd>{{ h.matcher }}</dd>
+              <dt>Runs</dt><dd class="mono">{{ h.run }} · {{ h.timeout }}</dd>
+              <dt>Agents</dt><dd>{{ h.harnesses }}</dd>
+              <dt>File</dt><dd class="mono">{{ h.path }}</dd>
+            </dl>
+          </div>
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
 
-<section class="aside">
-  <div class="section-head"><span class="num">II</span><h2>Found in harness configs on this hub</h2><span class="count">{{ v.found.len() }} · outside Atlas</span></div>
-  {% if v.found.is_empty() %}
-  <p class="muted">No harness on this hub has hooks of its own.</p>
-  {% else %}
-  <div class="table-box">
-    <table class="plates">
-      <thead><tr><th scope="col">Plate</th><th scope="col">Harness</th><th scope="col">When</th><th scope="col">Command</th><th scope="col">Timeout</th></tr></thead>
-      <tbody>
-        {% for f in v.found %}
-        <tr>
-          <td class="plate">{{ f.plate }}</td>
-          <td><b>{{ f.harness }}</b><br><span class="mono muted">{{ f.config }}</span></td>
-          <td>{{ f.event }}<br><span class="mono muted">{{ f.matcher }}</span></td>
-          <td class="mono">{{ f.command }}</td>
-          <td class="mono">{{ f.timeout }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endif %}
-</section>
+  <section class="section">
+    <div class="section-head"><span class="num">II</span><h2>Outside Atlas</h2><span class="count">{{ v.found.len() }}</span></div>
+    {% if v.found.is_empty() %}
+    <p class="empty">No agent on this machine has hooks of its own.</p>
+    {% else %}
+    <ul class="rows">
+      {% for f in v.found %}
+      <li>
+        <details class="row">
+          <summary>
+            <span class="mark lead" role="img" aria-label="{{ f.harness }}" title="{{ f.harness }}">{{ f.icon|safe }}</span>
+            <span class="row-main"><span class="row-name mono-name">{{ f.command }}</span></span>
+            <span class="row-meta">{{ f.event }} · {{ f.matcher }}</span>
+            <span class="chev" aria-hidden="true"></span>
+          </summary>
+          <div class="drawer"><span class="mono muted">{{ f.config }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span></div>
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+</div>
 {% endblock %}

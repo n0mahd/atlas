@@ -14,3 +14,15 @@ Type: Cinzel (titles, nav, buttons), EB Garamond (body), IBM Plex Mono (paths, l
 status). Motifs: double rules, a gilt Greek key under the masthead, Roman-numeral
 sections, numbered "plates", film grain, ink code blocks with a gilt hairline,
 an armillary sphere emblem.
+
+## Density (2026-11-27)
+The look stays; the space goes to content. Approved after the owner found v1 wasteful.
+- Rail 188px, collapsible to 52px (remembered per browser). Phones get a top bar.
+- Masthead is one running head, an 8px Greek key and one row: 28px title plus the scope
+  picker. No subtitles or explanatory paragraphs on pages.
+- Rows 46px: 16px name, 15px one-line description, marks and a chevron. No plate numbers,
+  location or status columns; problems show as a short oxblood flag on the row.
+- Agent marks are the real brand marks in one colour (ink, gilt for "all agents"), 16px.
+- Detail opens inline (gilt left rule, deeper limestone); full pages only for reading a
+  file.
+- Notices are marginalia: a gilt left bar and italic text, never a coloured banner.
