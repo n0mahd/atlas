@@ -51,3 +51,8 @@ pub fn section(label: &str) -> &'static str {
         }
     }
 }
+
+/// Small status badges laid over an agent mark.
+pub const BADGE_OK: &str = r#"<svg class="badge-icon" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="6"/><path d="M3.3 6.2 5.1 8l3.6-4" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+pub const BADGE_MISSING: &str = r#"<svg class="badge-icon" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="6"/><path d="m4 4 4 4M8 4 4 8" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>"#;
+pub const BADGE_ABSENT: &str = r#"<svg class="badge-icon" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="6"/><path d="M3.5 6h5" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>"#;

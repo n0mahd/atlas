@@ -31,8 +31,8 @@
             <span class="chev" aria-hidden="true"></span>
           </summary>
           <div class="drawer">
-            <ul class="chips">
-              {% for a in r.agents %}<li class="chip {{ a.class }}">{{ a.icon|safe }}<span class="chip-name">{{ a.name }}</span>{% if a.class != "ok" %}<span class="chip-state">{{ a.state }}</span>{% endif %}</li>{% endfor %}
+            <ul class="agent-states">
+              {% for a in r.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
             </ul>
             <div class="drawer-foot">
               {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files > 0 %} · {{ r.files }} more files{% endif %}</span>{% endif %}

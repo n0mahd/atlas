@@ -5,9 +5,10 @@
   <aside class="aside">
     <dl class="facts"><dt>File</dt><dd class="mono">{{ v.path }}</dd></dl>
     <h2 class="aside-head">Agents</h2>
-    <ul class="chips stacked">
-      {% for a in v.agents %}<li class="chip {{ a.class }}">{{ a.icon|safe }}<span class="chip-name">{{ a.name }}</span><span class="chip-state">{{ a.state }}</span></li>{% endfor %}
+    <ul class="agent-states">
+      {% for a in v.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
     </ul>
+    {% for a in v.agents %}{% if a.needs_words() %}<p class="agent-note warn">{{ a.icon|safe }}{{ a.state }}</p>{% endif %}{% endfor %}
     <a class="link-cap" href="/instructions">All instructions</a>
   </aside>
 </div>

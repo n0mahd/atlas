@@ -243,6 +243,24 @@ pub struct AgentState {
     pub class: &'static str,
 }
 
+impl AgentState {
+    /// The status badge drawn on the agent's mark.
+    #[must_use]
+    pub fn badge(&self) -> &'static str {
+        match self.class {
+            "ok" => icons::BADGE_OK,
+            "warn" => icons::BADGE_MISSING,
+            _ => icons::BADGE_ABSENT,
+        }
+    }
+
+    /// Whether the state says more than the badge does, so it's worth showing as text.
+    #[must_use]
+    pub fn needs_words(&self) -> bool {
+        self.class == "warn" && !matches!(self.state.as_str(), "doesn't have it" | "missing")
+    }
+}
+
 // ---------------------------------------------------------------- overview
 
 #[derive(Debug)]

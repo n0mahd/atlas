@@ -12,9 +12,10 @@
       {% if let Some(d) = v.declared_name %}<dt>Named</dt><dd class="warn">“{{ d }}” in its frontmatter</dd>{% endif %}
     </dl>
     <h2 class="aside-head">Agents</h2>
-    <ul class="chips stacked">
-      {% for a in v.agents %}<li class="chip {{ a.class }}">{{ a.icon|safe }}<span class="chip-name">{{ a.name }}</span><span class="chip-state">{{ a.state }}</span></li>{% endfor %}
+    <ul class="agent-states">
+      {% for a in v.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
     </ul>
+    {% for a in v.agents %}{% if a.needs_words() %}<p class="agent-note warn">{{ a.icon|safe }}{{ a.state }}</p>{% endif %}{% endfor %}
     {% if !v.files.is_empty() %}
     <h2 class="aside-head">Files</h2>
     <pre class="ink-block">{% for f in v.files %}{{ f }}

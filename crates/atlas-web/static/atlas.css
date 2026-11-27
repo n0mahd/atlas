@@ -82,6 +82,7 @@ a:hover { color: var(--verdigris-deep); }
 .rail-head { height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 6px; border-bottom: 3px double var(--gilt-orn); margin-bottom: 8px; padding: 0 4px; }
 .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: var(--rail-text); min-width: 0; }
 .brand:hover { color: var(--rail-text); }
+.brand-mark { width: 26px; height: 26px; flex: none; display: block; border: 1px solid var(--gilt-orn); border-radius: 2px; }
 .brand-word { font-family: var(--display); font-weight: 900; font-size: 16px; letter-spacing: 0.12em; }
 .rail-toggle { flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: none; border: 0; color: var(--rail-muted); cursor: pointer; }
 .rail-toggle:hover { color: var(--rail-text); }
@@ -218,7 +219,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 /* ------------------------------------------------------------ front page */
 
 .frontispiece { display: flex; align-items: center; gap: 22px; margin: 6px 0 18px; }
-.emblem { width: 92px; height: 92px; flex: none; color: var(--ink); }
+.emblem { width: 96px; height: 96px; flex: none; display: block; border: 1px solid var(--gilt-orn); border-radius: 2px; }
 .wordmark { font-size: 54px; letter-spacing: 0.08em; line-height: 1; }
 .lede { margin: 4px 0 0; font-style: italic; font-size: 18px; color: var(--ink-soft); }
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 3px double var(--ink); border-bottom: 3px double var(--ink); margin-bottom: 22px; }
@@ -288,6 +289,19 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
   .row > summary:has(.cell) { flex-wrap: wrap; row-gap: 2px; }
   .cell { flex-basis: calc(100% - 140px); }
   .frontispiece { gap: 14px; }
-  .emblem { width: 64px; height: 64px; }
+  .emblem { width: 68px; height: 68px; }
   .wordmark { font-size: 40px; }
 }
+
+/* Agent status: the mark plus a badge (has it, missing, not set up), words in the tooltip. */
+.agent-states { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
+.agent-state { position: relative; width: 22px; height: 22px; color: var(--icon); }
+.agent-state .agent-icon { width: 22px; height: 22px; }
+.agent-state.muted .agent-icon { opacity: 0.35; }
+.badge-icon { position: absolute; right: -6px; bottom: -5px; width: 12px; height: 12px; stroke: var(--ground); }
+.badge-icon circle { stroke: var(--ground); stroke-width: 1.5px; }
+.agent-state.ok .badge-icon { fill: var(--verdigris); }
+.agent-state.warn .badge-icon { fill: var(--oxblood); }
+.agent-state.muted .badge-icon { fill: var(--muted); }
+.agent-note { display: flex; align-items: center; gap: 8px; margin: 0; font-family: var(--mono); font-size: 11.5px; }
+.agent-note .agent-icon { width: 14px; height: 14px; }
