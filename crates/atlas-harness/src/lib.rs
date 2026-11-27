@@ -34,7 +34,7 @@ pub struct Layout {
     pub project_instructions: &'static [&'static str],
 }
 
-const LAYOUTS: [Layout; 6] = [
+const LAYOUTS: [Layout; 9] = [
     Layout {
         kind: HarnessKind::ClaudeCode,
         skill_dirs: &[".claude/skills"],
@@ -86,6 +86,39 @@ const LAYOUTS: [Layout; 6] = [
         project_skill_dirs: &[".gemini/skills", ".agents/skills", ".agent/skills"],
         project_instructions: &["AGENTS.md", "GEMINI.md"],
     },
+    // Paths from Amp's manual (ampcode.com/docs: Skills, AGENTS.md, Configuration), in
+    // Amp's own precedence order. Hooks are TypeScript plugins, not a command config.
+    // MCP servers: `amp.mcpServers` in `.config/amp/settings.json` (decision 0021).
+    Layout {
+        kind: HarnessKind::Amp,
+        skill_dirs: &[
+            ".config/agents/skills",
+            ".agents/skills",
+            ".config/amp/skills",
+            ".claude/skills",
+        ],
+        instruction_files: &[".config/amp/AGENTS.md", ".config/AGENTS.md"],
+        hook_config: None,
+        marker: ".config/amp",
+        project_skill_dirs: &[".agents/skills", ".claude/skills"],
+        project_instructions: &["AGENTS.md", "AGENT.md", "CLAUDE.md"],
+    },
+    // Paths checked against Muse Code 1.4.25 itself (decision 0021). Its hooks use Claude
+    // Code's shape under `hooks` in settings.json, next to `mcpServers`.
+    Layout {
+        kind: HarnessKind::Muse,
+        skill_dirs: &[
+            ".config/muse/skills",
+            ".agents/skills",
+            ".claude/skills",
+            ".codex/skills",
+        ],
+        instruction_files: &[".config/muse/AGENTS.md"],
+        hook_config: Some(".config/muse/settings.json"),
+        marker: ".config/muse",
+        project_skill_dirs: &[".agents/skills", ".claude/skills", ".codex/skills"],
+        project_instructions: &["AGENTS.md", "CLAUDE.md"],
+    },
     // T3 Code runs the other harnesses and reads their files.
     Layout {
         kind: HarnessKind::T3,
@@ -93,6 +126,17 @@ const LAYOUTS: [Layout; 6] = [
         instruction_files: &[],
         hook_config: None,
         marker: ".t3",
+        project_skill_dirs: &[],
+        project_instructions: &[],
+    },
+    // Herdr is a terminal workspace for the other harnesses, like T3 Code; its
+    // `config.toml` holds layout and keys, not skills, instructions or MCP servers.
+    Layout {
+        kind: HarnessKind::Herdr,
+        skill_dirs: &[],
+        instruction_files: &[],
+        hook_config: None,
+        marker: ".config/herdr",
         project_skill_dirs: &[],
         project_instructions: &[],
     },

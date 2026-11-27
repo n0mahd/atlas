@@ -140,3 +140,37 @@ OpenCode and Pi have hooks only as code plugins, so Atlas doesn't write them. At
 writes Codex's hook trust record: approving a new hook stays the owner's step in Codex.
 Skill links and instruction files only ever change links into roots Atlas manages; a
 user's own folder or file is reported as a conflict, never overwritten.
+
+## 0021 · 2026-11-27 · Amp and Muse are harnesses; Herdr is a host
+Atlas adds Amp (`amp`), Muse Code (`muse`) and Herdr (`herdr`). Paths are relative to the
+login's home; "repo" means inside a project.
+- **Amp**, from its manual (ampcode.com/docs: Skills, AGENTS.md, Configuration, MCP,
+  Plugins; Nov 2026) and the CLI's strings. Skills, in Amp's precedence order:
+  `~/.config/agents/skills` (where `amp skill add --global` installs), `~/.agents/skills`,
+  `~/.config/amp/skills`, `~/.claude/skills`; repo `.agents/skills` then `.claude/skills`.
+  Instructions: both `~/.config/amp/AGENTS.md` and `~/.config/AGENTS.md`; in a repo
+  `AGENTS.md`, else `AGENT.md` or `CLAUDE.md`. MCP: `amp.mcpServers` in
+  `~/.config/amp/settings.json` (or `.jsonc`) and the repo's `.amp/settings.json`, which
+  needs approval; a skill can also carry an `mcp.json`. Hooks: none Atlas can render.
+  Amp's event handlers are TypeScript plugins (`~/.config/amp/plugins/`, repo
+  `.amp/plugins/`), which are code, not a command config. Memory: none local; personal and
+  workspace skills live in Amp-hosted git repos outside Atlas. Not checked against a live
+  install, because every Amp command needs a sign-in.
+- **Muse Code** (Meta), checked against Muse Code 1.4.25 itself with a throwaway home: what
+  `muse skills list --json` found, which probe files reached a session, what
+  `muse mcp add` wrote, and which hooks ran. Skills: `~/.config/muse/skills`,
+  `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`; repo `.agents/skills`,
+  `.claude/skills`, `.codex/skills`. Instructions: `~/.config/muse/AGENTS.md`; in a repo
+  `AGENTS.md`, else `CLAUDE.md`. MCP: `mcpServers` in `~/.config/muse/settings.json`
+  (entries carry `type: stdio` or a URL) and the repo's `.mcp.json`. Hooks: `hooks` in
+  that same settings.json, in Claude Code's shape and event names, so the existing reader
+  covers them. Memory: `MEMORY.md` indexes in three scopes; project memory is
+  `<repo>/.agents/memory/`. Where the two personal scopes are kept was not established. An
+  untrusted repo's rules, skills and MCP servers are skipped until the user trusts it.
+- **Herdr** is a terminal workspace that runs the other agents (`herdr --help`, its
+  `config.toml`), so it is modelled like T3 Code: a marker (`~/.config/herdr`) and no files
+  of its own. Its `herdr integration install <agent>` adds a status hook to other
+  harnesses' configs, which Atlas sees as hooks outside Atlas.
+
+Marks: Amp's and Muse's one-colour icons from the Agent Client Protocol registry; Herdr gets
+a monogram like T3 Code. `Layout` has no MCP or memory fields yet; phase 4 adds MCP paths.

@@ -50,8 +50,8 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   `hook.toml` limits a hook; per-harness matchers would fix it properly.
 - Atlas adds an `@` import to Claude's `CLAUDE.md` but has no way yet to remove it when a
   machine stops being managed.
-- Harness folder paths in `atlas-harness` come from the existing `link-agents` script, not
-  from each harness's docs. Check them when phase 3 writes to them.
-- The public site lists Amp, GrokBot, Muse and Herdr under "Works with", but Atlas has no
-  harness adapter for them yet (only Claude Code, Codex, OpenCode, Pi, Antigravity; T3 Code
-  and Conductor work through those). Add the adapters or move them to a "Coming" list.
+- Harness folder paths in `atlas-harness` for Claude Code, Codex, OpenCode and Pi come from
+  the existing `link-agents` script, not from each harness's docs (Amp, Muse and Herdr were
+  checked, decision 0021). Check them when phase 3 writes to them.
+- The public site lists GrokBot under "Works with", but Atlas has no harness adapter for it
+  yet. Add the adapter or move it to a "Coming" list.

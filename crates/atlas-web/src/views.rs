@@ -17,13 +17,16 @@ pub struct Snapshot {
     pub projects: Vec<ProjectView>,
 }
 
-/// The agents Atlas shows marks for. T3 Code runs the others, so it has none of its own.
-pub const AGENTS: [HarnessKind; 5] = [
+/// The agents Atlas shows marks for. T3 Code and Herdr run the others, so they have none
+/// of their own.
+pub const AGENTS: [HarnessKind; 7] = [
     HarnessKind::ClaudeCode,
     HarnessKind::Codex,
     HarnessKind::OpenCode,
     HarnessKind::Pi,
     HarnessKind::Antigravity,
+    HarnessKind::Amp,
+    HarnessKind::Muse,
 ];
 
 /// Short names, as people say them.
@@ -34,7 +37,10 @@ const fn short(kind: HarnessKind) -> &'static str {
         HarnessKind::OpenCode => "OpenCode",
         HarnessKind::Pi => "Pi",
         HarnessKind::Antigravity => "Antigravity",
+        HarnessKind::Amp => "Amp",
+        HarnessKind::Muse => "Muse",
         HarnessKind::T3 => "T3 Code",
+        HarnessKind::Herdr => "Herdr",
     }
 }
 

@@ -404,3 +404,115 @@ fn reads_claude_project_memory_and_project_agents() {
         .unwrap();
     assert_eq!(codex.skills, vec!["agents-only", "stock"]);
 }
+
+/// Config files in the shapes Amp, Muse Code and Herdr write themselves (decision 0021).
+#[test]
+fn reads_amp_muse_and_herdr_files() {
+    let (_tmp, sources) = fixture();
+    let home = &sources.home;
+    // Amp: `amp skill add --global` installs into ~/.config/agents/skills; MCP servers sit
+    // under `amp.mcpServers` in its settings, which hold no hooks.
+    fs::create_dir_all(home.join(".config/agents/skills")).unwrap();
+    symlink(
+        sources.knowledge.join("skills/deploy"),
+        home.join(".config/agents/skills/deploy"),
+    )
+    .unwrap();
+    write(
+        &home.join(".config/amp/settings.json"),
+        r#"{
+	"amp.mcpServers": {
+		"playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest", "--headless"] }
+	},
+	"amp.skills.disableClaudeCodeSkills": false
+}"#,
+    );
+    symlink(
+        sources.knowledge.join("AGENTS.md"),
+        home.join(".config/amp/AGENTS.md"),
+    )
+    .unwrap();
+    // Muse: settings.json as `muse mcp add --user` leaves it, plus a Claude-shaped hook.
+    write(
+        &home.join(".config/muse/settings.json"),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "guard.sh", "timeout": 5 }] }
+    ]
+  },
+  "mcpServers": {
+    "demo": { "args": ["hi"], "command": "echo", "type": "stdio" }
+  },
+  "schema_version": 1
+}"#,
+    );
+    write(
+        &home.join(".config/muse/AGENTS.md"),
+        "Notes\n@~/Knowledge/AGENTS.md\n",
+    );
+    write(
+        &home.join(".config/herdr/config.toml"),
+        "[keys]\nprefix = \"ctrl+space\"\n",
+    );
+
+    let views = scan_harnesses(&sources);
+    let view = |kind| views.iter().find(|v| v.kind == kind).unwrap();
+
+    let amp = view(HarnessKind::Amp);
+    assert!(amp.present);
+    assert!(matches!(
+        amp.skill_dirs[0].entries.as_slice(),
+        [InstalledSkill::FromAtlas { home: SkillHome::Private, name }] if name.as_str() == "deploy"
+    ));
+    assert_eq!(amp.instructions[0].link, InstructionLink::Linked);
+    assert_eq!(amp.instructions[1].link, InstructionLink::Missing);
+    assert!(amp.hook_config.is_none() && amp.hooks.is_empty());
+
+    let muse = view(HarnessKind::Muse);
+    assert!(muse.present);
+    assert_eq!(muse.instructions[0].link, InstructionLink::Imports);
+    assert_eq!(muse.hooks.len(), 1);
+    assert_eq!(muse.hooks[0].event, "PreToolUse");
+    assert_eq!(muse.hooks[0].matcher.as_deref(), Some("Bash"));
+    assert_eq!(muse.hooks[0].timeout, Some(5));
+
+    let herdr = view(HarnessKind::Herdr);
+    assert!(herdr.present);
+    assert!(herdr.skill_dirs.is_empty() && herdr.instructions.is_empty());
+
+    // In a repo, Amp falls back to AGENT.md and Muse also reads Codex's skill folder.
+    let repo = &sources.projects[0].root;
+    fs::remove_file(repo.join("AGENTS.md")).unwrap();
+    write(&repo.join("AGENT.md"), "# Shop\n");
+    write(&repo.join("CLAUDE.md"), "# Shop\n");
+    write(
+        &repo.join(".codex/skills/release/SKILL.md"),
+        "---\ndescription: Cut a release\n---\n",
+    );
+    let projects = atlas_fs::scan_projects(&sources);
+    let agent = |kind| {
+        projects[0]
+            .harnesses
+            .iter()
+            .find(|h| h.kind == kind)
+            .unwrap()
+    };
+    assert_eq!(
+        agent(HarnessKind::Amp).instructions.as_deref(),
+        Some("AGENT.md")
+    );
+    assert_eq!(agent(HarnessKind::Amp).skills, vec!["stock"]);
+    assert_eq!(
+        agent(HarnessKind::Muse).instructions.as_deref(),
+        Some("CLAUDE.md")
+    );
+    assert_eq!(agent(HarnessKind::Muse).skills, vec!["release", "stock"]);
+    assert!(
+        projects[0]
+            .harnesses
+            .iter()
+            .all(|h| h.kind != HarnessKind::Herdr),
+        "Herdr has no project files of its own"
+    );
+}

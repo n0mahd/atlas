@@ -13,7 +13,10 @@ pub enum HarnessKind {
     OpenCode,
     Pi,
     Antigravity,
+    Amp,
+    Muse,
     T3,
+    Herdr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -21,13 +24,16 @@ pub enum HarnessKind {
 pub struct UnknownHarness(String);
 
 impl HarnessKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::ClaudeCode,
         Self::Codex,
         Self::OpenCode,
         Self::Pi,
         Self::Antigravity,
+        Self::Amp,
+        Self::Muse,
         Self::T3,
+        Self::Herdr,
     ];
 
     /// The stable identifier used in files and URLs.
@@ -39,7 +45,10 @@ impl HarnessKind {
             Self::OpenCode => "open-code",
             Self::Pi => "pi",
             Self::Antigravity => "antigravity",
+            Self::Amp => "amp",
+            Self::Muse => "muse",
             Self::T3 => "t3",
+            Self::Herdr => "herdr",
         }
     }
 
@@ -52,7 +61,10 @@ impl HarnessKind {
             Self::OpenCode => "OpenCode",
             Self::Pi => "Pi",
             Self::Antigravity => "Antigravity",
+            Self::Amp => "Amp",
+            Self::Muse => "Muse",
             Self::T3 => "T3 Code",
+            Self::Herdr => "Herdr",
         }
     }
 }

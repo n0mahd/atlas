@@ -34,6 +34,9 @@ folders and Claude Code's per-repo memory) plus atomic writes for edits, `atlas-
 (commits one file, optional push), `atlas-signer` (passkeys), `atlas-web`, and the
 `atlas-hub` binary. Phase 2 editing is live (decision 0016).
 
+Harnesses with a layout: Claude Code, Codex, OpenCode, Pi, Antigravity, Amp and Muse. T3
+Code and Herdr are hosts that run those agents, so their layouts are only a presence marker.
+
 `atlas-hub` and `atlasd` are the composition roots. No DI framework. Read-only screens
 query the store directly instead of going through use cases.
 

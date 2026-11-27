@@ -172,3 +172,24 @@ async fn logo_and_favicon_are_served_as_png() {
         assert_eq!(headers["content-type"], "image/png", "{path}");
     }
 }
+
+#[tokio::test]
+async fn machines_lists_amp_and_muse_but_not_herdr() {
+    let (tmp, app) = app();
+    let home = tmp.path();
+    write(&home.join(".config/amp/settings.json"), "{}\n");
+    write(
+        &home.join(".config/muse/settings.json"),
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"done.sh"}]}]},"schema_version":1}"#,
+    );
+    write(&home.join(".config/herdr/config.toml"), "[ui]\n");
+    let (status, _, body) = get(&app, "/machines", Some(OWNER)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("agent-name\">Amp<"), "Amp row missing");
+    assert!(body.contains("agent-name\">Muse<"), "Muse row missing");
+    assert!(body.contains("1 hook"), "Muse's hook not read");
+    assert!(body.contains("Not set up here: Claude, Codex, OpenCode, Pi, Antigravity."));
+    assert!(!body.contains("Herdr"), "Herdr runs agents; it is not one");
+    let (_, _, hooks) = get(&app, "/hooks", Some(OWNER)).await;
+    assert!(hooks.contains("done.sh") && hooks.contains(".config/muse/settings.json"));
+}
