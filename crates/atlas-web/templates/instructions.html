@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="masthead">
+  <div class="folio"><span>{{ page.folio }}</span><span>{{ rows.len() }} files</span></div>
+  <hr class="rule-double">
+  <div class="key" aria-hidden="true"></div>
+  <div class="title-row">
+    <div>
+      <h1>Instructions</h1>
+      <p class="lede">The standing orders every agent reads: one global file, and one per project.</p>
+    </div>
+  </div>
+</header>
+<div class="table-box">
+  <table class="plates">
+    <thead><tr><th scope="col">Plate</th><th scope="col">File</th><th scope="col">Scope</th><th scope="col">Read by</th><th scope="col">Lines</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="plate">{{ r.plate }}</td>
+        <td><span class="entry-name"><a href="{{ r.href }}">{{ r.title }}</a></span><span class="entry-desc mono">{{ r.path }}</span></td>
+        <td><span class="tag {{ r.scope_class }}">{{ r.scope_label }}</span></td>
+        <td>{{ r.readers }}</td>
+        <td class="mono">{{ r.lines }}</td>
+      </tr>
+      {% else %}
+      <tr class="empty-row"><td colspan="5">No instruction files found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

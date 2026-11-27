@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="masthead">
+  <div class="folio"><span>{{ page.folio }}</span><span><a href="/memory">All memory</a></span></div>
+  <hr class="rule-double">
+  <div class="key" aria-hidden="true"></div>
+  <div class="title-row"><div><h1>{{ v.name }}</h1><p class="lede">{{ v.description }}</p></div></div>
+</header>
+<div class="split">
+  <article class="prose">{{ v.body_html|safe }}</article>
+  <aside class="aside">
+    <dl class="facts">
+      <dt>Kind</dt><dd><span class="tag {{ v.kind_class }}">{{ v.kind }}</span></dd>
+      <dt>Host</dt><dd class="mono">{{ v.host }}</dd>
+      <dt>File</dt><dd class="mono">{{ v.path }}</dd>
+    </dl>
+    {% if !v.links.is_empty() %}
+    <div class="section-head"><span class="num">I</span><h2>Links to</h2></div>
+    <ul class="list-plain">{% for l in v.links %}<li>{% if l.exists %}<a href="/memory/{{ l.name }}">{{ l.name }}</a>{% else %}<span class="warn">{{ l.name }}</span> <span class="muted">· no such page yet</span>{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if !v.backlinks.is_empty() %}
+    <div class="section-head"><span class="num">II</span><h2>Linked from</h2></div>
+    <ul class="list-plain">{% for b in v.backlinks %}<li><a href="/memory/{{ b }}">{{ b }}</a></li>{% endfor %}</ul>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

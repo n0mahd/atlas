@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="masthead">
+  <div class="folio"><span>{{ page.folio }}</span><span>1 of 1 paired · this hub</span></div>
+  <hr class="rule-double">
+  <div class="key" aria-hidden="true"></div>
+  <div class="title-row">
+    <div>
+      <h1>Machines</h1>
+      <p class="lede">What each harness on {{ page.hub }} reads, and where it comes from. Other machines join when they pair, in phase III.</p>
+    </div>
+  </div>
+</header>
+<div class="cards">
+  {% for c in cards %}
+  <section class="card">
+    <div class="section-head"><span class="num">{{ c.plate }}</span><h2>{{ c.name }}</h2></div>
+    {% if c.runs_others %}
+    <span class="muted">Runs the other harnesses and reads their files.</span>
+    {% else if !c.present %}
+    <span class="muted">Not set up for this login.</span>
+    {% else %}
+    {% for d in c.dirs %}
+    <div><span class="mono">{{ d.path }}</span><br>
+      {% if d.exists %}<span class="ok">{{ d.from_atlas }} from Atlas</span>{% if d.outside > 0 %} · <span class="warn">{{ d.outside }} outside</span>{% endif %}{% if d.broken > 0 %} · <span class="warn">{{ d.broken }} broken</span>{% endif %}{% else %}<span class="muted">folder not there</span>{% endif %}
+    </div>
+    {% endfor %}
+    {% for r in c.readers %}
+    <div><span class="mono">{{ r.path }}</span><br><span class="{{ r.class }}">{{ r.state }}</span></div>
+    {% endfor %}
+    {% if let Some(h) = c.hook_config %}<div><span class="mono">{{ h }}</span><br><span class="muted">{{ c.hooks }} hooks of its own</span></div>{% endif %}
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -49,3 +49,17 @@ Atlas manages harness hooks alongside skills, instructions, memory and MCPs: one
 definition, rendered into each harness's own hook config by its adapter, global or per
 project. Hooks run commands on the machine, so like local MCP servers they reach a
 machine only through a signed release, and the scanner flags every hook change.
+
+## 0011 · 2026-11-27 · One `hook.toml` per hook
+A hook is a folder (`hooks/<name>/` in the knowledge repo, `.agents/hooks/<name>/` in a
+project) holding its script and a `hook.toml`: `description`, `event` (Atlas's own names:
+`session-start`, `user-prompt`, `pre-tool-use`, `post-tool-use`, `stop`), optional
+`matcher`, `run` (a file in the folder, never a path out of it), optional `timeout` and
+optional `harnesses`. Each harness adapter maps the event to the harness's own name and
+skips harnesses that lack it. TOML because it's strict and already used for `mcp.toml`.
+
+## 0012 · 2026-11-27 · Phase 1 access through `tailscale serve`
+The hub listens only on a Unix socket (mode 0600 in a 0700 folder). `tailscale serve`
+gives it HTTPS on the ts.net name and sets `Tailscale-User-Login`; the hub admits only
+the logins in its config. Passkey sign-in, CSRF tokens and cookies arrive with editing in
+phase 2, when there is something to protect beyond reading. Recorded as debt.

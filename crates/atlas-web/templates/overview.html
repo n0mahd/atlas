@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="masthead">
+  <div class="folio"><span>Atlas · Frontispiece</span><span>Hub · {{ page.hub }}</span></div>
+  <hr class="rule-double">
+  <div class="key" aria-hidden="true"></div>
+</header>
+<section class="frontispiece">
+  <div>
+    <span class="eyebrow">Bearer of the heavens</span>
+    <h1 class="wordmark">ATLAS</h1>
+    <p class="lede">Every skill, every instruction, every memory and every hook, held in one place. Soon carried to every machine you work on.</p>
+  </div>
+  <svg class="emblem" role="img" aria-label="Armillary sphere emblem" viewBox="0 0 360 360">
+    <circle cx="180" cy="180" r="160" fill="none" stroke="currentColor" stroke-width="1"/>
+    <circle cx="180" cy="180" r="152" fill="none" stroke="#B08A3E" stroke-width="2.5"/>
+    <circle cx="180" cy="180" r="118" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <ellipse cx="180" cy="180" rx="118" ry="34" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <ellipse cx="180" cy="180" rx="118" ry="34" fill="none" stroke="#2E6B5E" stroke-width="7" transform="rotate(-23.4 180 180)" opacity="0.85"/>
+    <ellipse cx="180" cy="180" rx="118" ry="34" fill="none" stroke="currentColor" stroke-width="1" transform="rotate(-23.4 180 180)"/>
+    <ellipse cx="180" cy="180" rx="38" ry="118" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <ellipse cx="180" cy="180" rx="84" ry="118" fill="none" stroke="currentColor" stroke-width="0.8"/>
+    <line x1="180" y1="8" x2="180" y2="352" stroke="currentColor" stroke-width="1.5"/>
+    <circle cx="180" cy="180" r="16" fill="#B08A3E" stroke="currentColor" stroke-width="1.5"/>
+    <circle cx="180" cy="62" r="4" fill="currentColor"/>
+    <circle cx="180" cy="298" r="4" fill="currentColor"/>
+    <path d="M180 20 l3 8 8 0 -6 5 2 8 -7 -5 -7 5 2 -8 -6 -5 8 0z" fill="#B08A3E"/>
+    <text x="180" y="346" text-anchor="middle" font-family="Cinzel, serif" font-size="11" letter-spacing="3" fill="currentColor">· MMXXVI ·</text>
+  </svg>
+</section>
+
+<section class="tiles" aria-label="What the atlas holds">
+  {% for t in v.tiles %}
+  <a class="tile" href="{{ t.href }}">
+    <span class="num">{{ t.num }}</span>
+    <span class="count">{{ t.count }}</span>
+    <span class="label">{{ t.label }}</span>
+    <span class="detail">{{ t.detail }}</span>
+  </a>
+  {% endfor %}
+</section>
+
+<div class="cards">
+  <div class="card ink-card">
+    <span class="cap">This hub</span>
+    <span class="line">{{ v.harnesses_present }} harnesses set up for this login.</span>
+    <a href="/machines">SEE WHAT EACH ONE READS</a>
+  </div>
+  {% if v.outside > 0 %}
+  <div class="card">
+    <span class="cap warn">Outside Atlas</span>
+    <span class="line">{{ v.outside }} skills sit in a harness's own folder, not in the store.</span>
+    <a href="/skills?f=outside">Show them</a>
+  </div>
+  {% endif %}
+</div>
+
+<section id="problems" class="aside">
+  <div class="section-head"><span class="num">§</span><h2>Needs a look</h2><span class="count">{{ v.problems.len() }} found</span></div>
+  {% if v.problems.is_empty() %}
+  <p class="muted">Every file in the store read cleanly.</p>
+  {% else %}
+  <ul class="problems">
+    {% for p in v.problems %}
+    <li><span class="path">{{ p.path }}</span><span>{{ p.message }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}

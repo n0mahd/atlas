@@ -1,0 +1,22 @@
+[package]
+name = "atlas-fs"
+description = "Reads the Atlas store and harness folders from disk, inside a cap-std sandbox."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+atlas-core = { path = "../atlas-core" }
+atlas-harness = { path = "../atlas-harness" }
+cap-std.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

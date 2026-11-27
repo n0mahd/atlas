@@ -1,0 +1,21 @@
+# User service for the Atlas hub. Install:
+#   cargo build --release -p atlas-hub && install -Dm755 target/release/atlas-hub ~/.local/bin/atlas-hub
+#   ln -sf "$PWD/deploy/atlas-hub.service" ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now atlas-hub
+#   tailscale serve --bg --https=<port> "unix:$XDG_RUNTIME_DIR/atlas/hub.sock"
+[Unit]
+Description=Atlas hub (web UI over a Unix socket for tailscale serve)
+
+[Service]
+ExecStart=%h/.local/bin/atlas-hub
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadOnlyPaths=%h
+RuntimeDirectory=atlas
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=no
+
+[Install]
+WantedBy=default.target

@@ -28,6 +28,9 @@ Clients store the hub's address at pairing time. No hostname appears in the code
 | `atlas-gateway` | The MCP gateway (phase 4). |
 | `atlas-testkit` | Fakes for every port plus a contract suite each adapter must pass. |
 
+Built so far (phase 1): `atlas-core`, `atlas-harness` (layouts only), `atlas-fs` (reads
+only), `atlas-web`, and the `atlas-hub` binary.
+
 `atlas-hub` and `atlasd` are the composition roots. No DI framework. Read-only screens
 query the store directly instead of going through use cases.
 
@@ -68,8 +71,9 @@ Display or Serialize; zeroed on drop), `Plan`, `ScopedPath`, `Untrusted<Markdown
 
 ## Web UI (from phase 1)
 - Reachable only on the hub's Tailscale address, over HTTPS with a ts.net certificate
-  (passkeys require HTTPS).
-- Passkey sign-in.
+  (passkeys require HTTPS). The hub listens on a Unix socket; `tailscale serve` fronts it
+  (`deploy/`).
+- Phase 1: only allowed Tailscale logins (decision 0012). Phase 2: passkey sign-in.
 - Strict CSP with no inline script, CSRF tokens, `SameSite=Strict` cookies.
 - Markdown is sanitised; askama auto-escapes everything else.
 

@@ -1,0 +1,13 @@
+[package]
+name = "atlas-harness"
+description = "Where each agent harness reads its skills, instructions and hooks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+atlas-core = { path = "../atlas-core" }
+
+[lints]
+workspace = true

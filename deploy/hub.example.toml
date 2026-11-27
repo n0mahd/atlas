@@ -1,0 +1,7 @@
+# Copy to ~/.config/atlas/hub.toml on the hub machine.
+allowed_logins = ["you@github"]   # Tailscale logins allowed in
+knowledge = "~/Knowledge"
+public_skills = "~/Skills"
+projects_dir = "~/Projects"
+# socket = "/run/user/1000/atlas/hub.sock"   # default: $XDG_RUNTIME_DIR/atlas/hub.sock
+# hub_name = "my-hub"                         # default: the hostname

@@ -1,0 +1,25 @@
+[package]
+name = "atlas-web"
+description = "The Atlas hub's web UI: axum, askama and htmx."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ammonia.workspace = true
+askama.workspace = true
+atlas-core = { path = "../atlas-core" }
+atlas-fs = { path = "../atlas-fs" }
+axum.workspace = true
+pulldown-cmark.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true
