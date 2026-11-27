@@ -19,9 +19,9 @@ them to every machine, harness and login, so the user maintains each thing once.
 - Project skills belong to their project repo; Atlas commits edits there (to `main`).
 
 ## Direction
-Build order: (1) read-only hub, (2) editing, (3) client service replacing
-`~/Knowledge/bin/sync` and `link-agents`, (4) MCP list, gateway and keystore.
-Each phase must work on its own.
+Build order: (1) read-only hub, (2) editing, (3) client service and local
+app, replacing `~/Knowledge/bin/sync` and `link-agents`, (4) MCP list, gateway and
+keystore. Each phase must work on its own. The hub is not tied to one machine.
 
 ## Debt register
 (none yet)

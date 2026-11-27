@@ -15,7 +15,7 @@ Edits to a project's skills are committed straight to that repo's `main`. Note: 
 where `main` auto-deploys, an edit goes live at once.
 
 ## 0004 · 2026-11-26 · "Every login" means both
-Every user account on every machine gets the setup (for example a separate `agent` account),
+Every user account on every machine gets the setup (including service accounts that run agents),
 and harness sign-ins are tracked too.
 
 ## 0005 · 2026-11-26 · Rust
@@ -27,3 +27,19 @@ Classic, maximalist, serif: Cinzel titles, EB Garamond body, IBM Plex Mono for p
 status; limestone ground, ink, verdigris accent, gilt ornament, oxblood for problems;
 Hermes Agent's structure (rules, spaced uppercase labels, numbered entries, grain),
 not its colours. See `documents/design.md`.
+
+## 0007 · 2026-11-27 · Hexagonal architecture; the user's passkey signs releases
+A pure `atlas-core` with ports, adapter crates, and two composition roots (`atlas-hub`,
+`atlasd`). Releases are signed by the user's passkey, not by a key the hub holds, so a
+compromised hub cannot push changes to machines. The hub can run on any machine;
+clients learn its address at pairing. A local desktop app (Tauri) edits local files and
+sends global edits to the hub as proposals. See `architecture.md`.
+
+## 0008 · 2026-11-27 · Memory goes straight to git
+Agents keep writing memory directly to git; the scanner flags but doesn't block. A
+setting lets a user require a release for memory too.
+
+## 0009 · 2026-11-27 · Local stdio MCP servers only from a signed release
+A machine starts a local (stdio) MCP server only if it arrived in a release the user
+signed. Hub-only was ruled out because servers that need local files, a browser or git
+couldn't work.
