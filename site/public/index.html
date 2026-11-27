@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Atlas — One config for every AI coding agent</title>
-<meta name="description" content="Keep your AI agents' skills, instructions, memory, hooks and MCP servers in one git-backed hub, synced to every agent on every machine.">
+<title>Atlas — Configure AI agents once for every machine</title>
+<meta name="description" content="Configure your AI agents once. Atlas holds skills, instructions, memory, hooks and MCP servers in git and carries them everywhere.">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta property="og:title" content="Atlas — One config for every AI coding agent">
-<meta property="og:description" content="Keep your AI agents' skills, instructions, memory, hooks and MCP servers in one git-backed hub, synced to every agent on every machine.">
+<meta property="og:title" content="Atlas — Configure AI agents once for every machine">
+<meta property="og:description" content="Configure your AI agents once. Atlas holds skills, instructions, memory, hooks and MCP servers in git and carries them everywhere.">
 <meta property="og:image" content="https://atlas.abdlh.com/logo-512.png">
 <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/eb-garamond.woff2" as="font" type="font/woff2" crossorigin>
@@ -49,23 +49,28 @@ body::before { content: ""; position: fixed; inset: 0; background: url("/grain.s
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* masthead */
-.mast { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 18px 0 10px; }
+.mast { display: flex; align-items: center; gap: 12px; padding: 14px 0 10px; }
+.mark { display: block; width: 40px; height: 40px; border: 1px solid var(--gilt-orn); box-shadow: 0 0 0 2px var(--ground), 0 0 0 3px var(--gilt-orn); }
 .wm { font-family: var(--display); font-weight: 900; font-size: 15px; letter-spacing: 0.32em; text-transform: uppercase; }
-.year { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; color: var(--muted); }
 .key { height: 8px; background: url("/key.svg") repeat-x; background-size: 12px 8px; }
 
-/* hero: problem row, then answer row; the two ledgers stack in one column for comparison */
-.row { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: 72px; align-items: center; }
-.problem { padding: 64px 0 40px; }
-.answer { padding: 8px 0 88px; }
-h1 { margin: 0; font-family: var(--display); font-weight: 900; font-size: clamp(36px, 5.1vw, 62px); line-height: 1.06; letter-spacing: 0.01em; }
-h1 span { display: inline-block; white-space: nowrap; }
-h1 .drift { color: var(--oxblood); }
-h1 .drift i { font-style: normal; letter-spacing: 0.1em; margin-right: -0.1em; }
-.lede { margin: 24px 0 0; font-size: 23px; line-height: 1.38; color: var(--ink-soft); max-width: 22em; text-wrap: pretty; }
-.seal { display: block; width: 104px; height: 104px; margin: 0 0 26px 5px; border: 1px solid var(--gilt-orn); box-shadow: 0 0 0 4px var(--ground), 0 0 0 5px var(--gilt-orn); }
-.claim { margin: 0; font-family: var(--display); font-weight: 700; font-size: clamp(25px, 2.7vw, 34px); line-height: 1.22; max-width: 15em; text-wrap: balance; }
-.claim em { font-style: normal; color: var(--verdigris); }
+/* hero: the promise, then the proof */
+.hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 72px 0 56px; }
+h1 { margin: 0; font-family: var(--display); font-weight: 900; font-size: clamp(36px, 5.4vw, 64px); line-height: 1.08; letter-spacing: 0.015em; max-width: 14em; text-wrap: balance; }
+h1 em { font-style: normal; color: var(--gilt); }
+.lede { margin: 22px 0 0; font-size: 23px; line-height: 1.38; color: var(--ink-soft); max-width: 30em; text-wrap: balance; }
+/* free to move */
+.free { text-align: center; padding: 8px 0 72px; }
+.free .sec { justify-content: center; }
+.free .sec::before { content: ""; flex: 1; border-top: 3px double var(--hair-strong); }
+.stmt { margin: 0 auto; font-family: var(--display); font-weight: 700; font-size: clamp(24px, 3vw, 36px); line-height: 1.22; max-width: 20em; text-wrap: balance; }
+.stmt em { font-style: normal; color: var(--verdigris); }
+.with { margin: 36px auto 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 30px; max-width: 46em; }
+.with li { font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.08em; white-space: nowrap; }
+.with .more { font-family: var(--serif); font-weight: 400; font-style: italic; letter-spacing: 0; color: var(--muted); font-size: 18px; }
+.with-label { display: block; margin: 40px 0 12px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.with-label + .with { margin-top: 0; }
+.proof { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 64px; padding: 24px 0 88px; }
 
 /* ledgers */
 figure { margin: 0; }
@@ -123,11 +128,7 @@ footer { margin-top: 72px; }
 footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 13px; color: var(--muted); }
 
 @media (max-width: 960px) {
-  .row { grid-template-columns: 1fr; gap: 32px; }
-  .problem { padding: 44px 0 36px; }
-  .answer { padding: 12px 0 64px; }
-  .answer > div:first-child { display: flex; align-items: center; gap: 24px; }
-  .seal { width: 72px; height: 72px; margin: 0 0 0 5px; flex: none; }
+  .proof { grid-template-columns: 1fr; gap: 40px; padding-bottom: 64px; }
   .vows { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 32px; }
 }
 @media (max-width: 700px) {
@@ -142,9 +143,12 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
 }
 @media (max-width: 600px) {
   .page { padding: 0 16px 36px; }
-  .problem { padding: 36px 0 28px; }
-  .row { gap: 26px; }
-  .lede { font-size: 20px; margin-top: 18px; }
+  .hero { padding: 36px 0 32px; }
+  h1 { font-size: 32px; }
+  .mark { width: 34px; height: 34px; }
+  .with li { font-size: 13.5px; }
+  .with { gap: 10px 20px; }
+  .lede { font-size: 20px; margin-top: 16px; }
   .ledger { border-spacing: 4px; width: calc(100% + 8px); margin: 0 -4px; }
   .ledger col.agent { width: 29%; }
   caption { padding: 0 4px 6px; }
@@ -153,7 +157,6 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
   .old.ed { font-size: 14px; }
   .gap { font-size: 10px; }
   figcaption { font-size: 17px; }
-  .claim { font-size: 23px; }
   section { padding: 28px 0 44px; }
   .sec { margin-bottom: 32px; font-size: 14px; }
   .vows { grid-template-columns: 1fr; gap: 28px; }
@@ -166,16 +169,17 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
 <div class="page">
 
 <header>
-  <div class="mast"><span class="wm">Atlas</span><span class="year" aria-hidden="true">MMXXVI</span></div>
+  <div class="mast"><img class="mark" src="/logo-512.png" width="40" height="40" alt=""><span class="wm">Atlas</span></div>
   <div class="key" aria-hidden="true"></div>
 </header>
 
 <main>
-<div class="problem row">
-  <div>
-    <h1><span>AI agent</span> <span>configs</span> <span class="drift">drift <i>apart.</i></span></h1>
-    <p class="lede">Each agent stores its skills, instructions, memory, hooks and MCPs separately on every machine.</p>
-  </div>
+<div class="hero">
+  <h1>Configure once <em>for every AI agent and machine</em></h1>
+  <p class="lede">Atlas manages your Skills, Instructions, Memory, MCPs and Hooks for every harness and machine.</p>
+</div>
+
+<div class="proof">
   <figure class="before">
     <table class="ledger">
       <caption>Without Atlas <span class="tag">skill: review-pr</span></caption>
@@ -191,13 +195,6 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
     </table>
     <figcaption>Seven copies, five versions, eight gaps.</figcaption>
   </figure>
-</div>
-
-<div class="answer row">
-  <div>
-    <img class="seal" src="/logo-512.png" width="104" height="104" alt="Atlas medallion: Atlas crouching under an armillary sphere">
-    <p class="claim">Atlas keeps <em>one copy</em> in git and syncs it everywhere.</p>
-  </div>
   <figure class="after">
     <table class="ledger">
       <caption>With Atlas <span class="sr">skill: review-pr</span></caption>
@@ -211,9 +208,18 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
         <tr><th scope="row">Antigravity</th><td><span class="t cur">v4</span></td><td><span class="t cur">v4</span></td><td><span class="t cur">v4</span></td></tr>
       </tbody>
     </table>
-    <figcaption>One copy, current everywhere.</figcaption>
+    <figcaption>One source, current everywhere.</figcaption>
   </figure>
 </div>
+
+<section class="free" aria-labelledby="free">
+  <h2 class="sec" id="free">Free to move</h2>
+  <p class="stmt">Switch models, harnesses or machines. <em>Your setup comes with you.</em></p>
+  <span class="with-label">Works with</span>
+  <ul class="with">
+    <li>Claude Code</li><li>Codex</li><li>OpenCode</li><li>Pi</li><li>Antigravity</li><li>T3 Code</li><li>Conductor</li><li>GrokBot</li><li>Amp</li><li>Muse</li><li>Herdr</li><li class="more">and more</li>
+  </ul>
+</section>
 
 <section aria-labelledby="how">
   <h2 class="sec" id="how">How it works</h2>
@@ -224,11 +230,11 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
     </li>
     <li class="step">
       <div class="glyph" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5.5 22A11 11 0 1 1 26.5 22"/><path d="M9.6 24.5A7 7 0 1 1 22.4 24.5" transform="translate(0 -3)"/><path d="M13 27v-7.5a3 3 0 0 1 6 0V27"/><path d="M16 20v9"/><path d="M5.5 22v3M26.5 22v3"/></svg></div>
-      <div><span class="numeral">II</span><h3>Sign</h3><p>A passkey tap signs each release.</p></div>
+      <div><span class="numeral">II</span><h3>Sign</h3><p>A passkey tap approves each release.</p></div>
     </li>
     <li class="step">
       <div class="glyph" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="16" r="3.5"/><circle cx="25.5" cy="6.5" r="2.5"/><circle cx="25.5" cy="16" r="2.5"/><circle cx="25.5" cy="25.5" r="2.5"/><path d="M10.5 16h12.5M10 14l13-6.5M10 18l13 6.5"/></svg></div>
-      <div><span class="numeral">III</span><h3>Sync</h3><p>Local clients pull and write each agent's files.</p></div>
+      <div><span class="numeral">III</span><h3>Sync</h3><p>Clients pull releases into native agent files.</p></div>
     </li>
   </ol>
 </section>
@@ -236,14 +242,14 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
 <section aria-labelledby="vows">
   <h2 class="sec" id="vows">Guarantees</h2>
   <ul class="vows">
-    <li><h3>Works offline</h3><p>Agents read local files. Hub downtime breaks nothing.</p></li>
-    <li><h3>Your edits stay</h3><p>Writes only the config entries it manages.</p></li>
-    <li><h3>Keys stay put</h3><p>MCP keys live in the keystore, not git.</p></li>
-    <li><h3>Plain files</h3><p>Markdown and TOML in git. Undo any edit.</p></li>
+    <li><h3>Stands offline</h3><p>Agents read local copies. Hub downtime stops nothing.</p></li>
+    <li><h3>Managed entries only</h3><p>Your hand edits remain untouched.</p></li>
+    <li><h3>No secrets in git</h3><p>MCP keys never leave the keystore.</p></li>
+    <li><h3>Plain files</h3><p>Markdown and TOML in git. Every change is reversible.</p></li>
   </ul>
 </section>
 
-<p class="status"><b>Status</b> In development. The hub reads and edits everything today; machine sync is next.</p>
+<p class="status"><b>Status</b> In development. View and edit in the hub today; machine sync is next.</p>
 </main>
 
 <footer>

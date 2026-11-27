@@ -47,3 +47,6 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   Stricter would be "only files git tracks"; revisit when edits commit through Atlas.
 - Harness folder paths in `atlas-harness` come from the existing `link-agents` script, not
   from each harness's docs. Check them when phase 3 writes to them.
+- The public site lists Amp, GrokBot, Muse and Herdr under "Works with", but Atlas has no
+  harness adapter for them yet (only Claude Code, Codex, OpenCode, Pi, Antigravity; T3 Code
+  and Conductor work through those). Add the adapters or move them to a "Coming" list.
