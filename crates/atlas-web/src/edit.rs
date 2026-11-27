@@ -660,17 +660,24 @@ fn skill_item(home: &str, name: &str, snap_projects: &[Slug]) -> Option<Item> {
     })
 }
 
-fn memory_item(name: &str) -> Item {
-    Item {
+/// A store memory note, found by name in the catalog (which knows its file).
+fn memory_item(snap: &crate::views::Snapshot, name: &str) -> Option<Item> {
+    let page = snap
+        .catalog
+        .memory
+        .iter()
+        .find(|m| m.name == name && m.scope == Scope::Global && !m.file.is_empty())?;
+    Some(Item {
         target: EditTarget::Memory {
             name: name.to_owned(),
+            file: page.file.clone(),
         },
         title: name.to_owned(),
         section: "/memory",
         view: format!("/memory/{name}"),
         edit: format!("/memory/{name}/edit"),
         label: format!("memory {name}"),
-    }
+    })
 }
 
 fn instruction_item(scope: &str, file: &str, projects: &[Slug]) -> Option<Item> {
@@ -848,7 +855,8 @@ async fn save(
             Err(EditError::Changed) => return Err(fail("The file changed since you opened it. Your text is below; copy what you need and reload.".to_owned())),
             Err(e) => return Err(fail(e.to_string())),
         };
-        let sha = match repo.commit_file(rel, &format!("Edit {label} in Atlas"), located.kind.required_branch()) {
+        // The branch was checked just above, under the save lock; no need to ask git twice.
+        let sha = match repo.commit_file(rel, &format!("Edit {label} in Atlas"), None) {
             Ok(sha) => sha,
             Err(atlas_git::GitError::NothingToCommit) => return Ok(Saved::Unchanged),
             Err(e) => {
@@ -870,6 +878,8 @@ async fn save(
     })
     .await
     .map_err(|_| AppError::Internal)?;
+    // Whatever happened, the next page should read the store as it now is.
+    s.invalidate().await;
 
     match outcome {
         Ok(Saved::Committed { sha, pushed }) => {
@@ -921,7 +931,9 @@ pub(crate) async fn edit_memory(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Response, AppError> {
-    show_edit(&s, &headers, memory_item(&name)).await
+    let snap = s.snapshot().await?;
+    let item = memory_item(&snap, &name).ok_or(AppError::NotFound)?;
+    show_edit(&s, &headers, item).await
 }
 
 pub(crate) async fn save_memory(
@@ -930,7 +942,9 @@ pub(crate) async fn save_memory(
     Path(name): Path<String>,
     Form(f): Form<EditForm>,
 ) -> Result<Response, AppError> {
-    save(&s, &headers, memory_item(&name), f).await
+    let snap = s.snapshot().await?;
+    let item = memory_item(&snap, &name).ok_or(AppError::NotFound)?;
+    save(&s, &headers, item, f).await
 }
 
 pub(crate) async fn edit_instructions(
@@ -1237,6 +1251,8 @@ mod tests {
         );
         let (_, _, view) = send(&hub, get(&hub, &location, true)).await;
         assert!(view.contains("Saved and committed as"));
+        // The cached read of the store was dropped by the save, so the page is current.
+        assert!(view.contains("New body."), "stale page after save");
     }
 
     #[tokio::test]

@@ -91,15 +91,23 @@ pub fn locate(sources: &Sources, target: &EditTarget) -> Option<Located> {
                 markdown: true,
             }
         }
-        EditTarget::Memory { name } => {
-            // Notes are found by their name, which may differ from the file name.
-            let rel = find_memory(&sources.knowledge, name)?;
+        EditTarget::Memory { file, .. } => {
+            // The catalog already found the note's file; accept only a plain path in memory/.
+            let plain = Path::new(file)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)));
+            if !plain
+                || !file.starts_with("memory/")
+                || Path::new(file).extension().is_none_or(|e| e != "md")
+            {
+                return None;
+            }
             let root = sources.knowledge.clone();
             Located {
-                shown: sources.display(&root.join(&rel)),
+                shown: sources.display(&root.join(file)),
                 kind: RepoKind::Knowledge,
                 root,
-                rel,
+                rel: file.clone(),
                 markdown: true,
             }
         }
@@ -127,45 +135,6 @@ pub fn locate(sources: &Sources, target: &EditTarget) -> Option<Located> {
         }
     };
     located.root.join(&located.rel).exists().then_some(located)
-}
-
-/// The path of the memory note named `name`, relative to the knowledge repo.
-fn find_memory(knowledge: &Path, name: &str) -> Option<String> {
-    let catalog_name_matches = |path: &Path, stem: &str| -> bool {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            return stem == name;
-        };
-        let declared = text
-            .strip_prefix("---\n")
-            .and_then(|rest| rest.split("\n---").next())
-            .and_then(|fm| fm.lines().find_map(|l| l.strip_prefix("name:")))
-            .map(|n| n.trim().trim_matches(['"', '\'']).to_owned());
-        declared.map_or(stem == name, |d| d == name)
-    };
-    let memory = knowledge.join("memory");
-    let mut stack = vec![memory.clone()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).ok()?.flatten() {
-            let path = entry.path();
-            let Ok(ft) = entry.file_type() else { continue };
-            if ft.is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
-                stack.push(path);
-            } else if ft.is_file()
-                && let Some(stem) = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .and_then(|n| n.strip_suffix(".md"))
-                && stem != "index"
-                && catalog_name_matches(&path, stem)
-            {
-                return path
-                    .strip_prefix(knowledge)
-                    .ok()
-                    .map(|p| p.to_string_lossy().into_owned());
-            }
-        }
-    }
-    None
 }
 
 fn open_root(located: &Located) -> Result<Dir, EditError> {

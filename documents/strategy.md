@@ -28,6 +28,9 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
 - Reading trusts the `Tailscale-User-Login` header from `tailscale serve` (decision 0012);
   writes need a passkey (0016). Any process running as the hub's user can reach the socket.
 - Sessions and passkey ceremonies live in memory, so a hub restart signs the owner out.
+- Pages share one read of the store for 3 seconds (saves through Atlas clear it), so a
+  change made outside Atlas can take that long to show. A file watcher would remove the
+  delay if it ever matters.
 - The first-run window trusts any allowed Tailscale login while no passkey exists
   (decision 0018); the local app's first-run wizard takes onboarding over in phase 3.
 - Saving runs `git` in project repos the owner also works in by hand; a save refuses when

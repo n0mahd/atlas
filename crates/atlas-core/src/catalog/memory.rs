@@ -49,6 +49,8 @@ pub struct MemoryPage {
     pub host: String,
     /// Path inside the memory folder, for display.
     pub path: String,
+    /// The file relative to its repo (`memory/...`), set by the reader; empty if unknown.
+    pub file: String,
     /// Global pages live in the store; project pages are an agent's notes on one repo.
     pub scope: Scope,
     /// The agent that keeps this page in its own folder, for project pages.
@@ -99,6 +101,7 @@ impl MemoryPage {
         Self {
             scope: Scope::Global,
             kept_by: None,
+            file: String::new(),
             name,
             description: fm.description,
             kind: MemoryKind::parse(fm.metadata.kind.as_deref()),

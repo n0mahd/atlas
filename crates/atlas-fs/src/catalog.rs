@@ -330,11 +330,8 @@ impl Reader<'_> {
                 continue;
             }
             let shown = base.join(&rel);
-            let Some(text) = self.read_text(
-                root_dir,
-                &shown,
-                &join(rel_dir(rel_base(&base, root)), &rel),
-            ) else {
+            let in_repo = join(rel_dir(rel_base(&base, root)), &rel);
+            let Some(text) = self.read_text(root_dir, &shown, &in_repo) else {
                 continue;
             };
             let (fm, body): (MemoryFrontmatter, String) = self.parse_front(&shown, &text);
@@ -348,6 +345,7 @@ impl Reader<'_> {
             let mut page = MemoryPage::new(name, self.sources.display(&shown), fm, &body);
             page.scope = scope.clone();
             page.kept_by = kept_by;
+            page.file = in_repo;
             self.catalog.memory.push(page);
         }
     }

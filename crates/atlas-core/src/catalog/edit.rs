@@ -9,7 +9,11 @@ pub enum EditTarget {
     Skill { home: super::SkillHome, name: Slug },
     /// A memory note in the store. Agents' own per-repo notes aren't in git, so they stay
     /// read-only: every edit must be a commit (strategy: nothing is lost).
-    Memory { name: String },
+    Memory {
+        name: String,
+        /// The note's file relative to the knowledge repo, as the catalog found it.
+        file: String,
+    },
     /// An instruction file: the store's `AGENTS.md` or a project's `AGENTS.md`/`CLAUDE.md`.
     Instructions { scope: Scope, file: String },
 }

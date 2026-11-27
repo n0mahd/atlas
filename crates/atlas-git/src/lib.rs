@@ -4,11 +4,10 @@
 //! because the repositories may hold hostile content.
 
 use std::ffi::OsStr;
-use std::io::Read;
+use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, Output, Stdio};
+use std::time::Duration;
 
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(30);
 const PUSH_TIMEOUT: Duration = Duration::from_secs(90);
@@ -54,12 +53,6 @@ pub enum GitError {
 #[derive(Debug, Clone)]
 pub struct Repo {
     root: PathBuf,
-}
-
-struct Output {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
 }
 
 impl Repo {
@@ -157,7 +150,10 @@ impl Repo {
             return Err(GitError::NothingToCommit);
         }
         let untracked = status.starts_with(b"??");
-        if !untracked && self.head_exists()? && self.matches_head(rel)? {
+        // " M": nothing staged and the file differs from the index, which equals HEAD, so it
+        // certainly differs from HEAD; only other states need the slower check.
+        let plainly_modified = status.starts_with(b" M");
+        if !untracked && !plainly_modified && self.head_exists()? && self.matches_head(rel)? {
             return Err(GitError::NothingToCommit);
         }
         if untracked {
@@ -328,41 +324,27 @@ impl Repo {
             cmd.env_remove(var);
         }
         extra(&mut cmd);
-        let mut child = cmd.spawn()?;
-        let stdout = drain(child.stdout.take());
-        let stderr = drain(child.stderr.take());
-        let deadline = Instant::now() + timeout;
-        let status = loop {
-            if let Some(status) = child.try_wait()? {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                // The reader threads are left to finish on their own: a grandchild
-                // (ssh, a credential helper) may still hold the pipes open.
-                return Err(GitError::Timeout(describe(args)));
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-        let stdout = stdout.join().unwrap_or_default();
-        let stderr = stderr.join().unwrap_or_default();
-        Ok(Output {
-            status,
-            stdout,
-            stderr,
-        })
+        // Wait for git on a small per-thread runtime: the kernel tells us when it exits and
+        // both pipes are read without extra threads; on timeout git is killed with it.
+        let mut cmd = tokio::process::Command::from(cmd);
+        cmd.kill_on_drop(true);
+        let waited = RUNTIME.with(|rt| match rt {
+            // Built inside the runtime: tokio starts the child as soon as `output` is called.
+            Ok(rt) => Ok(rt.block_on(async { tokio::time::timeout(timeout, cmd.output()).await })),
+            Err(e) => Err(GitError::Io(io::Error::other(e.to_string()))),
+        })?;
+        match waited {
+            Ok(output) => Ok(output?),
+            Err(_) => Err(GitError::Timeout(describe(args))),
+        }
     }
 }
 
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<Vec<u8>> {
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        buf
-    })
+thread_local! {
+    /// One tiny runtime per blocking thread, reused across git commands. Callers run on
+    /// `spawn_blocking` threads (or plain threads in tests), never inside async code.
+    static RUNTIME: Result<tokio::runtime::Runtime, io::Error> =
+        tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build();
 }
 
 /// Accepts only non-empty relative paths made of plain components.

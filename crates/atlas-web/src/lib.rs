@@ -55,7 +55,16 @@ pub struct AppState {
     others: Arc<[String]>,
     /// Passkeys, sessions and saving. None keeps the hub read-only.
     writer: Option<Arc<Writer>>,
+    /// The last read of the store, shared by requests for a few seconds.
+    cache: Arc<tokio::sync::Mutex<Option<Cached>>>,
 }
+
+/// A read of the store and when it was made.
+type Cached = (std::time::Instant, Arc<Snapshot>);
+
+/// How long one read of the store serves requests. Changes made outside Atlas show up
+/// within this; saves made through Atlas clear it at once.
+const SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl AppState {
     #[must_use]
@@ -65,18 +74,35 @@ impl AppState {
             hub: Arc::from(hub),
             others: others.into(),
             writer: writer.map(Arc::new),
+            cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
-    async fn snapshot(&self) -> Result<Snapshot, AppError> {
+    /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
+    /// read wait for that one read instead of starting their own.
+    async fn snapshot(&self) -> Result<Arc<Snapshot>, AppError> {
+        let mut slot = self.cache.lock().await;
+        if let Some((at, snap)) = slot.as_ref()
+            && at.elapsed() < SNAPSHOT_TTL
+        {
+            return Ok(Arc::clone(snap));
+        }
         let sources = Arc::clone(&self.sources);
-        tokio::task::spawn_blocking(move || Snapshot {
+        let snap = tokio::task::spawn_blocking(move || Snapshot {
             catalog: atlas_fs::load_catalog(&sources),
             harnesses: atlas_fs::scan_harnesses(&sources),
             projects: atlas_fs::scan_projects(&sources),
         })
         .await
-        .map_err(|_| AppError::Internal)
+        .map(Arc::new)
+        .map_err(|_| AppError::Internal)?;
+        *slot = Some((std::time::Instant::now(), Arc::clone(&snap)));
+        Ok(snap)
+    }
+
+    /// Drops the cached read, so the next page shows a change just made.
+    async fn invalidate(&self) {
+        *self.cache.lock().await = None;
     }
 
     fn page(
