@@ -189,3 +189,20 @@ roots in `client.toml` let it take over links made by earlier scripts. New keys 
 release number are saved only after everything applied. With the hub unreachable nothing
 changes, so harnesses keep working from the local copies. On a machine running atlasd,
 `~/Knowledge/bin/sync` must stop calling `link-agents`, or both would manage the same links.
+
+## 0022 · 2026-11-27 · Save sends; updates instead of releases in the UI
+Non-technical owners never meet the word "release": the UI says "update", and there is no
+Releases page (`/releases` redirects to Settings → Updates). With "Send changes to my
+machines when I save" on (the default), Save on an edit page asks for the passkey once and
+that tap both saves and sends: the page posts the form, then builds the update and has the
+passkey sign it. Without the setting, or without JavaScript, Save only saves; a "Send"
+button (on the saved page, in Settings and on Home when changes are waiting) runs the same
+flow. Underneath nothing weakens: the update is the signed release of 0019, a WebAuthn
+assertion over SHA-256 of the manifest bytes, checked with `atlas-verify` before it is
+stored; numbering, storage and the client API are unchanged. An update pins only what
+atlasd uses, Knowledge and public skills, each at its upstream's commit (what a machine can
+fetch); project repos are out of the manifest, and a source with no upstream is left out
+with a plain reason. Push rules: sending pushes Knowledge first when it has unpushed
+commits; Atlas never pushes public skills (they reach machines after the owner pushes them
+by hand, 0016); the "Also push project repos after saving" setting applies only to project
+repos. If nothing changed since the latest update, sending asks for no tap.

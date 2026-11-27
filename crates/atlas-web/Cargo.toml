@@ -25,6 +25,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 tower.workspace = true
 
 [lints]

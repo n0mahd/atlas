@@ -149,13 +149,9 @@ pub fn router(state: AppState, access: Access) -> Router {
             get(edit::settings_page).post(edit::settings_save),
         )
         .route("/settings/keys/{id}/remove", post(edit::remove_key))
-        .route("/releases", get(distribute::releases_page))
-        .route("/releases/prepare", post(distribute::release_prepare))
-        .route("/releases/sign/start", post(distribute::release_sign_start))
-        .route(
-            "/releases/sign/finish",
-            post(distribute::release_sign_finish),
-        )
+        .route("/releases", get(distribute::releases_moved))
+        .route("/send/start", post(distribute::send_start))
+        .route("/send/finish", post(distribute::send_finish))
         .route("/machines/pair", post(distribute::pair_code))
         .route("/machines/{id}/remove", post(distribute::unpair))
         .route("/api/pair", post(distribute::api_pair))
@@ -268,6 +264,8 @@ async fn not_found() -> AppError {
 struct OverviewPage {
     page: Page,
     v: views::Overview,
+    /// "3 changes aren't on your machines yet", when some are waiting.
+    waiting: Option<String>,
 }
 
 #[derive(Template)]
@@ -354,35 +352,79 @@ struct ListQuery {
     pushfailed: Option<String>,
     #[serde(default)]
     unchanged: Option<String>,
+    /// A public skill was saved: it reaches machines once pushed by hand.
+    #[serde(default)]
+    public: Option<String>,
+    /// After sending: it went out, or the passkey prompt was closed.
+    #[serde(default)]
+    sent: Option<String>,
+    #[serde(default)]
+    notsent: Option<String>,
 }
 
 impl ListQuery {
-    fn flash(&self) -> String {
+    /// The flash line, and whether it offers a Send button.
+    fn flash(&self) -> (String, bool) {
         if self.unchanged.is_some() {
-            return "Nothing changed, so nothing was committed.".to_owned();
+            return (
+                "Nothing changed, so nothing was committed.".to_owned(),
+                false,
+            );
         }
-        if self.saved.is_empty() || !self.saved.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return String::new();
+        let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
+        if self.sent.is_some() {
+            let text = if saved {
+                "Saved · on your machines within 10 minutes"
+            } else {
+                "On your machines within 10 minutes"
+            };
+            return (text.to_owned(), false);
+        }
+        if !saved {
+            return (String::new(), false);
+        }
+        if self.notsent.is_some() {
+            return ("Saved. Not on your machines yet".to_owned(), true);
+        }
+        if self.public.is_some() {
+            return (
+                "Saved. Public skills reach your machines after you push them".to_owned(),
+                false,
+            );
         }
         let sha = &self.saved;
-        if self.pushed.is_some() {
+        let text = if self.pushed.is_some() {
             format!("Saved and pushed as {sha}.")
         } else if self.pushfailed.is_some() {
             format!("Saved as {sha}, but the push failed; it stays committed here.")
         } else {
             format!("Saved and committed as {sha}.")
-        }
+        };
+        (text, false)
+    }
+
+    fn apply(&self, page: &mut Page) {
+        let (text, send) = self.flash();
+        page.flash = text;
+        page.flash_action = send.then_some("Send");
     }
 }
 
-async fn overview(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
+async fn overview(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let mut page = s.page(&headers, "/", "Home", &snap, &Scope::Global, false);
     page.totals = format!("Hub · {}", page.hub);
+    q.apply(&mut page);
+    let waiting = distribute::waiting(&s).await.and_then(|w| w.text());
     Ok(Html(
         OverviewPage {
             page,
             v: views::overview(&snap),
+            waiting,
         }
         .render()?,
     ))
@@ -411,7 +453,7 @@ async fn skill_detail(
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
     let scope = views::resolve_scope(&snap, &home);
     let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
-    page.flash = q.flash();
+    q.apply(&mut page);
     page.edit_href = s
         .writer
         .is_some()
@@ -461,7 +503,7 @@ async fn instruction_detail(
         &scope,
         false,
     );
-    page.flash = q.flash();
+    q.apply(&mut page);
     page.edit_href = s
         .writer
         .is_some()
@@ -492,7 +534,7 @@ async fn memory_detail(
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::memory_detail(&snap, &scope, &name).ok_or(AppError::NotFound)?;
     let mut page = s.page(&headers, "/memory", v.name.clone(), &snap, &scope, false);
-    page.flash = q.flash();
+    q.apply(&mut page);
     // Agents' own per-repo notes aren't in git, so only store notes can be edited.
     page.edit_href =
         (s.writer.is_some() && scope == Scope::Global).then(|| format!("/memory/{name}/edit"));

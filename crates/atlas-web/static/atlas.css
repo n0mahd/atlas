@@ -317,6 +317,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .button-plain { background: transparent; color: var(--ink); }
 .button-ink:disabled, .button-plain:disabled { opacity: 0.5; cursor: progress; }
 .flash { margin: 0 0 12px; }
+.flash .button-plain { margin-left: 10px; min-height: 28px; padding: 0 12px; vertical-align: middle; font-style: normal; }
 .warn-note { border-left-color: var(--oxblood); color: var(--oxblood); }
 
 .editor { display: flex; flex-direction: column; gap: 8px; }

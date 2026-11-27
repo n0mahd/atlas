@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<form class="editor" method="post">
+<form class="editor" method="post"{% if send_on_save %} data-send-on-save{% endif %}>
   <input type="hidden" name="csrf" value="{{ page.csrf }}">
   <input type="hidden" name="base" value="{{ base }}">
   <div class="editor-bar">

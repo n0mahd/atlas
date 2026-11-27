@@ -28,3 +28,5 @@ The look stays; the space goes to content. Approved after the owner found v1 was
 - Detail opens inline (gilt left rule, deeper limestone); full pages only for reading a
   file.
 - Notices are marginalia: a gilt left bar and italic text, never a coloured banner.
+- Words for non-technical owners: changes reach machines as "updates", never "releases";
+  Save sends them with one passkey tap (decision 0022).

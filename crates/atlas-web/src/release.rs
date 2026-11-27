@@ -1,5 +1,6 @@
-//! Releases on the hub: build a manifest from the repos as they stand, keep signed
-//! releases, and hand the latest to paired clients. The hub never signs (decision 0007).
+//! Updates (signed releases underneath) on the hub: build a manifest from the sources
+//! machines use, keep signed ones, and hand the latest to paired clients. The hub never
+//! signs (decisions 0007, 0022).
 
 use std::path::{Path, PathBuf};
 
@@ -7,14 +8,16 @@ use atlas_core::kernel::TreeHash;
 use atlas_core::release::{CommitId, FORMAT, Manifest, OwnerKey, SignedRelease, Source, SourceId};
 use atlas_fs::Sources;
 
-/// A repo left out of a release, and why.
+/// A repo left out of an update, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Skipped {
     pub source: String,
     pub reason: String,
 }
 
-/// Builds the next manifest from each store repo's current commit.
+/// Builds the next manifest from the sources machines use (Knowledge and public skills),
+/// each pinned at its upstream's commit: that is what a machine can fetch. Project repos
+/// stay out, because atlasd doesn't distribute them.
 #[must_use]
 pub fn build(
     sources: &Sources,
@@ -28,37 +31,18 @@ pub fn build(
     if let Some(p) = &sources.public_skills {
         repos.push((SourceId::PublicSkills, p.clone()));
     }
-    repos.extend(
-        sources
-            .projects
-            .iter()
-            .map(|p| (SourceId::Project(p.name.clone()), p.root.clone())),
-    );
-
     let mut pinned = Vec::new();
     let mut skipped = Vec::new();
     for (id, root) in repos {
-        let label = label(&id);
         match pin(&root) {
-            Ok((remote, commit, tree, unpushed)) => {
-                if let Some(n) = unpushed.filter(|n| *n > 0) {
-                    skipped.push(Skipped {
-                        source: label,
-                        reason: format!(
-                            "has {n} commit{} not pushed yet, so machines can't fetch this release until it is",
-                            if n == 1 { "" } else { "s" }
-                        ),
-                    });
-                }
-                pinned.push(Source {
-                    id,
-                    remote,
-                    commit,
-                    tree,
-                });
-            }
+            Ok((remote, commit, tree)) => pinned.push(Source {
+                id,
+                remote,
+                commit,
+                tree,
+            }),
             Err(reason) => skipped.push(Skipped {
-                source: label,
+                source: label(&id),
                 reason,
             }),
         }
@@ -74,27 +58,30 @@ pub fn build(
     (manifest, skipped)
 }
 
-fn label(id: &SourceId) -> String {
+/// The name the UI uses for a source.
+#[must_use]
+pub fn label(id: &SourceId) -> String {
     match id {
-        SourceId::Knowledge => "knowledge".to_owned(),
-        SourceId::PublicSkills => "public skills".to_owned(),
+        SourceId::Knowledge => "Knowledge".to_owned(),
+        SourceId::PublicSkills => "Public skills".to_owned(),
         SourceId::Project(p) => p.to_string(),
     }
 }
 
-fn pin(root: &Path) -> Result<(String, CommitId, TreeHash, Option<u32>), String> {
+fn pin(root: &Path) -> Result<(String, CommitId, TreeHash), String> {
     let repo = atlas_git::Repo::open(root).map_err(|e| e.to_string())?;
     let remote = repo
         .remote_url()
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "has no git remote, so machines couldn't fetch it".to_owned())?;
-    let (commit, tree) = repo.head().map_err(|e| e.to_string())?;
-    let unpushed = repo.unpushed().map_err(|e| e.to_string())?;
+        .ok_or_else(|| "has no git remote, so machines can't fetch it".to_owned())?;
+    let (commit, tree) = repo
+        .upstream_head()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "isn't pushed anywhere yet, so machines can't fetch it".to_owned())?;
     Ok((
         remote,
         CommitId::new(commit).map_err(|e| e.to_string())?,
         TreeHash::new(tree).map_err(|e| e.to_string())?,
-        unpushed,
     ))
 }
 
@@ -193,36 +180,60 @@ mod tests {
     }
 
     #[test]
-    fn repos_without_a_remote_are_skipped_with_a_reason() {
+    fn only_what_machines_use_is_pinned_at_its_upstream() {
         let tmp = tempfile::tempdir().unwrap();
-        let k = tmp.path().join("k");
-        std::fs::create_dir_all(&k).unwrap();
-        let git = |args: &[&str]| {
-            assert!(
-                std::process::Command::new("git")
-                    .args(args)
-                    .current_dir(&k)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
+        let git = |dir: &Path, args: &[&str]| -> String {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
         };
-        git(&["init", "-q", "-b", "main"]);
-        git(&["config", "user.name", "T"]);
-        git(&["config", "user.email", "t@example.com"]);
-        git(&["commit", "-q", "--allow-empty", "-m", "start"]);
+        let init = |name: &str| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            git(&dir, &["init", "-q", "-b", "main"]);
+            git(&dir, &["config", "user.name", "T"]);
+            git(&dir, &["config", "user.email", "t@example.com"]);
+            git(&dir, &["commit", "-q", "--allow-empty", "-m", "start"]);
+            dir
+        };
+        let k = init("k");
+        let shop = init("shop");
         let sources = Sources {
             home: tmp.path().into(),
             knowledge: k.clone(),
             public_skills: None,
-            projects: Vec::new(),
+            projects: vec![atlas_fs::Project {
+                name: atlas_core::kernel::Slug::new("shop").unwrap(),
+                root: shop,
+            }],
         };
         let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
-        assert_eq!(m.sources, Vec::new());
-        assert_eq!(skipped[0].source, "knowledge");
-        git(&["remote", "add", "origin", "https://git.example/k.git"]);
+        assert_eq!(m.sources, Vec::new(), "projects never go in");
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].reason.contains("no git remote"));
+
+        let bare = tmp.path().join("k.git");
+        git(tmp.path(), &["init", "-q", "--bare", "k.git"]);
+        git(&k, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        let (_, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        assert!(skipped[0].reason.contains("isn't pushed"), "{skipped:?}");
+
+        git(&k, &["push", "-q", "-u", "origin", "main"]);
+        let pushed = git(&k, &["rev-parse", "HEAD"]);
+        git(&k, &["commit", "-q", "--allow-empty", "-m", "local only"]);
         let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
         assert_eq!(skipped, Vec::new());
-        assert_eq!(m.sources[0].remote, "https://git.example/k.git");
+        assert_eq!(m.sources.len(), 1);
+        assert_eq!(m.sources[0].id, SourceId::Knowledge);
+        assert_eq!(m.sources[0].remote, bare.to_str().unwrap());
+        assert_eq!(
+            m.sources[0].commit.as_str(),
+            pushed,
+            "the upstream's commit"
+        );
     }
 }

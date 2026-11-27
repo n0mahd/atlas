@@ -2,13 +2,26 @@
 {% block content %}
 {% if !flash.is_empty() %}<p class="marginalia flash" role="status">{{ flash }}</p>{% endif %}
 <div class="sections">
-  <section class="section">
-    <div class="section-head"><span class="num">I</span><h2>Saving</h2></div>
+  <section class="section" id="updates" data-passkey data-next="/settings?flash=sent#updates">
+    <div class="section-head"><span class="num">I</span><h2>Updates</h2><span class="count">{{ updates.len() }}</span></div>
     <form method="post" action="/settings" class="setting-row">
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
-      <label class="switch"><input type="checkbox" name="push_after_save" value="1"{% if push_after_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Push after each save</span><span class="row-desc">Off: Atlas only commits. The public skills repo is never pushed.</span></span></label>
+      <label class="switch"><input type="checkbox" name="send_on_save" value="1"{% if send_on_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Send changes to my machines when I save</span></span></label>
+      <label class="switch"><input type="checkbox" name="push_after_save" value="1"{% if push_after_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Also push project repos after saving</span></span></label>
       <button class="button-plain" type="submit">Save</button>
     </form>
+    <div class="setting-row">
+      <span class="row-main"><span class="row-name plain">{% if let Some(w) = waiting %}{{ w }}{% else %}Your machines have every saved change{% endif %}</span></span>
+      <button class="button-ink" type="button" data-action="send">Send now</button>
+    </div>
+    <p class="marginalia warn-note" data-error hidden role="alert"></p>
+    {% if !updates.is_empty() %}
+    <ul class="rows">
+      {% for u in updates %}
+      <li><div class="row static"><span class="row-main"><span class="row-name plain">Update {{ u.number }} · {{ u.date }} · {{ u.passkey }}</span></span></div></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
   </section>
   <section class="section" data-passkey data-next="/settings">
     <div class="section-head"><span class="num">II</span><h2>Passkeys</h2><span class="count">{{ keys.len() }}</span></div>
@@ -30,5 +43,4 @@
     <p class="marginalia warn-note" data-error hidden role="alert"></p>
   </section>
 </div>
-<script src="/static/passkey.js" defer></script>
 {% endblock %}

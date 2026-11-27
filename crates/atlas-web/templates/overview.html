@@ -14,10 +14,13 @@
   {% endfor %}
 </section>
 
-{% if !v.notices.is_empty() || !v.problems.is_empty() %}
-<section class="section">
-  <div class="section-head"><span class="num">§</span><h2>Needs a look</h2><span class="count">{{ v.notices.len() + v.problems.len() }}</span></div>
+{% if waiting.is_some() || !v.notices.is_empty() || !v.problems.is_empty() %}
+<section class="section" data-passkey data-next="/?sent=1">
+  <div class="section-head"><span class="num">§</span><h2>Needs a look</h2><span class="count">{{ v.notices.len() + v.problems.len() + waiting.iter().count() }}</span></div>
   <ul class="rows">
+    {% if let Some(w) = waiting %}
+    <li><div class="row static"><span class="row-main"><span class="row-name plain">{{ w }}</span></span>{% if page.signed_in %}<button class="button-ink" type="button" data-action="send">Send</button>{% else %}<a class="link-cap" href="/signin?next=/">Sign in</a>{% endif %}</div></li>
+    {% endif %}
     {% for n in v.notices %}
     <li><a class="row" href="{{ n.href }}"><span class="row-main"><span class="row-name plain">{{ n.text }}</span></span><span class="link-cap">{{ n.action }}</span></a></li>
     {% endfor %}
@@ -25,6 +28,7 @@
     <li><div class="row static"><span class="row-main"><span class="row-name plain">{{ p.message }}</span><span class="row-desc mono">{{ p.path }}</span></span></div></li>
     {% endfor %}
   </ul>
+  <p class="marginalia warn-note" data-error hidden role="alert"></p>
 </section>
 {% endif %}
 {% endblock %}
