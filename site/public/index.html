@@ -124,6 +124,12 @@ section { padding: 40px 0 56px; }
 .status { margin: 8px 0 0; padding: 4px 0 4px 18px; border-left: 2px solid var(--gilt-orn); max-width: 38em; font-style: italic; font-size: 19px; color: var(--ink-soft); }
 .status b { margin-right: 10px; font-family: var(--display); font-style: normal; font-weight: 700; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink); }
 
+.gh { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border: 1px solid var(--ink); color: var(--ink); text-decoration: none;
+  font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+.gh:hover { background: var(--ink); color: var(--ground); }
+.gh svg { width: 16px; height: 16px; }
+.source { margin: 28px 0 0; text-align: center; font-size: 18px; }
+.source a { color: var(--verdigris); text-underline-offset: 3px; }
 footer { margin-top: 72px; }
 footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 13px; color: var(--muted); }
 
@@ -169,7 +175,7 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
 <div class="page">
 
 <header>
-  <div class="mast"><img class="mark" src="/logo-512.png" width="40" height="40" alt=""><span class="wm">Atlas</span></div>
+  <div class="mast"><img class="mark" src="/logo-512.png" width="40" height="40" alt=""><span class="wm">Atlas</span><a class="gh" href="https://github.com/n0mahd/atlas"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a></div>
   <div class="key" aria-hidden="true"></div>
 </header>
 
@@ -250,6 +256,7 @@ footer .wm { display: block; padding-top: 16px; text-align: center; font-size: 1
 </section>
 
 <p class="status"><b>Status</b> In development. View and edit in the hub today; machine sync is next.</p>
+<p class="source">Open source under the MIT licence. <a href="https://github.com/n0mahd/atlas">github.com/n0mahd/atlas</a></p>
 </main>
 
 <footer>
