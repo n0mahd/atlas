@@ -175,7 +175,36 @@ login's home; "repo" means inside a project.
 Marks: Amp's and Muse's one-colour icons from the Agent Client Protocol registry; Herdr gets
 a monogram like T3 Code. `Layout` has no MCP or memory fields yet; phase 4 adds MCP paths.
 
-## 0021 · 2026-11-27 · How atlasd applies a release
+## 0022 · 2026-11-27 · Grok Build is a harness
+Atlas adds xAI's Grok Build (id `grok`, command `grok`). Its `--help`, docs.x.ai/build and
+its ACP registry entry all call it Grok Build; "Grok Bot" is a different xAI product. Checked against Grok Build 1.0.92
+with a throwaway home: what `grok inspect --json` found from probe files, with and without
+folder trust, and what `grok mcp add` wrote. Paths are relative to the login's home.
+- Skills: `~/.grok/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.cursor/skills`; in a
+  repo the same four folders, walked up to the repo root. Linked skill folders load.
+- Instructions: `~/.grok/AGENTS.md`, `Agents.md` and `CLAUDE.md`, every `*.md` in
+  `~/.grok/rules/`, and Claude Code's `~/.claude/CLAUDE.md` and `~/.claude/rules/`. In each
+  directory from the repo root down it loads every one of `AGENTS.md`, `Agents.md`,
+  `AGENT.md`, `CLAUDE.md`, `Claude.md` and `CLAUDE.local.md`, not the first. Atlas links
+  `~/.grok/AGENTS.md`, which a link satisfies. Whether Grok expands the `@` import Atlas
+  puts in `CLAUDE.md` is unknown (that needs a signed-in session), so the global file may
+  reach a session twice on a machine that also has Claude Code.
+- Hooks: a folder, `~/.grok/hooks/*.json` (repo `.grok/hooks/`, trusted folders only), each
+  file in Claude Code's shape, plus Claude Code's and Cursor's hook files. `Layout`'s
+  `hook_config` may now name a folder; the reader reads its JSON files in name order. Atlas
+  doesn't write there: Grok already runs the hooks Atlas puts in `~/.claude/settings.json`,
+  and a second copy would run twice. A machine with Grok but no Claude Code, or a hook
+  limited to `grok`, therefore gets no Atlas hook yet.
+- MCP: `[mcp_servers.<name>]` in `~/.grok/config.toml` (`command`/`args` or `url`, with
+  `enabled = true`), which `grok mcp add` writes; `--scope project` writes the repo's
+  `.grok/config.toml`. It also loads `~/.claude.json`, `.cursor/mcp.json` and a repo's
+  `.mcp.json`. OAuth tokens sit in `~/.grok/mcp_credentials.json`.
+- Memory: off by default; when on, Markdown topics under `~/.grok/memory-v2/` (`global/`
+  and `workspaces/<project>-<hash>/`). Docs only.
+
+Mark: the one-colour `grok-build.svg` from xAI's Agent Client Protocol registry entry.
+
+## 0023 · 2026-11-27 · How atlasd applies a release
 `atlasd` (crate `atlas-client`) runs as each OS account, from a systemd user timer every
 10 minutes, never as root. Each run: fetch the latest signed release, check it against the
 keys trusted at pairing (or carried by an applied release), refuse rollbacks and reused

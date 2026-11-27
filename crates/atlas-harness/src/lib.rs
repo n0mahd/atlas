@@ -24,7 +24,8 @@ pub struct Layout {
     pub skill_dirs: &'static [&'static str],
     /// Its global instruction files.
     pub instruction_files: &'static [&'static str],
-    /// The config file that holds its hooks, if it has hooks.
+    /// The config file that holds its hooks, if it has hooks, or a folder whose `*.json`
+    /// files each hold some (Grok Build).
     pub hook_config: Option<&'static str>,
     /// A path whose presence means the harness is set up for this login.
     pub marker: &'static str,
@@ -34,7 +35,7 @@ pub struct Layout {
     pub project_instructions: &'static [&'static str],
 }
 
-const LAYOUTS: [Layout; 9] = [
+const LAYOUTS: [Layout; 10] = [
     Layout {
         kind: HarnessKind::ClaudeCode,
         skill_dirs: &[".claude/skills"],
@@ -118,6 +119,29 @@ const LAYOUTS: [Layout; 9] = [
         marker: ".config/muse",
         project_skill_dirs: &[".agents/skills", ".claude/skills", ".codex/skills"],
         project_instructions: &["AGENTS.md", "CLAUDE.md"],
+    },
+    // Paths checked against Grok Build 1.0.92 itself with `grok inspect` (decision 0022), in
+    // the order it lists them. It loads every instruction file it finds, not just the first;
+    // its hooks are a folder of JSON files in Claude Code's shape. MCP servers sit under
+    // `[mcp_servers]` in `.grok/config.toml`.
+    Layout {
+        kind: HarnessKind::Grok,
+        skill_dirs: &[
+            ".grok/skills",
+            ".agents/skills",
+            ".claude/skills",
+            ".cursor/skills",
+        ],
+        instruction_files: &[".grok/AGENTS.md"],
+        hook_config: Some(".grok/hooks"),
+        marker: ".grok",
+        project_skill_dirs: &[
+            ".grok/skills",
+            ".agents/skills",
+            ".claude/skills",
+            ".cursor/skills",
+        ],
+        project_instructions: &["AGENTS.md", "AGENT.md", "CLAUDE.md", "CLAUDE.local.md"],
     },
     // T3 Code runs the other harnesses and reads their files.
     Layout {

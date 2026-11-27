@@ -19,7 +19,7 @@ pub struct Snapshot {
 
 /// The agents Atlas shows marks for. T3 Code and Herdr run the others, so they have none
 /// of their own.
-pub const AGENTS: [HarnessKind; 7] = [
+pub const AGENTS: [HarnessKind; 8] = [
     HarnessKind::ClaudeCode,
     HarnessKind::Codex,
     HarnessKind::OpenCode,
@@ -27,6 +27,7 @@ pub const AGENTS: [HarnessKind; 7] = [
     HarnessKind::Antigravity,
     HarnessKind::Amp,
     HarnessKind::Muse,
+    HarnessKind::Grok,
 ];
 
 /// Short names, as people say them.
@@ -39,6 +40,7 @@ const fn short(kind: HarnessKind) -> &'static str {
         HarnessKind::Antigravity => "Antigravity",
         HarnessKind::Amp => "Amp",
         HarnessKind::Muse => "Muse",
+        HarnessKind::Grok => "Grok",
         HarnessKind::T3 => "T3 Code",
         HarnessKind::Herdr => "Herdr",
     }

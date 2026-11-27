@@ -52,6 +52,9 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   machine stops being managed.
 - Harness folder paths in `atlas-harness` for Claude Code, Codex, OpenCode and Pi come from
   the existing `link-agents` script, not from each harness's docs (Amp, Muse and Herdr were
-  checked, decision 0021). Check them when phase 3 writes to them.
-- The public site lists GrokBot under "Works with", but Atlas has no harness adapter for it
-  yet. Add the adapter or move it to a "Coming" list.
+  checked, decision 0021; Grok Build, 0022). Check them when phase 3 writes to them.
+- The public site lists "GrokBot" under "Works with"; the agent Atlas supports is xAI's
+  Grok Build (decision 0022), and Grok Bot is a different product. Fix the site's name.
+- Atlas writes no hooks for Grok Build, relying on it running Claude Code's (decision 0022).
+  A machine with Grok Build but no Claude Code gets none; write `~/.grok/hooks/atlas.json`
+  there if that matters.

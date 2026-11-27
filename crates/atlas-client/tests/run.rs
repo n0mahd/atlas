@@ -9,7 +9,7 @@ use std::process::Command;
 
 use atlas_client::config::{Config, Paths, State};
 use atlas_client::pass::{self, Fetched, Pass};
-use atlas_core::kernel::TreeHash;
+use atlas_core::kernel::{HarnessKind, TreeHash};
 use atlas_core::release::{
     CommitId, FORMAT, Manifest, OwnerKey, Signature, SignedRelease, Source, SourceId,
 };
@@ -559,5 +559,49 @@ fn each_harness_gets_its_skills_in_one_folder() {
     assert!(
         !text.contains("opencode/skills"),
         "OpenCode already reads Claude's and Codex's: {text}"
+    );
+}
+
+#[test]
+fn grok_build_gets_the_global_instructions_and_nothing_twice() {
+    // Grok Build reads ~/.agents/skills, ~/.claude/skills and Claude's hooks itself, so it
+    // only needs its own AGENTS.md link; its hooks folder is the owner's (decision 0022).
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    let mine = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"mine.sh"}]}]}}"#;
+    write(&h.join(".grok/hooks/mine.json"), mine);
+    let release = signed(&w.manifest(1, &[&key]), &key);
+
+    let pass = w.run(&release, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert!(
+        pass.problems.iter().all(|p| !p.contains(".grok")),
+        "{:?}",
+        pass.problems
+    );
+    assert_eq!(
+        link(&h.join(".grok/AGENTS.md")),
+        w.copy("knowledge/AGENTS.md")
+    );
+    assert!(!h.join(".grok/skills").exists(), "Grok already reads them");
+    assert_eq!(
+        fs::read_dir(h.join(".grok/hooks")).unwrap().count(),
+        1,
+        "Atlas adds no hook file of its own"
+    );
+    assert_eq!(
+        fs::read_to_string(h.join(".grok/hooks/mine.json")).unwrap(),
+        mine
+    );
+    let grok = pass
+        .report
+        .harnesses
+        .iter()
+        .find(|r| r.kind == HarnessKind::Grok)
+        .unwrap();
+    assert_eq!(
+        (grok.instructions.as_str(), grok.hooks_managed),
+        ("linked", 0)
     );
 }

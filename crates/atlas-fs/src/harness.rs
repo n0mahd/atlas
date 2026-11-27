@@ -167,7 +167,23 @@ fn imports(sources: &Sources, text: &str, store: Option<&Path>) -> bool {
 }
 
 /// Reads hooks from a Claude-style config: `{"hooks": {Event: [{matcher, hooks: [..]}]}}`.
+/// A folder (Grok Build's `~/.grok/hooks`) holds any number of such files, read by name.
 fn read_hooks(config: &Path) -> Vec<FoundHook> {
+    if config.is_dir() {
+        let mut files: Vec<PathBuf> = fs::read_dir(config)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        files.sort();
+        return files.iter().flat_map(|f| read_hook_file(f)).collect();
+    }
+    read_hook_file(config)
+}
+
+fn read_hook_file(config: &Path) -> Vec<FoundHook> {
     let too_big = fs::metadata(config).map_or(true, |m| !m.is_file() || m.len() > MAX_CONFIG_BYTES);
     if too_big {
         return Vec::new();

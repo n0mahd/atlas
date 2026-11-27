@@ -1,9 +1,9 @@
 //! Agent marks. The Claude, Codex, `OpenCode` and Antigravity marks come from T3 Code
-//! (MIT, `apps/web/src/components/Icons.tsx`). The Amp and Muse marks are their icons in the
-//! Agent Client Protocol registry (`cdn.agentclientprotocol.com/registry/v1/latest/`
-//! `amp-acp.svg` and `muse-code.svg`, the latter published there by Meta). Pi, T3 Code and
-//! Herdr are monograms; sparkles is lucide's (ISC). All are drawn in `currentColor`, so
-//! they take the ink, gilt or oxblood of their surroundings.
+//! (MIT, `apps/web/src/components/Icons.tsx`). The Amp, Muse and Grok Build marks are their
+//! icons in the Agent Client Protocol registry (`cdn.agentclientprotocol.com/registry/v1/`
+//! `latest/`: `amp-acp.svg`, `muse-code.svg` published there by Meta, and `grok-build.svg`
+//! from xAI's entry). Pi, T3 Code and Herdr are monograms; sparkles is lucide's (ISC). All
+//! are drawn in `currentColor`, so they take the ink, gilt or oxblood of their surroundings.
 
 use atlas_core::kernel::HarnessKind;
 
@@ -15,6 +15,7 @@ const ANTIGRAVITY: &str =
     r#"<img class="agent-icon agent-img" src="/static/antigravity.png" alt="">"#;
 const AMP: &str = r#"<svg class="agent-icon" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><path fill="currentColor" d="M13.9197 13.61L17.3816 26.566L14.242 27.4049L11.2645 16.2643L0.119926 13.2906L0.957817 10.15L13.9197 13.61Z"/><path fill="currentColor" d="M13.7391 16.0892L4.88169 24.9056L2.58872 22.6019L11.4461 13.7865L13.7391 16.0892Z"/><path fill="currentColor" d="M18.9386 8.58315L22.4005 21.5392L19.2609 22.3781L16.2833 11.2374L5.13879 8.26381L5.97668 5.12318L18.9386 8.58315Z"/><path fill="currentColor" d="M23.9803 3.55632L27.4422 16.5124L24.3025 17.3512L21.325 6.21062L10.1805 3.23698L11.0183 0.0963593L23.9803 3.55632Z"/></svg>"#;
 const MUSE: &str = r#"<svg class="agent-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9.12 5.39C9.87 5.39 10.39 5.85 10.39 6.72C10.39 7.59 10.23 8.77 10.02 10.34C9.88 11.54 9.65 13.08 9.54 13.76C9.77 13.32 10.3 12.31 10.39 12.11C11.5 9.87 12.67 7.87 13.01 7.33C13.45 6.6 13.9 6.32 14.47 6.32C15.21 6.32 15.62 6.91 15.62 7.87C15.62 8.62 15.51 9.95 15.36 11.34C15.29 11.95 15.18 13.21 15.1 14.05C15.82 12.77 17.15 10.41 17.69 9.59C18.15 8.87 18.62 8.41 19.29 8.41C19.88 8.41 20.46 8.78 20.43 9.8C20.36 11.31 20.15 14.53 20.05 16.01C20.85 14.83 21.55 13.7 21.9 13.12C22.23 12.57 22.55 12.11 23.15 12.11C23.66 12.11 24 12.45 24 13.02C24 13.59 23.59 14.29 23.23 14.92C22.87 15.55 22.16 16.59 21.73 17.13C21.32 17.65 21.03 17.97 20.75 18.18C20.41 18.46 20.06 18.61 19.54 18.61C19.08 18.61 18.7 18.46 18.44 18.18C18.16 17.89 18.03 17.46 18.01 16.94C18 16.41 18.06 15.44 18.15 14.58C18.23 13.57 18.33 12.61 18.4 11.96C17.68 13.28 16.17 16 15.49 17.07C14.83 18.12 14.52 18.48 13.82 18.48C13.11 18.48 12.82 17.99 12.8 17.23C12.79 16.41 13.39 11.58 13.61 9.88C13.24 10.64 12.43 12.34 11.93 13.36C11.42 14.41 10.55 16.17 9.94 17.2C9.5 17.94 8.98 18.48 8.24 18.48C7.5 18.48 7.16 17.9 7.16 17.08C7.16 16.26 7.3 15.05 7.57 13.39C7.66 12.79 8.17 9.58 8.4 8.16C8.08 8.66 7.6 9.42 7.27 9.87C6.9 10.37 6.6 10.57 6.18 10.57C5.93 10.57 5.72 10.45 5.57 10.31C5.39 10.14 5.28 9.9 5.28 9.64C5.28 9.27 5.38 8.95 5.87 8.29C6.37 7.58 6.95 6.82 7.45 6.3C8.02 5.71 8.51 5.39 9.12 5.39Z"/><path fill="currentColor" d="M0.98 6.3C1.54 6.3 1.85 6.63 2.31 7.32C2.76 8.01 4.16 10.1 4.62 10.82C5.04 11.49 5.22 11.81 5.22 12.29C5.22 12.76 4.97 13.23 4.51 14.03C4.05 14.74 2.76 16.77 2.31 17.46C1.85 18.15 1.53 18.48 0.97 18.48C0.35 18.48 0 18.01 0 17.54C0 17.08 0.27 16.76 0.59 16.28C1.22 15.35 2.71 13.06 3.18 12.39C2.69 11.66 1.08 9.29 0.61 8.58C0.29 8.1 0 7.72 0 7.24C0 6.76 0.35 6.3 0.98 6.3Z"/></svg>"#;
+const GROK: &str = r#"<svg class="agent-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M0.58392448,14.9254204 L0.8326,14.66295 C2.004465,13.42985 3.1678,12.2082 2.45814,10.48105 C1.50813,8.1701 2.061355,5.4619 3.820575,3.70057 C5.6495,1.8709 8.3431,1.40957 10.59295,2.336505 C11.0907,2.52161 11.5245,2.785025 11.86295,3.02993 L9.98425,3.89849 C8.235,3.163775 6.23115,3.66355 5.0081,4.88809 C3.354105,6.5426 3.019895,9.4117 4.95835,11.2656 L-0.335,15.99995 C-0.066496,15.62975 0.2538896,15.275934 0.58392448,14.9254204 Z M14.0391,2.288155 L16.33165,2.57749377e-12 L16.20795,0.172288 C14.4658,2.574355 13.6153,3.749045 14.29795,6.6879 C14.76445,8.68415 14.261,10.90255 12.63545,12.53005 C10.5861,14.58325 7.3066,15.0403 4.6059,13.19215 L6.48885,12.3193 C8.2125,12.99705 10.0983,12.69945 11.4536,11.34255 C12.80895,9.9856 13.1133,8.00925 12.4321,6.3647 C12.30265,6.05285 11.9144,5.97455 11.64275,6.1753 L6.102,10.27035 L14.0391,2.288155 Z"/></svg>"#;
 const T3: &str = r#"<svg class="agent-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><text x="12" y="17" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="500" font-size="12" fill="currentColor">T3</text></svg>"#;
 const HERDR: &str = r#"<svg class="agent-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><text x="12" y="17" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="500" font-size="14" fill="currentColor">H</text></svg>"#;
 /// One mark for "every agent has it".
@@ -31,6 +32,7 @@ pub const fn icon(kind: HarnessKind) -> &'static str {
         HarnessKind::Antigravity => ANTIGRAVITY,
         HarnessKind::Amp => AMP,
         HarnessKind::Muse => MUSE,
+        HarnessKind::Grok => GROK,
         HarnessKind::T3 => T3,
         HarnessKind::Herdr => HERDR,
     }

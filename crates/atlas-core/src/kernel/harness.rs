@@ -15,6 +15,7 @@ pub enum HarnessKind {
     Antigravity,
     Amp,
     Muse,
+    Grok,
     T3,
     Herdr,
 }
@@ -24,7 +25,7 @@ pub enum HarnessKind {
 pub struct UnknownHarness(String);
 
 impl HarnessKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::ClaudeCode,
         Self::Codex,
         Self::OpenCode,
@@ -32,6 +33,7 @@ impl HarnessKind {
         Self::Antigravity,
         Self::Amp,
         Self::Muse,
+        Self::Grok,
         Self::T3,
         Self::Herdr,
     ];
@@ -47,6 +49,7 @@ impl HarnessKind {
             Self::Antigravity => "antigravity",
             Self::Amp => "amp",
             Self::Muse => "muse",
+            Self::Grok => "grok",
             Self::T3 => "t3",
             Self::Herdr => "herdr",
         }
@@ -63,6 +66,7 @@ impl HarnessKind {
             Self::Antigravity => "Antigravity",
             Self::Amp => "Amp",
             Self::Muse => "Muse",
+            Self::Grok => "Grok Build",
             Self::T3 => "T3 Code",
             Self::Herdr => "Herdr",
         }

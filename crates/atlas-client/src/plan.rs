@@ -313,6 +313,14 @@ fn instruction(
 }
 
 fn hooks(plan: &mut Plan, home: &Path, kind: HarnessKind, config: &Path, wanted: &[ManagedHook]) {
+    // Atlas writes hooks only in these formats; other harnesses' hook files are only read.
+    // Grok Build also runs Claude Code's hooks, so Claude's copy already reaches it.
+    let render = match kind {
+        HarnessKind::ClaudeCode => claude_settings,
+        HarnessKind::Codex => codex_hooks,
+        HarnessKind::Antigravity => antigravity_hooks,
+        _ => return,
+    };
     let shown = display(home, config);
     let current = match fs::symlink_metadata(config) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
@@ -340,12 +348,6 @@ fn hooks(plan: &mut Plan, home: &Path, kind: HarnessKind, config: &Path, wanted:
                 return;
             }
         },
-    };
-    let render = match kind {
-        HarnessKind::ClaudeCode => claude_settings,
-        HarnessKind::Codex => codex_hooks,
-        HarnessKind::Antigravity => antigravity_hooks,
-        _ => return,
     };
     match render(current.as_deref(), wanted) {
         Ok(Change::Unchanged) => {}

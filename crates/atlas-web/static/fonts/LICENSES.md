@@ -15,7 +15,7 @@ Files come from Fontsource 5.2.6 (latin subset).
 
 `../antigravity.png` and the Claude, OpenAI (Codex) and OpenCode paths in
 `src/icons.rs` come from T3 Code (MIT, © T3 Tools Inc., `apps/web/src/components/Icons.tsx`
-and `apps/marketing/public/harnesses/`). The Amp and Muse paths are their icons in the
-Agent Client Protocol registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/`
-`amp-acp.svg` and `muse-code.svg`). The sparkles mark is lucide's (ISC). The marks
+and `apps/marketing/public/harnesses/`). The Amp, Muse and Grok Build paths are their icons
+in the Agent Client Protocol registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/`
+`amp-acp.svg`, `muse-code.svg` and `grok-build.svg`). The sparkles mark is lucide's (ISC). The marks
 themselves belong to their owners and identify each agent; they imply no endorsement.

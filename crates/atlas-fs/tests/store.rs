@@ -516,3 +516,84 @@ fn reads_amp_muse_and_herdr_files() {
         "Herdr has no project files of its own"
     );
 }
+
+/// Config files in the shapes Grok Build 1.0.92 reads and writes itself (decision 0022).
+#[test]
+fn reads_grok_build_files() {
+    let (_tmp, sources) = fixture();
+    let home = &sources.home;
+    // A linked skill and global AGENTS.md, both of which `grok inspect` follows.
+    fs::create_dir_all(home.join(".grok/skills")).unwrap();
+    symlink(
+        sources.knowledge.join("skills/deploy"),
+        home.join(".grok/skills/deploy"),
+    )
+    .unwrap();
+    symlink(
+        sources.knowledge.join("AGENTS.md"),
+        home.join(".grok/AGENTS.md"),
+    )
+    .unwrap();
+    // config.toml as `grok mcp add demo -- echo hi` leaves it; MCP is not read yet.
+    write(
+        &home.join(".grok/config.toml"),
+        "[mcp_servers.demo]\ncommand = \"echo\"\nargs = [\"hi\"]\nenabled = true\n",
+    );
+    // Hooks: any number of Claude-shaped JSON files in ~/.grok/hooks, read in name order.
+    write(
+        &home.join(".grok/hooks/safety.json"),
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard.sh","timeout":10}]}]}}"#,
+    );
+    write(
+        &home.join(".grok/hooks/notify.json"),
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"https://example.com/hook"},{"type":"command","command":"done.sh"}]}]}}"#,
+    );
+    write(&home.join(".grok/hooks/README.md"), "not a hook file\n");
+
+    let views = scan_harnesses(&sources);
+    let grok = views.iter().find(|v| v.kind == HarnessKind::Grok).unwrap();
+    assert!(grok.present);
+    assert!(matches!(
+        grok.skill_dirs[0].entries.as_slice(),
+        [InstalledSkill::FromAtlas { home: SkillHome::Private, name }] if name.as_str() == "deploy"
+    ));
+    assert_eq!(grok.instructions[0].link, InstructionLink::Linked);
+    assert_eq!(grok.hook_config.as_deref(), Some("~/.grok/hooks"));
+    let hooks: Vec<_> = grok
+        .hooks
+        .iter()
+        .map(|h| (h.event.as_str(), h.command.as_str(), h.timeout))
+        .collect();
+    assert_eq!(
+        hooks,
+        vec![
+            ("Stop", "done.sh", None),
+            ("PreToolUse", "guard.sh", Some(10))
+        ],
+        "an HTTP hook has no command to show"
+    );
+
+    // In a repo Grok loads every instruction file; Atlas shows the first. It reads the
+    // `.grok`, `.agents`, `.claude` and `.cursor` skill folders, not Codex's.
+    let repo = &sources.projects[0].root;
+    fs::remove_file(repo.join("AGENTS.md")).unwrap();
+    write(&repo.join("CLAUDE.md"), "# Shop\n");
+    for (dir, name) in [
+        (".grok/skills", "release"),
+        (".cursor/skills", "lint"),
+        (".codex/skills", "codex-only"),
+    ] {
+        write(
+            &repo.join(dir).join(name).join("SKILL.md"),
+            "---\ndescription: x\n---\n",
+        );
+    }
+    let projects = atlas_fs::scan_projects(&sources);
+    let grok = projects[0]
+        .harnesses
+        .iter()
+        .find(|h| h.kind == HarnessKind::Grok)
+        .unwrap();
+    assert_eq!(grok.instructions.as_deref(), Some("CLAUDE.md"));
+    assert_eq!(grok.skills, vec!["lint", "release", "stock"]);
+}

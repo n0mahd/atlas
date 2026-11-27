@@ -33,10 +33,11 @@ harness), `atlas-fs` (reads only: the store, each harness's folders, each projec
 folders and Claude Code's per-repo memory) plus atomic writes for edits, `atlas-git`
 (commits one file, optional push), `atlas-signer` (passkeys), `atlas-web`, and the
 `atlas-hub` binary. Phase 2 editing is live (decision 0016). Phase 3: `atlas-verify`
-(release signatures), `atlas-harness` formats, and `atlas-client` (`atlasd`, decision 0021).
+(release signatures), `atlas-harness` formats, and `atlas-client` (`atlasd`, decision 0023).
 
-Harnesses with a layout: Claude Code, Codex, OpenCode, Pi, Antigravity, Amp and Muse. T3
-Code and Herdr are hosts that run those agents, so their layouts are only a presence marker.
+Harnesses with a layout: Claude Code, Codex, OpenCode, Pi, Antigravity, Amp, Muse and Grok
+Build. T3 Code and Herdr are hosts that run those agents, so their layouts are only a
+presence marker.
 
 `atlas-hub` and `atlasd` are the composition roots. No DI framework. Read-only screens
 query the store directly instead of going through use cases.
