@@ -33,6 +33,9 @@ struct Config {
     public_url: Option<String>,
     /// Passkeys and settings. Default: `$STATE_DIRECTORY`, else `~/.local/state/atlas-hub`.
     state_dir: Option<String>,
+    /// Minutes after start during which the first passkey can be made from the browser by
+    /// an allowed Tailscale login, while none exists. Default 30; 0 turns it off.
+    first_run_minutes: Option<u64>,
 }
 
 fn expand(home: &Path, p: &str) -> PathBuf {
@@ -53,21 +56,73 @@ fn fail(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
+fn load_config(home: &Path) -> Config {
+    let config_path = std::env::var_os("ATLAS_HUB_CONFIG")
+        .map_or_else(|| home.join(".config/atlas/hub.toml"), PathBuf::from);
+    let text = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| fail(format!("can't read {}: {e}", config_path.display())));
+    toml::from_str(&text)
+        .unwrap_or_else(|e| fail(format!("{} isn't valid: {e}", config_path.display())))
+}
+
+fn state_dir(home: &Path, config: &Config) -> PathBuf {
+    config.state_dir.as_deref().map_or_else(
+        || {
+            std::env::var_os("STATE_DIRECTORY")
+                .map_or_else(|| home.join(".local/state/atlas-hub"), PathBuf::from)
+        },
+        |d| expand(home, d),
+    )
+}
+
+const USAGE: &str = "usage: atlas-hub            serve the hub
+       atlas-hub setup      print a one-time link (and QR code) to add a passkey";
+
+/// `atlas-hub setup`: a one-time link to add a passkey, for first setup or lost passkeys.
+/// Whoever can run this on the hub already controls it.
+fn setup(home: &Path, config: &Config) {
+    let Some(url) = config.public_url.as_deref() else {
+        fail("public_url isn't set in the config, so Atlas is read-only and has no passkeys");
+    };
+    let ttl = std::time::Duration::from_mins(15);
+    let token = atlas_signer::setup::issue(&state_dir(home, config), ttl)
+        .unwrap_or_else(|e| fail(format!("can't write the setup link: {e}")));
+    let link = format!("{}/setup/{token}", url.trim_end_matches('/'));
+    println!("Open this link to add a passkey (works once, for 15 minutes):\n\n  {link}\n");
+    if let Ok(code) = qrcode::QrCode::new(link.as_bytes()) {
+        let qr = code
+            .render::<qrcode::render::unicode::Dense1x2>()
+            .dark_color(qrcode::render::unicode::Dense1x2::Light)
+            .light_color(qrcode::render::unicode::Dense1x2::Dark)
+            .quiet_zone(true)
+            .build();
+        println!("Or scan it with your phone:\n\n{qr}");
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| fail("HOME is not set")));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("setup") => {
+            setup(&home, &load_config(&home));
+            return;
+        }
+        Some("-h" | "--help" | "help") => {
+            println!("{USAGE}");
+            return;
+        }
+        Some(other) => fail(format!("unknown command {other:?}\n{USAGE}")),
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
-
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| fail("HOME is not set")));
-    let config_path = std::env::var_os("ATLAS_HUB_CONFIG")
-        .map_or_else(|| home.join(".config/atlas/hub.toml"), PathBuf::from);
-    let text = std::fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| fail(format!("can't read {}: {e}", config_path.display())));
-    let config: Config = toml::from_str(&text)
-        .unwrap_or_else(|e| fail(format!("{} isn't valid: {e}", config_path.display())));
+    let config = load_config(&home);
     if config.allowed_logins.is_empty() {
         fail("allowed_logins is empty, so nobody could get in");
     }
@@ -86,25 +141,25 @@ async fn main() {
         projects,
         home: home.clone(),
     };
-    let hub_name = config.hub_name.unwrap_or_else(hostname);
+    let hub_name = config.hub_name.clone().unwrap_or_else(hostname);
+    let first_run = std::time::Duration::from_mins(config.first_run_minutes.unwrap_or(30));
     let writer = config.public_url.as_deref().map(|url| {
-        let state_dir = config.state_dir.as_deref().map_or_else(
-            || {
-                std::env::var_os("STATE_DIRECTORY")
-                    .map_or_else(|| home.join(".local/state/atlas-hub"), PathBuf::from)
-            },
-            |d| expand(&home, d),
-        );
-        atlas_web::Writer::open(url, &state_dir)
+        atlas_web::Writer::open(url, &state_dir(&home, &config), first_run)
             .unwrap_or_else(|e| fail(format!("can't set up passkeys: {e}")))
     });
-    if writer.is_none() {
-        tracing::info!("no public_url in the config, so Atlas is read-only");
+    match &writer {
+        None => tracing::info!("no public_url in the config, so Atlas is read-only"),
+        Some(w) if w.first_run_open() => tracing::warn!(
+            "no passkey yet: open {}/signin within {} minutes to create one, or run `atlas-hub setup` for a link",
+            w.origin(),
+            first_run.as_secs() / 60
+        ),
+        Some(w) if !w.signer.has_keys() => {
+            tracing::warn!("no passkey yet: run `atlas-hub setup` for a link to create one");
+        }
+        Some(_) => {}
     }
     let state = AppState::new(sources, &hub_name, config.machines, writer);
-    if let Some(code) = state.setup_code() {
-        tracing::warn!("no passkey yet: open /signin on the hub and enter the setup code {code}");
-    }
     let app = atlas_web::router(state, Access::new(config.allowed_logins));
 
     let socket = config.socket.map_or_else(

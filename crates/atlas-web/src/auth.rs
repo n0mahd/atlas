@@ -14,7 +14,6 @@ use axum::http::{HeaderMap, HeaderValue, header};
 pub const COOKIE: &str = "__Host-atlas";
 const SESSION_TTL: Duration = Duration::from_hours(12);
 const FLOW_TTL: Duration = Duration::from_mins(5);
-const MAX_SETUP_TRIES: u32 = 5;
 
 /// A random token: two v4 UUIDs, 244 random bits.
 #[must_use]
@@ -42,6 +41,10 @@ pub enum Flow {
     Enrol {
         state: Box<PasskeyRegistration>,
         name: String,
+        /// Who is enrolling: the Tailscale login, "setup link" or "signed in".
+        added_by: String,
+        /// The setup link this enrolment uses, redeemed when it finishes.
+        token: Option<String>,
     },
     SignIn {
         state: Box<PasskeyAuthentication>,
@@ -54,17 +57,11 @@ struct PendingFlow {
     expires: Instant,
 }
 
-/// Sessions, ceremonies and the first-passkey setup code. All in memory: a restart signs
+/// Sessions and passkey ceremonies. All in memory: a restart signs
 /// the owner out, which is fine for one person.
 pub struct Auth {
     sessions: Mutex<HashMap<String, Session>>,
     flows: Mutex<HashMap<String, PendingFlow>>,
-    setup: Mutex<Setup>,
-}
-
-struct Setup {
-    code: String,
-    failures: u32,
 }
 
 impl std::fmt::Debug for Auth {
@@ -79,48 +76,13 @@ impl Default for Auth {
     }
 }
 
-fn setup_code() -> String {
-    let raw = uuid::Uuid::new_v4().simple().to_string().to_uppercase();
-    format!("{}-{}-{}", &raw[..4], &raw[4..8], &raw[8..12])
-}
-
 impl Auth {
     #[must_use]
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             flows: Mutex::new(HashMap::new()),
-            setup: Mutex::new(Setup {
-                code: setup_code(),
-                failures: 0,
-            }),
         }
-    }
-
-    /// The code that lets the first passkey be enrolled. The hub logs it at start.
-    #[must_use]
-    pub fn setup_code(&self) -> String {
-        self.setup
-            .lock()
-            .map_or_else(|_| String::new(), |s| s.code.clone())
-    }
-
-    /// Checks a setup code. After too many wrong tries the code changes (and is logged).
-    pub fn check_setup_code(&self, given: &str) -> bool {
-        let Ok(mut setup) = self.setup.lock() else {
-            return false;
-        };
-        let normal = |s: &str| s.trim().to_uppercase().replace([' ', '-'], "");
-        if normal(given) == normal(&setup.code) {
-            return true;
-        }
-        setup.failures += 1;
-        if setup.failures >= MAX_SETUP_TRIES {
-            setup.code = setup_code();
-            setup.failures = 0;
-            tracing::warn!("too many wrong setup codes; the new code is {}", setup.code);
-        }
-        false
     }
 
     pub fn start_flow(&self, flow: Flow) -> String {
@@ -258,17 +220,6 @@ mod tests {
     }
 
     #[test]
-    fn setup_code_rotates_after_wrong_guesses() {
-        let auth = Auth::new();
-        let code = auth.setup_code();
-        assert!(auth.check_setup_code(&code.to_lowercase().replace('-', " ")));
-        for _ in 0..MAX_SETUP_TRIES {
-            assert!(!auth.check_setup_code("nope"));
-        }
-        assert_ne!(auth.setup_code(), code);
-    }
-
-    #[test]
     fn next_stays_on_this_site() {
         assert_eq!(safe_next("/skills?scope=x"), "/skills?scope=x");
         for bad in [
@@ -302,6 +253,8 @@ mod tests {
         let id = auth.start_flow(Flow::Enrol {
             state: Box::new(state),
             name: String::new(),
+            added_by: String::new(),
+            token: None,
         });
         assert!(auth.take_flow(&id).is_some());
         assert!(auth.take_flow(&id).is_none());

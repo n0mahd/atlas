@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 atlas-fs = { path = "../atlas-fs" }
+atlas-signer = { path = "../atlas-signer" }
+qrcode = { version = "0.14", default-features = false }
 atlas-web = { path = "../atlas-web" }
 axum.workspace = true
 serde.workspace = true

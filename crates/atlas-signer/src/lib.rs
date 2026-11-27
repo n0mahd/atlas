@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod setup;
+
 use serde::{Deserialize, Serialize};
 pub use webauthn_rs::prelude::{
     CreationChallengeResponse, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
@@ -42,6 +44,8 @@ pub struct KeyInfo {
     /// Seconds since the Unix epoch.
     pub added: u64,
     pub last_used: Option<u64>,
+    /// How it was enrolled: the Tailscale login on first run, "setup link", or "signed in".
+    pub added_by: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -49,6 +53,8 @@ struct StoredKey {
     name: String,
     added: u64,
     last_used: Option<u64>,
+    #[serde(default)]
+    added_by: Option<String>,
     passkey: Passkey,
 }
 
@@ -74,7 +80,7 @@ impl std::fmt::Debug for Signer {
     }
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -173,6 +179,7 @@ impl Signer {
                 name: k.name.clone(),
                 added: k.added,
                 last_used: k.last_used,
+                added_by: k.added_by.clone(),
             })
             .collect()
     }
@@ -208,6 +215,7 @@ impl Signer {
         answer: &RegisterPublicKeyCredential,
         state: &PasskeyRegistration,
         name: &str,
+        added_by: &str,
     ) -> Result<KeyInfo, SignerError> {
         let passkey = self.webauthn.finish_passkey_registration(answer, state)?;
         let mut file = self.lock();
@@ -227,11 +235,13 @@ impl Signer {
             name: name.clone(),
             added: now(),
             last_used: None,
+            added_by: Some(added_by.to_owned()),
         };
         file.keys.push(StoredKey {
             name,
             added: info.added,
             last_used: None,
+            added_by: info.added_by.clone(),
             passkey,
         });
         self.save(&file)?;
@@ -276,6 +286,7 @@ impl Signer {
             name: key.name.clone(),
             added: key.added,
             last_used: key.last_used,
+            added_by: key.added_by.clone(),
         };
         self.save(&file)?;
         Ok(info)

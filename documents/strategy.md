@@ -28,11 +28,8 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
 - Reading trusts the `Tailscale-User-Login` header from `tailscale serve` (decision 0012);
   writes need a passkey (0016). Any process running as the hub's user can reach the socket.
 - Sessions and passkey ceremonies live in memory, so a hub restart signs the owner out.
-- First-passkey setup needs a code from the hub's log (decision 0016): fine for one owner,
-  too rough for anyone else. Planned: a first-run page that trusts the allowed Tailscale
-  login while no passkey exists (time-limited, logged), plus `atlas-hub setup` printing a
-  one-time link and QR for hubs without Tailscale identity; the local app's first-run
-  wizard takes this over in phase 3.
+- The first-run window trusts any allowed Tailscale login while no passkey exists
+  (decision 0018); the local app's first-run wizard takes onboarding over in phase 3.
 - Saving runs `git` in project repos the owner also works in by hand; a save refuses when
   the file has other uncommitted changes, but can't stop the owner committing meanwhile.
 - Links inside a repo are followed unless they point at a hidden file (`.env`, `.git`).

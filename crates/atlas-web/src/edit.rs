@@ -41,6 +41,11 @@ pub struct Writer {
     settings: Mutex<Settings>,
     /// One save at a time: git's index can't take two commits at once.
     git: Mutex<()>,
+    /// Passkeys, setup links and settings.
+    pub state_dir: PathBuf,
+    started: std::time::Instant,
+    /// How long after start the first passkey can be made without a setup link.
+    first_run: std::time::Duration,
 }
 
 impl std::fmt::Debug for Writer {
@@ -53,10 +58,16 @@ impl std::fmt::Debug for Writer {
 
 impl Writer {
     /// Opens the passkey store and settings in `state_dir` for a hub served at `public_url`.
+    /// While no passkey exists, the first one can be made without a setup link for
+    /// `first_run` after start, by an allowed Tailscale login.
     ///
     /// # Errors
     /// If the address isn't a usable https origin or the state can't be read.
-    pub fn open(public_url: &str, state_dir: &std::path::Path) -> Result<Self, String> {
+    pub fn open(
+        public_url: &str,
+        state_dir: &std::path::Path,
+        first_run: std::time::Duration,
+    ) -> Result<Self, String> {
         let url = atlas_signer::Url::parse(public_url).map_err(|e| e.to_string())?;
         // Browsers allow passkeys only on https, or on plain http for localhost (tests).
         let local = url.scheme() == "http" && url.host_str() == Some("localhost");
@@ -76,7 +87,30 @@ impl Writer {
             settings_path,
             settings: Mutex::new(settings),
             git: Mutex::new(()),
+            state_dir: state_dir.to_path_buf(),
+            started: std::time::Instant::now(),
+            first_run,
         })
+    }
+
+    /// The public address, for links printed elsewhere.
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Whether the first passkey can still be made without a setup link.
+    #[must_use]
+    pub fn first_run_open(&self) -> bool {
+        !self.signer.has_keys() && self.started.elapsed() < self.first_run
+    }
+
+    /// Whole minutes left in the first-run window, rounded up.
+    fn first_run_minutes_left(&self) -> u64 {
+        self.first_run
+            .saturating_sub(self.started.elapsed())
+            .as_secs()
+            .div_ceil(60)
     }
 
     fn settings(&self) -> Settings {
@@ -143,8 +177,25 @@ fn forbidden(msg: &'static str) -> Response {
 #[template(path = "signin.html")]
 struct SignInPage {
     page: Page,
-    first: bool,
+    mode: SignInMode,
     next: String,
+    /// The Tailscale login on first run.
+    login: String,
+    minutes_left: u64,
+    /// The setup link's token.
+    token: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SignInMode {
+    /// No passkey yet, and the first-run window is open.
+    FirstRun,
+    /// No passkey yet, and the window has closed.
+    Closed,
+    /// A setup link from `atlas-hub setup`.
+    SetupLink,
+    /// The usual passkey sign-in.
+    SignIn,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -163,25 +214,78 @@ pub(crate) async fn signin_page(
     if w.auth.session(&headers).is_some() {
         return Ok(Redirect::to(&next).into_response());
     }
+    let mode = if w.signer.has_keys() {
+        SignInMode::SignIn
+    } else if w.first_run_open() {
+        SignInMode::FirstRun
+    } else {
+        SignInMode::Closed
+    };
+    let title = if mode == SignInMode::SignIn {
+        "Sign in"
+    } else {
+        "Welcome to Atlas"
+    };
+    render_signin(&s, &headers, mode, title, next, String::new()).await
+}
+
+async fn render_signin(
+    s: &AppState,
+    headers: &HeaderMap,
+    mode: SignInMode,
+    title: &str,
+    next: String,
+    token: String,
+) -> Result<Response, AppError> {
+    let w = writer(s)?;
     let snap = s.snapshot().await?;
-    let page = s.page(&headers, "/signin", "Sign in", &snap, &Scope::Global, false);
+    let page = s.page(headers, "/signin", title, &snap, &Scope::Global, false);
     Ok(Html(
         SignInPage {
             page,
-            first: !w.signer.has_keys(),
+            mode,
             next,
+            login: login(headers),
+            minutes_left: w.first_run_minutes_left(),
+            token,
         }
         .render()?,
     )
     .into_response())
 }
 
+/// A setup link from `atlas-hub setup`: one passkey, no sign-in needed.
+pub(crate) async fn setup_link(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !atlas_signer::setup::is_valid(&w.state_dir, &token) {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            "This setup link has expired or was already used. On the hub, run: atlas-hub setup\n",
+        )
+            .into_response());
+    }
+    render_signin(
+        &s,
+        &headers,
+        SignInMode::SetupLink,
+        "Add a passkey",
+        "/settings".into(),
+        token,
+    )
+    .await
+}
+
 #[derive(Deserialize)]
 pub struct EnrolStart {
     #[serde(default)]
-    code: String,
-    #[serde(default)]
     name: String,
+    /// A setup link's token, when enrolling through one.
+    #[serde(default)]
+    token: String,
 }
 
 #[derive(Serialize)]
@@ -199,19 +303,33 @@ pub(crate) async fn enrol_start(
     if !auth::same_origin(&headers, &w.origin) {
         return Ok(forbidden("Wrong origin.\n"));
     }
-    let allowed = if w.signer.has_keys() {
+    let token = Some(req.token).filter(|t| !t.is_empty());
+    let added_by = if let Some(t) = &token {
+        // A setup link from `atlas-hub setup`: whoever ran it controls the hub.
+        if !atlas_signer::setup::is_valid(&w.state_dir, t) {
+            return Ok(forbidden(
+                "This setup link has expired or was already used. Run atlas-hub setup for a new one.\n",
+            ));
+        }
+        "setup link".to_owned()
+    } else if w.signer.has_keys() {
         // Adding another passkey needs a session and its token.
         let csrf = headers
             .get("x-atlas-csrf")
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default();
-        w.authorised(&headers, csrf)
+        if !w.authorised(&headers, csrf) {
+            return Ok(forbidden("Sign in to add another passkey.\n"));
+        }
+        "signed in".to_owned()
+    } else if w.first_run_open() {
+        // First run: Tailscale already told us who this is (the login check ran first).
+        login(&headers)
     } else {
-        w.auth.check_setup_code(&req.code)
+        return Ok(forbidden(
+            "The first-run window has closed. On the hub, run atlas-hub setup for a link.\n",
+        ));
     };
-    if !allowed {
-        return Ok(forbidden("Not allowed to add a passkey.\n"));
-    }
     let (options, state) = w
         .signer
         .start_enrol()
@@ -219,8 +337,22 @@ pub(crate) async fn enrol_start(
     let flow = w.auth.start_flow(Flow::Enrol {
         state: Box::new(state),
         name: req.name,
+        added_by,
+        token,
     });
     Ok(Json(Started { flow, options }).into_response())
+}
+
+/// The Tailscale login `tailscale serve` put on this request.
+fn login(headers: &HeaderMap) -> String {
+    headers
+        .get("tailscale-user-login")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown login")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(120)
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -243,15 +375,32 @@ pub(crate) async fn enrol_finish(
     if !auth::same_origin(&headers, &w.origin) {
         return Ok(forbidden("Wrong origin.\n"));
     }
-    let Some(Flow::Enrol { state, name }) = w.auth.take_flow(&req.flow) else {
+    let Some(Flow::Enrol {
+        state,
+        name,
+        added_by,
+        token,
+    }) = w.auth.take_flow(&req.flow)
+    else {
         return Ok(forbidden("That passkey request expired. Try again.\n"));
     };
     let first = !w.signer.has_keys();
+    // Check again at the finish: first run can be claimed once, and a link used once.
+    let still_allowed = match &token {
+        Some(t) => atlas_signer::setup::redeem(&w.state_dir, t)
+            .map_err(|e| AppError::Bad(e.to_string()))?,
+        None => !first || w.first_run_open(),
+    };
+    if !still_allowed {
+        return Ok(forbidden(
+            "This setup has already been used or has expired.\n",
+        ));
+    }
     let key = w
         .signer
-        .finish_enrol(&req.credential, &state, &name)
+        .finish_enrol(&req.credential, &state, &name, &added_by)
         .map_err(|e| AppError::Bad(e.to_string()))?;
-    tracing::info!("passkey enrolled: {}", key.name);
+    tracing::warn!("passkey \"{}\" enrolled ({added_by})", key.name);
     let mut res = Json(Done {
         next: "/settings".into(),
     })
@@ -352,6 +501,7 @@ struct KeyRow {
     id: String,
     name: String,
     added: String,
+    added_by: String,
     last_used: String,
 }
 
@@ -402,6 +552,7 @@ pub(crate) async fn settings_page(
             id: k.id,
             name: k.name,
             added: day(k.added),
+            added_by: k.added_by.unwrap_or_default(),
             last_used: k.last_used.map_or_else(|| "never".to_owned(), day),
         })
         .collect();
@@ -853,6 +1004,7 @@ mod tests {
     }
 
     struct Hub {
+        state: std::path::PathBuf,
         _tmp: tempfile::TempDir,
         knowledge: std::path::PathBuf,
         project: std::path::PathBuf,
@@ -862,6 +1014,10 @@ mod tests {
     }
 
     fn hub() -> Hub {
+        hub_with(std::time::Duration::from_mins(30))
+    }
+
+    fn hub_with(first_run: std::time::Duration) -> Hub {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().to_path_buf();
         let knowledge = home.join("Knowledge");
@@ -896,7 +1052,7 @@ mod tests {
                 root: project.clone(),
             }],
         };
-        let writer = super::Writer::open(ORIGIN, &home.join("state")).unwrap();
+        let writer = super::Writer::open(ORIGIN, &home.join("state"), first_run).unwrap();
         let cookie = writer.auth.sign_in();
         let csrf = writer
             .auth
@@ -913,6 +1069,7 @@ mod tests {
         let state = AppState::new(sources, "test-hub", Vec::new(), Some(writer));
         let app = router(state, Access::new(vec![LOGIN.to_owned()]));
         Hub {
+            state: home.join("state"),
             _tmp: tmp,
             knowledge,
             project,
@@ -1153,5 +1310,77 @@ mod tests {
             send(&hub, get(&hub, "/instructions/shop/AGENTS.md/edit", true)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(body.contains("link"), "{body}");
+    }
+
+    fn json(path: &str, body: &str, origin: &str) -> Request<Body> {
+        Request::post(path)
+            .header("tailscale-user-login", LOGIN)
+            .header(header::ORIGIN, origin)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn first_run_trusts_the_tailscale_login_while_open() {
+        let hub = hub();
+        let (status, _, page) = send(&hub, get(&hub, "/signin", false)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            page.contains(LOGIN) && page.contains("Create passkey"),
+            "{page}"
+        );
+        assert!(!page.contains("setup code"));
+        let (status, _, body) = send(
+            &hub,
+            json("/auth/enrol/start", r#"{"name":"Laptop"}"#, ORIGIN),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.contains(r#""flow""#) && body.contains("publicKey"));
+        let (status, ..) = send(
+            &hub,
+            json("/auth/enrol/start", r#"{"name":"x"}"#, "https://evil.test"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_closed_first_run_points_to_the_setup_command() {
+        let hub = hub_with(std::time::Duration::ZERO);
+        let (_, _, page) = send(&hub, get(&hub, "/signin", false)).await;
+        assert!(
+            page.contains("atlas-hub setup") && !page.contains("Create passkey"),
+            "{page}"
+        );
+        let (status, _, body) =
+            send(&hub, json("/auth/enrol/start", r#"{"name":"x"}"#, ORIGIN)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("atlas-hub setup"));
+    }
+
+    #[tokio::test]
+    async fn setup_links_work_once() {
+        let hub = hub_with(std::time::Duration::ZERO);
+        let token =
+            atlas_signer::setup::issue(&hub.state, std::time::Duration::from_mins(15)).unwrap();
+        let (status, _, page) = send(&hub, get(&hub, &format!("/setup/{token}"), false)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains(&format!(r#"name="token" value="{token}""#)));
+        let start = format!(r#"{{"name":"Phone","token":"{token}"}}"#);
+        let (status, _, body) = send(&hub, json("/auth/enrol/start", &start, ORIGIN)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, ..) = send(
+            &hub,
+            get(&hub, &format!("/setup/{}", "0".repeat(64)), false),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(atlas_signer::setup::redeem(&hub.state, &token).unwrap());
+        let (status, ..) = send(&hub, get(&hub, &format!("/setup/{token}"), false)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "used up");
+        let (status, ..) = send(&hub, json("/auth/enrol/start", &start, ORIGIN)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }

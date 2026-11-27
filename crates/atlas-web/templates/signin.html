@@ -1,16 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="signin" data-passkey data-next="{{ next }}">
-  {% if first %}
-  <p class="signin-lede">Add your first passkey. The setup code is in the hub's log: <span class="mono">journalctl --user -u atlas-hub</span>.</p>
-  <label class="field"><span>Setup code</span><input class="search" name="code" autocomplete="one-time-code" required></label>
+  {% match mode %}
+  {% when SignInMode::FirstRun %}
+  <p class="signin-lede">Signed in to Tailscale as <b>{{ login }}</b>. Create the passkey that guards changes to this hub.</p>
   <label class="field"><span>Name this passkey</span><input class="search" name="name" placeholder="Laptop, phone, security key…" maxlength="60"></label>
   <button class="button-ink" type="button" data-action="enrol">Create passkey</button>
-  {% else %}
+  <p class="editor-note">Open for {{ minutes_left }} more minute{% if minutes_left != 1 %}s{% endif %}. After that, run <span class="mono">atlas-hub setup</span> on the hub for a link.</p>
+  {% when SignInMode::Closed %}
+  <p class="signin-lede">This hub has no passkey yet, and its first-run window has closed.</p>
+  <p>On the hub, run:</p>
+  <pre class="ink-block">atlas-hub setup</pre>
+  <p class="editor-note">It prints a link and a QR code that work once, for 15 minutes.</p>
+  {% when SignInMode::SetupLink %}
+  <input type="hidden" name="token" value="{{ token }}">
+  <p class="signin-lede">Add a passkey to this hub. This link works once.</p>
+  <label class="field"><span>Name this passkey</span><input class="search" name="name" placeholder="Laptop, phone, security key…" maxlength="60"></label>
+  <button class="button-ink" type="button" data-action="enrol">Create passkey</button>
+  {% when SignInMode::SignIn %}
   <button class="button-ink" type="button" data-action="signin">
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
     Sign in with a passkey</button>
-  {% endif %}
+  <p class="editor-note">Lost your passkeys? Run <span class="mono">atlas-hub setup</span> on the hub.</p>
+  {% endmatch %}
   <p class="marginalia warn-note" data-error hidden role="alert"></p>
 </section>
 <script src="/static/passkey.js" defer></script>

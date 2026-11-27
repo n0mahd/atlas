@@ -106,3 +106,12 @@ only) at atlas.abdlh.com, so it never depends on a home machine. Deploy: `npx wr
 deploy` from `site/` with Cloudflare credentials in the environment. Fonts, grain, key and
 logo are copies of `atlas-web`'s; change both together. The zone caches static files for
 hours, so rename an asset rather than editing it in place.
+
+## 0018 · 2026-11-27 · First passkey without a code
+The log setup code from 0016 is gone. While a hub has no passkey, an allowed Tailscale login
+can create the first one from the browser for 30 minutes after the hub starts
+(`first_run_minutes`, 0 turns it off); finishing re-checks, so first run is claimed once.
+Otherwise, and to recover lost passkeys, `atlas-hub setup` on the hub prints a link and QR
+code that work once for 15 minutes; the state folder keeps only the token's hash. Running
+it needs the hub machine, which is the trust the owner already has. Each passkey records
+how it was added. `deploy/install.sh` installs the hub and opens a setup link.

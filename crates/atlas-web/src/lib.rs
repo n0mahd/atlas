@@ -68,15 +68,6 @@ impl AppState {
         }
     }
 
-    /// The code that enrols the first passkey, while none exists.
-    #[must_use]
-    pub fn setup_code(&self) -> Option<String> {
-        self.writer
-            .as_ref()
-            .filter(|w| !w.signer.has_keys())
-            .map(|w| w.auth.setup_code())
-    }
-
     async fn snapshot(&self) -> Result<Snapshot, AppError> {
         let sources = Arc::clone(&self.sources);
         tokio::task::spawn_blocking(move || Snapshot {
@@ -118,6 +109,7 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/mcp", get(mcp))
         .route("/machines", get(machines))
         .route("/signin", get(edit::signin_page))
+        .route("/setup/{token}", get(edit::setup_link))
         .route("/auth/enrol/start", post(edit::enrol_start))
         .route("/auth/enrol/finish", post(edit::enrol_finish))
         .route("/auth/signin/start", post(edit::signin_start))

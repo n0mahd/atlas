@@ -15,7 +15,7 @@
     <ul class="rows">
       {% for k in keys %}
       <li><div class="row static">
-        <span class="row-main"><span class="row-name">{{ k.name }}</span><span class="row-desc mono">added {{ k.added }} · last used {{ k.last_used }}</span></span>
+        <span class="row-main"><span class="row-name">{{ k.name }}</span><span class="row-desc mono">added {{ k.added }}{% if !k.added_by.is_empty() %} by {{ k.added_by }}{% endif %} · last used {{ k.last_used }}</span></span>
         {% if keys.len() > 1 %}
         <form method="post" action="/settings/keys/{{ k.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Remove {{ k.name }}" aria-label="Remove {{ k.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></form>
         {% endif %}

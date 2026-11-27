@@ -29,9 +29,9 @@
   }
 
   async function enrol(box) {
-    var code = box.querySelector('[name="code"]');
+    var token = box.querySelector('[name="token"]');
     var name = box.querySelector('[name="name"]');
-    var start = await post("/auth/enrol/start", { code: code ? code.value : "", name: name ? name.value : "" });
+    var start = await post("/auth/enrol/start", { token: token ? token.value : "", name: name ? name.value : "" });
     var pk = start.options.publicKey;
     pk.challenge = toBuf(pk.challenge);
     pk.user.id = toBuf(pk.user.id);
