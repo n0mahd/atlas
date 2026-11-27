@@ -6,3 +6,4 @@ projects_dir = "~/Projects"
 machines = ["laptop", "build-box"]   # other machines, listed until they pair
 # socket = "/run/user/1000/atlas/hub.sock"   # default: $XDG_RUNTIME_DIR/atlas/hub.sock
 # hub_name = "my-hub"                         # default: the hostname
+public_url = "https://hub.example.ts.net:7443"   # passkeys are tied to this address; leave out for read-only

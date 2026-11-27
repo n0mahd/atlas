@@ -12,13 +12,16 @@ ExecStart=%h/.local/bin/atlas-hub
 Restart=on-failure
 RuntimeDirectory=atlas
 RuntimeDirectoryMode=0700
+# Passkeys and settings live in ~/.local/state/atlas-hub.
+StateDirectory=atlas-hub
+StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
-PrivateNetwork=yes
-RestrictAddressFamilies=AF_UNIX
+# The web UI is a Unix socket; INET is only for git push when the owner turns it on.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ProtectSystem=strict
-ReadOnlyPaths=%h
+# Home stays writable: edits commit to the store and project repos there.
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 ProtectKernelTunables=yes

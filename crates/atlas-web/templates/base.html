@@ -8,7 +8,8 @@
 <title>{% if page.section == "/" %}Atlas{% else %}{{ page.title }} · Atlas{% endif %}</title>
 <link rel="icon" href="/static/favicon.png" type="image/png" sizes="64x64">
 <link rel="apple-touch-icon" href="/static/logo.png">
-<link rel="stylesheet" href="/static/atlas.css">
+{% if page.signed_in %}<meta name="atlas-csrf" content="{{ page.csrf }}">
+{% endif %}<link rel="stylesheet" href="/static/atlas.css">
 <script src="/static/atlas.js"></script>
 <script src="/static/htmx.min.js" defer></script>
 </head>
@@ -30,8 +31,16 @@
       <li><a href="{{ n.href }}" title="{{ n.label }}"{% if n.active %} class="active" aria-current="page"{% endif %}{% if n.later %} data-later{% endif %}><span class="num">{{ n.num }}</span>{{ n.icon|safe }}<span class="label">{{ n.label }}</span></a></li>
       {% endfor %}
     </ul>
-    <div class="rail-foot" title="The hub this page reads from">
-      <span class="dot{% if page.problems > 0 %} warn-dot{% endif %}" aria-hidden="true"></span><span class="label">{{ page.hub }}</span>
+    <div class="rail-foot">
+      {% if page.can_sign_in %}
+      {% if page.signed_in %}
+      <a class="foot-link" href="/settings" title="Settings and passkeys" aria-label="Settings and passkeys"><svg class="nav-icon foot-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg><span class="label">Signed in</span></a>
+      <form method="post" action="/auth/signout" class="foot-form"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button type="submit" class="foot-button" title="Sign out" aria-label="Sign out"><svg class="nav-icon foot-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg></button></form>
+      {% else %}
+      <a class="foot-link" href="/signin" title="Sign in with a passkey to edit" aria-label="Sign in with a passkey to edit"><svg class="nav-icon foot-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg><span class="label">Sign in to edit</span></a>
+      {% endif %}
+      {% endif %}
+      <span class="hub-line" title="The hub this page reads from"><span class="dot{% if page.problems > 0 %} warn-dot{% endif %}" aria-hidden="true"></span><span class="label">{{ page.hub }}</span></span>
     </div>
   </nav>
   <main id="main">
@@ -41,6 +50,7 @@
       {% if page.section != "/" %}
       <div class="title-row">
         <h1>{{ page.title }}</h1>
+        {% if let Some(href) = page.edit_href %}<a class="edit-button" href="{{ href }}" title="Edit" aria-label="Edit {{ page.title }}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/></svg></a>{% endif %}
         {% if page.show_scope %}
         <form class="scope" method="get" action="{{ page.section }}">
           <span>Showing</span>
@@ -59,6 +69,7 @@
       </div>
       {% endif %}
     </header>
+    {% if !page.flash.is_empty() %}<p class="marginalia flash" role="status">{{ page.flash }}</p>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

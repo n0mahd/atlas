@@ -25,9 +25,11 @@ app, replacing `~/Knowledge/bin/sync` and `link-agents`, (4) MCP list, gateway a
 keystore. Each phase must work on its own. The hub is not tied to one machine.
 
 ## Debt register
-- Phase 1 trusts the `Tailscale-User-Login` header from `tailscale serve` instead of a
-  passkey (decision 0012). Any process running as the hub's user can reach the socket.
-  Pay off in phase 2, before the first write.
+- Reading trusts the `Tailscale-User-Login` header from `tailscale serve` (decision 0012);
+  writes need a passkey (0016). Any process running as the hub's user can reach the socket.
+- Sessions and passkey ceremonies live in memory, so a hub restart signs the owner out.
+- Saving runs `git` in project repos the owner also works in by hand; a save refuses when
+  the file has other uncommitted changes, but can't stop the owner committing meanwhile.
 - Links inside a repo are followed unless they point at a hidden file (`.env`, `.git`).
   Stricter would be "only files git tracks"; revisit when edits commit through Atlas.
 - Harness folder paths in `atlas-harness` come from the existing `link-agents` script, not

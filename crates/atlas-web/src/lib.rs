@@ -1,9 +1,11 @@
-//! The hub's web UI. Read-only in phase 1.
+//! The hub's web UI.
 //!
 //! Every request reads a fresh snapshot of the store, so the pages always match git.
 //! Access: the hub sits behind `tailscale serve`, which sets `Tailscale-User-Login`;
-//! only logins in [`Access`] get in.
+//! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
+mod auth;
+mod edit;
 mod icons;
 mod markdown;
 pub mod views;
@@ -17,11 +19,12 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 
 use atlas_core::kernel::Scope;
 
+pub use crate::edit::Writer;
 use crate::views::{Page, Snapshot};
 
 /// Who may use the hub: Tailscale logins such as `user@github`.
@@ -50,16 +53,28 @@ pub struct AppState {
     hub: Arc<str>,
     /// Other machines, shown as not paired until phase 3.
     others: Arc<[String]>,
+    /// Passkeys, sessions and saving. None keeps the hub read-only.
+    writer: Option<Arc<Writer>>,
 }
 
 impl AppState {
     #[must_use]
-    pub fn new(sources: Sources, hub: &str, others: Vec<String>) -> Self {
+    pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
         Self {
             sources: Arc::new(sources),
             hub: Arc::from(hub),
             others: others.into(),
+            writer: writer.map(Arc::new),
         }
+    }
+
+    /// The code that enrols the first passkey, while none exists.
+    #[must_use]
+    pub fn setup_code(&self) -> Option<String> {
+        self.writer
+            .as_ref()
+            .filter(|w| !w.signer.has_keys())
+            .map(|w| w.auth.setup_code())
     }
 
     async fn snapshot(&self) -> Result<Snapshot, AppError> {
@@ -75,13 +90,16 @@ impl AppState {
 
     fn page(
         &self,
+        headers: &HeaderMap,
         section: &'static str,
         title: impl Into<String>,
         snap: &Snapshot,
         scope: &Scope,
         scoped: bool,
     ) -> Page {
-        Page::new(section, title, &self.hub, &self.others, snap, scope, scoped)
+        let mut page = Page::new(section, title, &self.hub, &self.others, snap, scope, scoped);
+        edit::decorate(&mut page, self, headers);
+        page
     }
 }
 
@@ -99,6 +117,29 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/hooks", get(hooks))
         .route("/mcp", get(mcp))
         .route("/machines", get(machines))
+        .route("/signin", get(edit::signin_page))
+        .route("/auth/enrol/start", post(edit::enrol_start))
+        .route("/auth/enrol/finish", post(edit::enrol_finish))
+        .route("/auth/signin/start", post(edit::signin_start))
+        .route("/auth/signin/finish", post(edit::signin_finish))
+        .route("/auth/signout", post(edit::signout))
+        .route(
+            "/settings",
+            get(edit::settings_page).post(edit::settings_save),
+        )
+        .route("/settings/keys/{id}/remove", post(edit::remove_key))
+        .route(
+            "/skills/{home}/{name}/edit",
+            get(edit::edit_skill).post(edit::save_skill),
+        )
+        .route(
+            "/memory/{name}/edit",
+            get(edit::edit_memory).post(edit::save_memory),
+        )
+        .route(
+            "/instructions/{scope}/{file}/edit",
+            get(edit::edit_instructions).post(edit::save_instructions),
+        )
         .route("/static/{*path}", get(static_file))
         .fallback(not_found)
         .with_state(state)
@@ -135,7 +176,7 @@ async fn security_headers(req: Request, next: Next) -> Response {
     );
     h.insert(
         header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
+        HeaderValue::from_static("same-origin"),
     );
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     h.insert(
@@ -158,6 +199,8 @@ async fn security_headers(req: Request, next: Next) -> Response {
 enum AppError {
     NotFound,
     Internal,
+    /// A request Atlas refuses, with a reason the owner can act on.
+    Bad(String),
 }
 
 impl From<askama::Error> for AppError {
@@ -171,6 +214,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             Self::NotFound => (StatusCode::NOT_FOUND, "Not in the atlas.\n").into_response(),
+            Self::Bad(msg) => (StatusCode::BAD_REQUEST, format!("{msg}\n")).into_response(),
             Self::Internal => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong.\n").into_response()
             }
@@ -267,11 +311,39 @@ struct ListQuery {
     kind: String,
     #[serde(default)]
     host: String,
+    /// After a save: the commit, and what happened to the push.
+    #[serde(default)]
+    saved: String,
+    #[serde(default)]
+    pushed: Option<String>,
+    #[serde(default)]
+    pushfailed: Option<String>,
+    #[serde(default)]
+    unchanged: Option<String>,
 }
 
-async fn overview(State(s): State<AppState>) -> PageResult {
+impl ListQuery {
+    fn flash(&self) -> String {
+        if self.unchanged.is_some() {
+            return "Nothing changed, so nothing was committed.".to_owned();
+        }
+        if self.saved.is_empty() || !self.saved.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return String::new();
+        }
+        let sha = &self.saved;
+        if self.pushed.is_some() {
+            format!("Saved and pushed as {sha}.")
+        } else if self.pushfailed.is_some() {
+            format!("Saved as {sha}, but the push failed; it stays committed here.")
+        } else {
+            format!("Saved and committed as {sha}.")
+        }
+    }
+}
+
+async fn overview(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
     let snap = s.snapshot().await?;
-    let mut page = s.page("/", "Home", &snap, &Scope::Global, false);
+    let mut page = s.page(&headers, "/", "Home", &snap, &Scope::Global, false);
     page.totals = format!("Hub · {}", page.hub);
     Ok(Html(
         OverviewPage {
@@ -282,30 +354,52 @@ async fn overview(State(s): State<AppState>) -> PageResult {
     ))
 }
 
-async fn skills(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageResult {
+async fn skills(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::skills(&snap, &scope, &q.q);
-    let mut page = s.page("/skills", "Skills", &snap, &scope, true);
+    let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
     Ok(Html(SkillsPage { page, v }.render()?))
 }
 
 async fn skill_detail(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Path((home, name)): Path<(String, String)>,
+    Query(q): Query<ListQuery>,
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
     let scope = views::resolve_scope(&snap, &home);
-    let page = s.page("/skills", v.name.clone(), &snap, &scope, false);
+    let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
+    page.flash = q.flash();
+    page.edit_href = s
+        .writer
+        .is_some()
+        .then(|| format!("/skills/{home}/{name}/edit"));
     Ok(Html(SkillPage { page, v }.render()?))
 }
 
-async fn instructions(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageResult {
+async fn instructions(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
-    let mut page = s.page("/instructions", "Instructions", &snap, &scope, true);
+    let mut page = s.page(
+        &headers,
+        "/instructions",
+        "Instructions",
+        &snap,
+        &scope,
+        true,
+    );
     page.totals = format!("{} files", snap.catalog.instructions.len());
     Ok(Html(
         InstructionsPage {
@@ -318,53 +412,90 @@ async fn instructions(State(s): State<AppState>, Query(q): Query<ListQuery>) -> 
 
 async fn instruction_detail(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Path((scope_key, file)): Path<(String, String)>,
+    Query(q): Query<ListQuery>,
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::instruction_detail(&snap, &scope_key, &file).ok_or(AppError::NotFound)?;
     let scope = views::resolve_scope(&snap, &scope_key);
-    let page = s.page("/instructions", v.title.clone(), &snap, &scope, false);
+    let mut page = s.page(
+        &headers,
+        "/instructions",
+        v.title.clone(),
+        &snap,
+        &scope,
+        false,
+    );
+    page.flash = q.flash();
+    page.edit_href = s
+        .writer
+        .is_some()
+        .then(|| format!("/instructions/{scope_key}/{file}/edit"));
     Ok(Html(InstructionPage { page, v }.render()?))
 }
 
-async fn memory(State(s): State<AppState>, Query(q): Query<ListQuery>) -> PageResult {
+async fn memory(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
-    let mut page = s.page("/memory", "Memory", &snap, &scope, true);
+    let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
     Ok(Html(MemoryPage { page, v }.render()?))
 }
 
 async fn memory_detail(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::memory_detail(&snap, &scope, &name).ok_or(AppError::NotFound)?;
-    let page = s.page("/memory", v.name.clone(), &snap, &scope, false);
+    let mut page = s.page(&headers, "/memory", v.name.clone(), &snap, &scope, false);
+    page.flash = q.flash();
+    // Agents' own per-repo notes aren't in git, so only store notes can be edited.
+    page.edit_href =
+        (s.writer.is_some() && scope == Scope::Global).then(|| format!("/memory/{name}/edit"));
     Ok(Html(MemoryDetailPage { page, v }.render()?))
 }
 
-async fn hooks(State(s): State<AppState>) -> PageResult {
+async fn hooks(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::hooks(&snap);
-    let mut page = s.page("/hooks", "Hooks", &snap, &Scope::Global, false);
+    let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
     Ok(Html(HooksPage { page, v }.render()?))
 }
 
-async fn mcp(State(s): State<AppState>) -> PageResult {
+async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
     let snap = s.snapshot().await?;
-    let page = s.page("/mcp", "MCP servers", &snap, &Scope::Global, false);
+    let page = s.page(
+        &headers,
+        "/mcp",
+        "MCP servers",
+        &snap,
+        &Scope::Global,
+        false,
+    );
     Ok(Html(McpPage { page }.render()?))
 }
 
-async fn machines(State(s): State<AppState>) -> PageResult {
+async fn machines(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
     let snap = s.snapshot().await?;
-    let mut page = s.page("/machines", "Machines", &snap, &Scope::Global, false);
+    let mut page = s.page(
+        &headers,
+        "/machines",
+        "Machines",
+        &snap,
+        &Scope::Global,
+        false,
+    );
     page.totals = format!("{} machines · 1 paired", s.others.len() + 1);
     let machines = views::machines(&snap, &s.hub, &s.others);
     Ok(Html(MachinesPage { page, machines }.render()?))
@@ -397,6 +528,11 @@ const STATIC: &[(&str, &str, &[u8])] = &[
         "atlas.js",
         "text/javascript; charset=utf-8",
         include_bytes!("../static/atlas.js"),
+    ),
+    (
+        "passkey.js",
+        "text/javascript; charset=utf-8",
+        include_bytes!("../static/passkey.js"),
     ),
     (
         "antigravity.png",

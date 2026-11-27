@@ -11,9 +11,13 @@ ammonia.workspace = true
 askama.workspace = true
 atlas-core = { path = "../atlas-core" }
 atlas-fs = { path = "../atlas-fs" }
+atlas-git = { path = "../atlas-git" }
+atlas-signer = { path = "../atlas-signer" }
 axum.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v4"] }
 tokio.workspace = true
 tracing.workspace = true
 

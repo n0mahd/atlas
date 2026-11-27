@@ -5,6 +5,7 @@
 //! files outside that repo. Nothing here writes.
 
 mod catalog;
+pub mod edit;
 mod harness;
 mod paths;
 

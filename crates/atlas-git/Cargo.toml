@@ -1,0 +1,16 @@
+[package]
+name = "atlas-git"
+description = "Commits and pushes single files by driving the git CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

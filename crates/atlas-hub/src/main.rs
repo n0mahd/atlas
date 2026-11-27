@@ -28,6 +28,11 @@ struct Config {
     /// The user's other machines, shown as not paired until they pair (phase 3).
     #[serde(default)]
     machines: Vec<String>,
+    /// The address people open, such as `https://hub.example.ts.net:7443`. Passkeys are
+    /// tied to it; without it Atlas stays read-only.
+    public_url: Option<String>,
+    /// Passkeys and settings. Default: `$STATE_DIRECTORY`, else `~/.local/state/atlas-hub`.
+    state_dir: Option<String>,
 }
 
 fn expand(home: &Path, p: &str) -> PathBuf {
@@ -82,10 +87,25 @@ async fn main() {
         home: home.clone(),
     };
     let hub_name = config.hub_name.unwrap_or_else(hostname);
-    let app = atlas_web::router(
-        AppState::new(sources, &hub_name, config.machines),
-        Access::new(config.allowed_logins),
-    );
+    let writer = config.public_url.as_deref().map(|url| {
+        let state_dir = config.state_dir.as_deref().map_or_else(
+            || {
+                std::env::var_os("STATE_DIRECTORY")
+                    .map_or_else(|| home.join(".local/state/atlas-hub"), PathBuf::from)
+            },
+            |d| expand(&home, d),
+        );
+        atlas_web::Writer::open(url, &state_dir)
+            .unwrap_or_else(|e| fail(format!("can't set up passkeys: {e}")))
+    });
+    if writer.is_none() {
+        tracing::info!("no public_url in the config, so Atlas is read-only");
+    }
+    let state = AppState::new(sources, &hub_name, config.machines, writer);
+    if let Some(code) = state.setup_code() {
+        tracing::warn!("no passkey yet: open /signin on the hub and enter the setup code {code}");
+    }
+    let app = atlas_web::router(state, Access::new(config.allowed_logins));
 
     let socket = config.socket.map_or_else(
         || {

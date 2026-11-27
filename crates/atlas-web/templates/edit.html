@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="editor" method="post">
+  <input type="hidden" name="csrf" value="{{ page.csrf }}">
+  <input type="hidden" name="base" value="{{ base }}">
+  <div class="editor-bar">
+    <span class="mono muted">{{ shown }}</span>
+    <span class="editor-actions">
+      <a class="link-cap" href="{{ back }}">Cancel</a>
+      <button class="button-ink" type="submit">Save</button>
+    </span>
+  </div>
+  {% if !error.is_empty() %}<p class="marginalia warn-note" role="alert">{{ error }}</p>{% endif %}
+  <label class="sr" for="editor-text">File text</label>
+  <textarea id="editor-text" name="text" spellcheck="false" autocapitalize="off" autocomplete="off">{{ text }}</textarea>
+  <p class="editor-note">{{ note }}</p>
+</form>
+{% endblock %}

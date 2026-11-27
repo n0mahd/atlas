@@ -30,7 +30,9 @@ Clients store the hub's address at pairing time. No hostname appears in the code
 
 Built so far (phase 1): `atlas-core`, `atlas-harness` (home and project layouts per
 harness), `atlas-fs` (reads only: the store, each harness's folders, each project's agent
-folders and Claude Code's per-repo memory), `atlas-web`, and the `atlas-hub` binary.
+folders and Claude Code's per-repo memory) plus atomic writes for edits, `atlas-git`
+(commits one file, optional push), `atlas-signer` (passkeys), `atlas-web`, and the
+`atlas-hub` binary. Phase 2 editing is live (decision 0016).
 
 `atlas-hub` and `atlasd` are the composition roots. No DI framework. Read-only screens
 query the store directly instead of going through use cases.

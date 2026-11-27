@@ -84,3 +84,16 @@ inspired by the crouching verdigris Atlas statue holding a gilt armillary sphere
 Greek-key ring with acanthus and star corners. Master multi-size PNGs live in `assets/logo/`
 (for desktop/Tauri packaging and launcher icons); `atlas-web` embeds quantized web assets
 at `crates/atlas-web/static/logo.png` and `favicon.png`.
+
+## 0016 · 2026-11-27 · Editing behind passkeys; commit, push optional
+Skills, store memory notes and instruction files can be edited in the hub. The owner chose
+passkeys before the first write (replacing 0012's Tailscale-only access for changes):
+reading still needs only the owner's Tailscale login, while any change also needs a passkey
+session (`__Host-` cookie, `SameSite=Strict`), its CSRF token and a same-origin request. The
+first passkey is enrolled with a one-time setup code the hub writes to its own log.
+Each save checks the file hasn't changed since it was opened and has no other uncommitted
+changes, writes it atomically inside the repo (never through a link), and commits exactly
+that file with hooks disabled; a failed commit restores the old text. Project repos must be
+on `main` (0003). Saving commits only by default; a setting pushes after each save, except
+the public skills repo, which is always pushed by hand after a privacy check. Agents' own
+per-repo memory stays read-only because it isn't in git.

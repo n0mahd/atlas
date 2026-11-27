@@ -1,5 +1,6 @@
 //! The Catalog context: skills, instruction files, memory and hooks as they sit in git.
 
+pub mod edit;
 mod frontmatter;
 mod hook;
 mod memory;

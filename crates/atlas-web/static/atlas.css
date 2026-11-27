@@ -305,3 +305,45 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .agent-state.muted .badge-icon { fill: var(--muted); }
 .agent-note { display: flex; align-items: center; gap: 8px; margin: 0; font-family: var(--mono); font-size: 11.5px; }
 .agent-note .agent-icon { width: 14px; height: 14px; }
+
+/* ------------------------------------------------------------ editing and sign-in */
+
+.title-row h1 { display: inline-flex; }
+.edit-button, .icon-button { display: inline-grid; place-items: center; width: 32px; height: 32px; color: var(--muted); border: 1px solid var(--hair); background: transparent; cursor: pointer; }
+.edit-button:hover, .icon-button:hover { color: var(--ink); border-color: var(--ink); }
+.title-row .edit-button { margin-right: auto; margin-left: 4px; align-self: center; }
+.button-ink, .button-plain { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 16px; font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; border: 1px solid var(--ink); }
+.button-ink { background: var(--ink); color: var(--ground); box-shadow: inset 0 0 0 2px var(--ink), inset 0 0 0 3px var(--gilt-orn); }
+.button-plain { background: transparent; color: var(--ink); }
+.button-ink:disabled, .button-plain:disabled { opacity: 0.5; cursor: progress; }
+.flash { margin: 0 0 12px; }
+.warn-note { border-left-color: var(--oxblood); color: var(--oxblood); }
+
+.editor { display: flex; flex-direction: column; gap: 8px; }
+.editor-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; }
+.editor-actions { display: inline-flex; align-items: center; gap: 16px; }
+.editor textarea { width: 100%; min-height: calc(100vh - 230px); padding: 14px 16px; resize: vertical; background: var(--field); color: var(--ink); border: 1px solid var(--hair); border-radius: 0; font-family: var(--mono); font-size: 13px; line-height: 1.6; tab-size: 2; }
+.editor textarea:focus { border-color: var(--ink); outline: none; box-shadow: inset 0 0 0 1px var(--gilt-orn); }
+.editor-note { margin: 0; font-size: 14px; font-style: italic; color: var(--muted); }
+
+.signin { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-width: 460px; }
+.signin-lede { margin: 0; }
+.field { display: flex; flex-direction: column; gap: 4px; width: 100%; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.field .search { width: 100%; flex: none; text-transform: none; letter-spacing: normal; }
+.field.grow { flex: 1 1 220px; width: auto; }
+.setting-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 8px; }
+.switch { display: flex; align-items: center; gap: 12px; flex: 1 1 300px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-track { flex: none; width: 34px; height: 18px; border: 1px solid var(--ink); position: relative; background: transparent; }
+.switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: var(--muted); transition: left 0.12s; }
+.switch input:checked + .switch-track { background: var(--verdigris); border-color: var(--verdigris); }
+.switch input:checked + .switch-track::after { left: 18px; background: var(--ground); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--gilt-orn); outline-offset: 2px; }
+
+.rail-foot { flex-direction: column; align-items: stretch; gap: 2px; }
+.foot-link, .foot-button, .hub-line { display: flex; align-items: center; gap: 8px; min-height: 30px; color: var(--rail-muted); text-decoration: none; }
+.foot-link:hover, .foot-button:hover { color: var(--rail-text); }
+.foot-form { margin: 0; }
+.foot-button { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.foot-icon { display: block; width: 16px; height: 16px; }
+:root[data-rail="collapsed"] .rail-foot { align-items: center; }

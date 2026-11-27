@@ -1,0 +1,19 @@
+[package]
+name = "atlas-signer"
+description = "Passkeys (WebAuthn) for the Atlas hub: enrolment, sign-in and the stored credentials."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+webauthn-rs = "0.6"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

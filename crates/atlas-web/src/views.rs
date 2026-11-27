@@ -82,6 +82,15 @@ pub struct Page {
     pub scopes: Vec<Choice>,
     pub show_scope: bool,
     pub machines: Vec<Choice>,
+    /// Passkey sign-in is set up on this hub.
+    pub can_sign_in: bool,
+    pub signed_in: bool,
+    /// The session's CSRF token, for forms that change something.
+    pub csrf: String,
+    /// The edit page for what this page shows, if it can be edited.
+    pub edit_href: Option<String>,
+    /// A one-line notice, such as "Saved and committed as …".
+    pub flash: String,
 }
 
 /// The scope a request asked for, if it names a known project; otherwise global.
@@ -138,8 +147,15 @@ impl Page {
                 later,
             })
             .collect();
+        let title = title.into();
         let folio = nav.iter().find(|n| n.active).map_or_else(
-            || "Frontispiece".to_owned(),
+            || {
+                if section == "/" {
+                    "Frontispiece".to_owned()
+                } else {
+                    title.clone()
+                }
+            },
             |n| format!("Folio {} · {}", n.num, n.label),
         );
         let mut scope_choices = vec![Choice {
@@ -167,7 +183,7 @@ impl Page {
             disabled: true,
         }));
         Self {
-            title: title.into(),
+            title,
             section,
             folio,
             totals: String::new(),
@@ -178,6 +194,11 @@ impl Page {
             scopes: scope_choices,
             show_scope: scoped,
             machines,
+            can_sign_in: false,
+            signed_in: false,
+            csrf: String::new(),
+            edit_href: None,
+            flash: String::new(),
         }
     }
 }

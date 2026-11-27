@@ -34,7 +34,7 @@ fn app() -> (tempfile::TempDir, axum::Router) {
         projects: Vec::new(),
     };
     let app = router(
-        AppState::new(sources, "test-hub", vec!["other-box".to_owned()]),
+        AppState::new(sources, "test-hub", vec!["other-box".to_owned()], None),
         Access::new(vec![OWNER.to_owned()]),
     );
     (tmp, app)
@@ -100,6 +100,9 @@ async fn every_page_renders_with_strict_headers() {
             "{path}"
         );
         assert_eq!(headers["cache-control"], "no-store", "{path}");
+        // Not no-referrer: Chrome then sends `Origin: null` on form posts, which the
+        // same-origin check on saves must refuse.
+        assert_eq!(headers["referrer-policy"], "same-origin", "{path}");
         assert!(!body.contains(" style=\""), "inline style on {path}");
     }
 }
