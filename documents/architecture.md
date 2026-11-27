@@ -53,10 +53,13 @@ query the store directly instead of going through use cases.
 ## How a change travels
 1. An edit in the UI becomes a git commit.
 2. The scanner flags anything risky (it never blocks silently).
-3. The hub prepares release N, pinning the git tree hash.
-4. The user reviews the diff and signs it with a passkey tap.
-5. atlasd pulls the release and checks the signature, that N is higher than the last
-   release it applied, and the tree hash.
+3. Save sends (decision 0022): the hub pushes Knowledge if needed and builds update N
+   (a signed release underneath), pinning Knowledge and public skills at their upstream
+   commits and tree hashes. Project repos aren't in it.
+4. The same Save asks for one passkey tap, which signs the update; the hub checks the
+   signature before storing it. The UI calls these "updates", never "releases".
+5. atlasd pulls the update and checks the signature, that N is higher than the last
+   one it applied, and the tree hash.
 6. atlasd computes a pure plan, viewable as a dry run.
 7. atlasd writes only the entries it manages, atomically, and reports status.
 

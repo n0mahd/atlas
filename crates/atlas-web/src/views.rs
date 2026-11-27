@@ -99,6 +99,8 @@ pub struct Page {
     pub edit_href: Option<String>,
     /// A one-line notice, such as "Saved and committed as …".
     pub flash: String,
+    /// A button the notice offers, such as Send for a save that didn't reach the machines.
+    pub flash_action: Option<&'static str>,
 }
 
 /// The scope a request asked for, if it names a known project; otherwise global.
@@ -142,8 +144,7 @@ impl Page {
             ("III", "Memory", "/memory", true, false),
             ("IV", "Hooks", "/hooks", false, false),
             ("V", "Machines", "/machines", false, false),
-            ("VI", "Releases", "/releases", false, false),
-            ("VII", "MCP", "/mcp", false, true),
+            ("VI", "MCP", "/mcp", false, true),
         ];
         let nav: Vec<NavItem> = items
             .into_iter()
@@ -208,6 +209,7 @@ impl Page {
             csrf: String::new(),
             edit_href: None,
             flash: String::new(),
+            flash_action: None,
         }
     }
 }
@@ -1377,10 +1379,10 @@ fn ago(secs: u64) -> String {
 fn paired(c: &crate::clients::Client, latest: Option<u64>) -> PairedClient {
     let applied = c.report.as_ref().and_then(|r| r.release);
     let (status, class) = match (applied, latest) {
-        (_, None) => ("No release yet".to_owned(), "muted"),
-        (Some(a), Some(l)) if a >= l => (format!("Release {a}, up to date"), "ok"),
-        (Some(a), Some(l)) => (format!("Release {a}, {} behind", l - a), "warn"),
-        (None, Some(_)) => ("Hasn't applied a release".to_owned(), "warn"),
+        (_, None) => ("No update yet".to_owned(), "muted"),
+        (Some(a), Some(l)) if a >= l => (format!("Update {a}, up to date"), "ok"),
+        (Some(a), Some(l)) => (format!("Update {a}, {} behind", l - a), "warn"),
+        (None, Some(_)) => ("Hasn't applied an update".to_owned(), "warn"),
     };
     let seen = c
         .last_seen

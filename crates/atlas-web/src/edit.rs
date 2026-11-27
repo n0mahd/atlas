@@ -23,11 +23,28 @@ use crate::views::Page;
 use crate::{AppError, AppState};
 
 /// The owner's settings, kept in the hub's state folder.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
-    /// Push after each saved edit (never for the public skills repo).
+    /// Push project repos after each saved edit. Knowledge is pushed by sending; the public
+    /// skills repo never is.
     #[serde(default)]
     pub push_after_save: bool,
+    /// Saving also sends the change to the owner's machines (one passkey tap).
+    #[serde(default = "yes")]
+    pub send_on_save: bool,
+}
+
+const fn yes() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            push_after_save: false,
+            send_on_save: true,
+        }
+    }
 }
 
 /// Everything writes need. Absent when the hub has no public address configured, in
@@ -39,8 +56,8 @@ pub struct Writer {
     pub origin: String,
     settings_path: PathBuf,
     settings: Mutex<Settings>,
-    /// One save at a time: git's index can't take two commits at once.
-    git: Mutex<()>,
+    /// One save (or push before sending) at a time: git can't take two at once.
+    pub(crate) git: Mutex<()>,
     /// Passkeys, setup links and settings.
     pub state_dir: PathBuf,
     started: std::time::Instant,
@@ -48,9 +65,9 @@ pub struct Writer {
     first_run: std::time::Duration,
     /// Paired machines and their clients' tokens.
     pub clients: crate::clients::Clients,
-    /// Signed releases.
+    /// Sent updates (signed releases).
     pub releases: crate::release::Store,
-    /// A release prepared and waiting for the owner's signature.
+    /// An update built and waiting for the owner's signature.
     pub pending: Mutex<Option<crate::distribute::Pending>>,
 }
 
@@ -509,6 +526,10 @@ struct SettingsPage {
     page: Page,
     keys: Vec<KeyRow>,
     push_after_save: bool,
+    send_on_save: bool,
+    /// "3 changes aren't on your machines yet", when some are waiting.
+    waiting: Option<String>,
+    updates: Vec<crate::distribute::UpdateRow>,
     flash: String,
 }
 
@@ -520,8 +541,8 @@ struct KeyRow {
     last_used: String,
 }
 
-pub(crate) fn day(secs: u64) -> String {
-    // Days since the epoch to a civil date (Howard Hinnant's algorithm).
+/// Days since the epoch to a civil date (Howard Hinnant's algorithm).
+fn civil(secs: u64) -> (i64, i64, i64) {
     let days = i64::try_from(secs / 86_400).unwrap_or(0);
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -532,7 +553,22 @@ pub(crate) fn day(secs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
+}
+
+pub(crate) fn day(secs: u64) -> String {
+    let (y, m, d) = civil(secs);
     format!("{y}-{m:02}-{d:02}")
+}
+
+/// A short date such as "27 Nov".
+pub(crate) fn day_month(secs: u64) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let (_, m, d) = civil(secs);
+    let month = usize::try_from(m - 1).map_or("", |i| MONTHS.get(i).copied().unwrap_or(""));
+    format!("{d} {month}")
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -575,13 +611,19 @@ pub(crate) async fn settings_page(
         "saved" => "Settings saved.",
         "removed" => "Passkey removed.",
         "last" => "That's your only passkey, so it stays.",
+        "sent" => "On your machines within 10 minutes",
         _ => "",
     };
+    let settings = w.settings();
+    let waiting = crate::distribute::waiting(&s).await.and_then(|w| w.text());
     Ok(Html(
         SettingsPage {
             page,
             keys,
-            push_after_save: w.settings().push_after_save,
+            push_after_save: settings.push_after_save,
+            send_on_save: settings.send_on_save,
+            waiting,
+            updates: crate::distribute::history(w),
             flash: flash.to_owned(),
         }
         .render()?,
@@ -595,6 +637,8 @@ pub struct SettingsForm {
     csrf: String,
     #[serde(default)]
     push_after_save: Option<String>,
+    #[serde(default)]
+    send_on_save: Option<String>,
 }
 
 pub(crate) async fn settings_save(
@@ -608,6 +652,7 @@ pub(crate) async fn settings_save(
     }
     w.save_settings(Settings {
         push_after_save: f.push_after_save.is_some(),
+        send_on_save: f.send_on_save.is_some(),
     })
     .map_err(AppError::Bad)?;
     Ok(Redirect::to("/settings?flash=saved").into_response())
@@ -643,6 +688,8 @@ struct EditPage {
     back: String,
     error: String,
     note: String,
+    /// Saving also sends the change (the page's script asks for the passkey).
+    send_on_save: bool,
 }
 
 /// Where an edit's form lives and where to go after saving.
@@ -725,11 +772,11 @@ fn projects(s: &AppState) -> Vec<Slug> {
     s.sources.projects.iter().map(|p| p.name.clone()).collect()
 }
 
-fn note_for(kind: &RepoKind, push: bool) -> String {
+fn note_for(kind: &RepoKind, settings: &Settings) -> String {
     match kind {
         RepoKind::PublicSkills => "Saving commits to the public skills repo. Atlas never pushes it: check it for private details, then push by hand.".to_owned(),
-        RepoKind::Project(p) => format!("Saving commits to {p}'s main branch{}.", if push { " and pushes it, which may deploy it" } else { "" }),
-        RepoKind::Knowledge => format!("Saving commits to the knowledge repo{}.", if push { " and pushes it" } else { "; the sync timer pushes it" }),
+        RepoKind::Project(p) => format!("Saving commits to {p}'s main branch{}.", if kind.may_push(settings.push_after_save) { " and pushes it, which may deploy it" } else { "" }),
+        RepoKind::Knowledge => format!("Saving commits to the knowledge repo{}.", if settings.send_on_save { " and sends it to your machines" } else { "" }),
     }
 }
 
@@ -783,7 +830,9 @@ async fn render_edit(
         &Scope::Global,
         false,
     );
-    let note = note_for(&located.kind, w.settings().push_after_save);
+    let settings = w.settings();
+    let note = note_for(&located.kind, &settings);
+    let send_on_save = settings.send_on_save && located.kind == RepoKind::Knowledge;
     let status = if error.is_empty() {
         StatusCode::OK
     } else {
@@ -800,6 +849,7 @@ async fn render_edit(
                 back: item.view.clone(),
                 error,
                 note,
+                send_on_save,
             }
             .render()?,
         ),
@@ -819,8 +869,26 @@ pub struct EditForm {
 
 /// What happened to a save, for the page it returns to.
 enum Saved {
-    Committed { sha: String, pushed: Option<bool> },
+    Committed {
+        sha: String,
+        pushed: Option<bool>,
+        kind: RepoKind,
+    },
     Unchanged,
+}
+
+/// A save's answer to the page's script: where to go, and whether to send first.
+#[derive(Serialize)]
+struct SavedJson {
+    next: String,
+    send: bool,
+}
+
+fn wants_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("application/json"))
 }
 
 async fn save(
@@ -842,7 +910,9 @@ async fn save(
     }
     let sources = Arc::clone(&s.sources);
     let target = item.target.clone();
-    let push_setting = w.settings().push_after_save;
+    let settings = w.settings();
+    let push_setting = settings.push_after_save;
+    let push_setting_send = settings.send_on_save;
     let label = item.label.clone();
     let text = form.text.clone();
     let base = form.base.clone();
@@ -889,30 +959,34 @@ async fn save(
         let pushed = located.kind.may_push(push_setting).then(|| {
             repo.push().map_err(|e| tracing::warn!("push after save failed: {e}")).is_ok()
         });
-        Ok(Saved::Committed { sha, pushed })
+        Ok(Saved::Committed { sha, pushed, kind: located.kind.clone() })
     })
     .await
     .map_err(|_| AppError::Internal)?;
     // Whatever happened, the next page should read the store as it now is.
     s.invalidate().await;
 
+    let json = wants_json(headers);
+    let done = |next: String, send: bool| {
+        if json {
+            Json(SavedJson { next, send }).into_response()
+        } else {
+            Redirect::to(&next).into_response()
+        }
+    };
     match outcome {
-        Ok(Saved::Committed { sha, pushed }) => {
-            let push = match pushed {
-                Some(true) => "pushed",
-                Some(false) => "pushfailed",
-                None => "committed",
+        Ok(Saved::Committed { sha, pushed, kind }) => {
+            let push = match (pushed, &kind) {
+                (Some(true), _) => "pushed",
+                (Some(false), _) => "pushfailed",
+                (None, RepoKind::PublicSkills) => "public",
+                (None, _) => "committed",
             };
-            Ok(Redirect::to(&format!(
-                "{}?saved={}&{push}=1",
-                item.view,
-                &sha[..sha.len().min(10)]
-            ))
-            .into_response())
+            let next = format!("{}?saved={}&{push}=1", item.view, &sha[..sha.len().min(10)]);
+            let send = kind == RepoKind::Knowledge && push_setting_send;
+            Ok(done(next, send))
         }
-        Ok(Saved::Unchanged) => {
-            Ok(Redirect::to(&format!("{}?unchanged=1", item.view)).into_response())
-        }
+        Ok(Saved::Unchanged) => Ok(done(format!("{}?unchanged=1", item.view), false)),
         Err(failed) => match *failed {
             (msg, Some(located)) => {
                 render_edit(s, headers, &item, &located, &form.text, &form.base, msg).await
@@ -1268,6 +1342,96 @@ mod tests {
         assert!(view.contains("Saved and committed as"));
         // The cached read of the store was dropped by the save, so the page is current.
         assert!(view.contains("New body."), "stale page after save");
+    }
+
+    #[tokio::test]
+    async fn a_save_from_the_page_script_answers_where_to_go_and_whether_to_send() {
+        let hub = hub();
+        let (_, _, page) = send(&hub, get(&hub, "/memory/fact/edit", true)).await;
+        assert!(
+            page.contains("data-send-on-save"),
+            "sending is on by default"
+        );
+        let base = base_of(&page);
+        let mut req = post(
+            &hub,
+            "/memory/fact/edit",
+            &[
+                ("csrf", &hub.csrf),
+                ("base", &base),
+                ("text", "---\nname: fact\n---\nNew.\n"),
+            ],
+            ORIGIN,
+            true,
+        );
+        req.headers_mut()
+            .insert(header::ACCEPT, "application/json".parse().unwrap());
+        let (status, _, body) = send(&hub, req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let saved: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let sha = git(&hub.knowledge, &["rev-parse", "--short=10", "HEAD"]);
+        assert_eq!(
+            saved["next"].as_str().unwrap(),
+            format!("/memory/fact?saved={}&committed=1", sha.trim())
+        );
+        assert_eq!(saved["send"], true);
+        let (_, _, view) = send(
+            &hub,
+            get(
+                &hub,
+                &format!("/memory/fact?saved={}&notsent=1", sha.trim()),
+                true,
+            ),
+        )
+        .await;
+        assert!(
+            view.contains("Saved. Not on your machines yet")
+                && view.contains(r#"data-action="send""#),
+            "{view}"
+        );
+        let (_, _, view) = send(
+            &hub,
+            get(
+                &hub,
+                &format!("/memory/fact?saved={}&sent=1", sha.trim()),
+                true,
+            ),
+        )
+        .await;
+        assert!(
+            view.contains("Saved · on your machines within 10 minutes"),
+            "{view}"
+        );
+
+        // Project repos aren't sent to machines, so their saves don't ask for a tap.
+        let (_, _, page) = send(&hub, get(&hub, "/skills/shop/stock/edit", true)).await;
+        assert!(!page.contains("data-send-on-save"));
+        let mut req = post(
+            &hub,
+            "/skills/shop/stock/edit",
+            &[
+                ("csrf", &hub.csrf),
+                ("base", &base_of(&page)),
+                ("text", "---\ndescription: Count\n---\nNew\n"),
+            ],
+            ORIGIN,
+            true,
+        );
+        req.headers_mut()
+            .insert(header::ACCEPT, "application/json".parse().unwrap());
+        let (status, _, body) = send(&hub, req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.contains(r#""send":false"#), "{body}");
+
+        // With sending off, the editor saves only.
+        let (status, ..) = send(
+            &hub,
+            post(&hub, "/settings", &[("csrf", &hub.csrf)], ORIGIN, true),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (_, _, page) = send(&hub, get(&hub, "/memory/fact/edit", true)).await;
+        assert!(!page.contains("data-send-on-save"));
     }
 
     #[tokio::test]

@@ -40,10 +40,11 @@ impl RepoKind {
         }
     }
 
-    /// Whether Atlas may push after committing, given the owner's setting.
+    /// Whether Atlas may push after committing, given the owner's setting. Only project
+    /// repos: Knowledge is pushed when an update is sent, public skills never (0022).
     #[must_use]
     pub const fn may_push(&self, push_setting: bool) -> bool {
-        push_setting && !matches!(self, Self::PublicSkills)
+        push_setting && matches!(self, Self::Project(_))
     }
 }
 
@@ -115,7 +116,8 @@ mod tests {
         let project = RepoKind::Project(Slug::new("shop").unwrap());
         assert_eq!(project.required_branch(), Some("main"));
         assert!(!RepoKind::PublicSkills.may_push(true));
-        assert!(RepoKind::Knowledge.may_push(true));
-        assert!(!RepoKind::Knowledge.may_push(false));
+        assert!(!RepoKind::Knowledge.may_push(true));
+        assert!(project.may_push(true));
+        assert!(!project.may_push(false));
     }
 }

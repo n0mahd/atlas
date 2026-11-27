@@ -304,6 +304,7 @@ dependencies = [
  "atlas-signer",
  "atlas-verify",
  "axum",
+ "p256",
  "pulldown-cmark",
  "serde",
  "serde_json",

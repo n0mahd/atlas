@@ -1,6 +1,9 @@
-// Passkey ceremonies for Atlas: enrol and sign in. Talks JSON to /auth/*; webauthn-rs
-// encodes binary fields as base64url strings, browsers want ArrayBuffers.
+// Passkey ceremonies for Atlas: enrol, sign in, and send changes to the machines. Talks
+// JSON to /auth/* and /send/*; webauthn-rs encodes binary fields as base64url strings,
+// browsers want ArrayBuffers.
 (function () {
+  if (window.atlasPasskey) return;
+  window.atlasPasskey = true;
   function toBuf(b64) {
     var s = b64.replace(/-/g, "+").replace(/_/g, "/");
     while (s.length % 4) s += "=";
@@ -78,9 +81,11 @@
     location.assign(done.next);
   }
 
-  // Signs the prepared release: the challenge is the release's digest (decision 0019).
-  async function signRelease(box) {
-    var opts = await post("/releases/sign/start", {});
+  // Sends saved changes to the machines: the passkey signs the update's digest
+  // (decisions 0019, 0022). Resolves to where to go next; 'nothing' needs no tap.
+  async function send(next) {
+    var opts = await post("/send/start", { next: next });
+    if (opts.nothing) return { nothing: true, next: opts.next, note: opts.note };
     var cred = await navigator.credentials.get({ publicKey: {
       challenge: toBuf(opts.challenge),
       rpId: opts.rpId,
@@ -88,7 +93,8 @@
       userVerification: opts.userVerification,
       timeout: opts.timeout
     } });
-    var done = await post("/releases/sign/finish", {
+    return post("/send/finish", {
+      next: next,
       credential: {
         credential_id: toB64(cred.rawId),
         authenticator_data: toB64(cred.response.authenticatorData),
@@ -96,8 +102,46 @@
         signature: toB64(cred.response.signature)
       }
     });
+  }
+
+  function withParam(url, key) {
+    var u = new URL(url, location.href);
+    u.searchParams.delete("notsent");
+    u.searchParams.set(key, "1");
+    return u.pathname + u.search + u.hash;
+  }
+
+  // A Send button: its box names where to go, else this page marked as sent.
+  async function sendButton(box) {
+    var done = await send(box.dataset.next || withParam(location.href, "sent"));
+    if (done.nothing && done.note) throw new Error(done.note);
     location.assign(done.next);
   }
+
+  // Save sends: post the form, then send, with one passkey tap. Any failure of the save
+  // itself falls back to a normal submit, which shows the error page.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form.matches("form[data-send-on-save]") || form.dataset.plain || !window.PublicKeyCredential || !window.fetch) return;
+    event.preventDefault();
+    var button = form.querySelector('[type="submit"]');
+    if (button) button.disabled = true;
+    var plain = function () { form.dataset.plain = "1"; form.submit(); };
+    fetch(form.action, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Accept": "application/json" },
+      body: new URLSearchParams(new FormData(form))
+    }).then(function (res) {
+      if (!res.ok || !(res.headers.get("content-type") || "").includes("application/json")) return plain();
+      return res.json().then(function (saved) {
+        if (!saved.send) return location.assign(saved.next);
+        return send(withParam(saved.next, "sent"))
+          .then(function (done) { location.assign(done.next); })
+          .catch(function () { location.assign(withParam(saved.next, "notsent")); });
+      });
+    }, plain);
+  });
 
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-passkey] [data-action]");
@@ -112,7 +156,7 @@
     error.hidden = true;
     button.disabled = true;
     var action = button.dataset.action;
-    var run = action === "enrol" ? enrol : action === "sign-release" ? signRelease : signIn;
+    var run = action === "enrol" ? enrol : action === "send" ? sendButton : signIn;
     run(box).catch(function (e) {
       error.textContent = e && e.name === "NotAllowedError" ? "The passkey prompt was closed. Try again." : (e.message || String(e));
       error.hidden = false;
