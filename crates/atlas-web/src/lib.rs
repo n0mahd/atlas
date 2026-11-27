@@ -5,9 +5,12 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
+pub mod clients;
+mod distribute;
 mod edit;
 mod icons;
 mod markdown;
+pub mod release;
 pub mod views;
 
 use std::sync::Arc;
@@ -146,6 +149,18 @@ pub fn router(state: AppState, access: Access) -> Router {
             get(edit::settings_page).post(edit::settings_save),
         )
         .route("/settings/keys/{id}/remove", post(edit::remove_key))
+        .route("/releases", get(distribute::releases_page))
+        .route("/releases/prepare", post(distribute::release_prepare))
+        .route("/releases/sign/start", post(distribute::release_sign_start))
+        .route(
+            "/releases/sign/finish",
+            post(distribute::release_sign_finish),
+        )
+        .route("/machines/pair", post(distribute::pair_code))
+        .route("/machines/{id}/remove", post(distribute::unpair))
+        .route("/api/pair", post(distribute::api_pair))
+        .route("/api/release", get(distribute::api_release))
+        .route("/api/report", post(distribute::api_report))
         .route(
             "/skills/{home}/{name}/edit",
             get(edit::edit_skill).post(edit::save_skill),
@@ -315,6 +330,7 @@ struct McpPage {
 struct MachinesPage {
     page: Page,
     machines: Vec<views::Machine>,
+    pair_command: Option<String>,
 }
 
 // ---------------------------------------------------------------- handlers
@@ -504,19 +520,44 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
     Ok(Html(McpPage { page }.render()?))
 }
 
-async fn machines(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
+async fn machines(State(s): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
+    machines_page(&s, &headers, None).await
+}
+
+/// The Machines page; `pair_command` shows a fresh pairing command once.
+pub(crate) async fn machines_page(
+    s: &AppState,
+    headers: &HeaderMap,
+    pair_command: Option<String>,
+) -> Result<Response, AppError> {
     let snap = s.snapshot().await?;
     let mut page = s.page(
-        &headers,
+        headers,
         "/machines",
         "Machines",
         &snap,
         &Scope::Global,
         false,
     );
-    page.totals = format!("{} machines · 1 paired", s.others.len() + 1);
-    let machines = views::machines(&snap, &s.hub, &s.others);
-    Ok(Html(MachinesPage { page, machines }.render()?))
+    let (clients, latest) = s.writer.as_ref().map_or_else(
+        || (Vec::new(), None),
+        |w| (w.clients.list(), w.releases.numbers().last().copied()),
+    );
+    let machines = views::machines(&snap, &s.hub, &s.others, &clients, latest);
+    let paired = machines
+        .iter()
+        .filter(|m| m.hub || !m.clients.is_empty())
+        .count();
+    page.totals = format!("{} machines · {paired} reporting", machines.len());
+    Ok(Html(
+        MachinesPage {
+            page,
+            machines,
+            pair_command,
+        }
+        .render()?,
+    )
+    .into_response())
 }
 
 // ---------------------------------------------------------------- static files

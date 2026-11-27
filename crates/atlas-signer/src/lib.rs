@@ -88,8 +88,13 @@ pub(crate) fn now() -> u64 {
 
 /// A key's credential id as unpadded base64url, the form browsers use.
 fn key_id(p: &Passkey) -> String {
+    b64url(p.cred_id().as_ref())
+}
+
+/// Unpadded base64url, the form WebAuthn uses on the wire.
+#[must_use]
+pub fn b64url(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let bytes: &[u8] = p.cred_id().as_ref();
     let mut out = String::with_capacity(bytes.len() * 4 / 3 + 2);
     for chunk in bytes.chunks(3) {
         let n = chunk
@@ -290,6 +295,44 @@ impl Signer {
         };
         self.save(&file)?;
         Ok(info)
+    }
+
+    /// The owner's passkeys as public keys for release signatures, in the form clients
+    /// keep (decision 0007). Keys of a kind clients can't check (RSA) are left out.
+    #[must_use]
+    pub fn owner_keys(&self) -> Vec<atlas_core::release::OwnerKey> {
+        use webauthn_rs::prelude::{COSEKeyType, ECDSACurve, EDDSACurve};
+        self.lock()
+            .keys
+            .iter()
+            .filter_map(|k| {
+                let (alg, raw) = match &k.passkey.get_public_key().key {
+                    COSEKeyType::EC_EC2(ec)
+                        if ec.curve == ECDSACurve::SECP256R1
+                            && ec.x.len() == 32
+                            && ec.y.len() == 32 =>
+                    {
+                        let mut raw = Vec::with_capacity(65);
+                        raw.push(0x04);
+                        raw.extend_from_slice(&ec.x);
+                        raw.extend_from_slice(&ec.y);
+                        ("es256", raw)
+                    }
+                    COSEKeyType::EC_OKP(okp)
+                        if okp.curve == EDDSACurve::ED25519 && okp.x.len() == 32 =>
+                    {
+                        ("eddsa", okp.x.clone())
+                    }
+                    _ => return None,
+                };
+                Some(atlas_core::release::OwnerKey {
+                    credential_id: key_id(&k.passkey),
+                    alg: alg.to_owned(),
+                    public_key: b64url(&raw),
+                    name: k.name.clone(),
+                })
+            })
+            .collect()
     }
 
     /// Removes a passkey. The last one can't be removed.

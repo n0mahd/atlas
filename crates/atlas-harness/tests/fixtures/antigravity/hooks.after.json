@@ -1,0 +1,65 @@
+{
+  "lint-checker": {
+    "PostToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/lint.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "atlas:format-on-save": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/atlas/store/hooks/format-on-save/run.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "safety-gate": {
+    "enabled": false,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "command": "./scripts/safety-check.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "atlas:guard": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/atlas/store/hooks/guard/run.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  },
+  "atlas:session-note": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "/opt/atlas/store/hooks/session-note/run.sh"
+      }
+    ]
+  }
+}

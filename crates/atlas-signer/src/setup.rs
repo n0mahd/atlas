@@ -17,7 +17,10 @@ use webauthn_rs::prelude::Uuid;
 
 use crate::SignerError;
 
-const FILE: &str = "setup-links.json";
+/// Setup links: add a passkey without signing in.
+pub const SETUP_LINKS: &str = "setup-links.json";
+/// Pairing codes: let a machine's client pair with the hub.
+pub const PAIRING_CODES: &str = "pairing-codes.json";
 
 #[derive(Default, Serialize, Deserialize)]
 struct Links {
@@ -42,21 +45,21 @@ fn hash(token: &str) -> String {
         })
 }
 
-fn path(state_dir: &Path) -> PathBuf {
-    state_dir.join(FILE)
+fn path(state_dir: &Path, file: &str) -> PathBuf {
+    state_dir.join(file)
 }
 
-fn load(state_dir: &Path) -> Links {
-    fs::read(path(state_dir))
+fn load(state_dir: &Path, file: &str) -> Links {
+    fs::read(path(state_dir, file))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
 
-fn store(state_dir: &Path, links: &Links) -> Result<(), SignerError> {
+fn store(state_dir: &Path, file: &str, links: &Links) -> Result<(), SignerError> {
     let err = |e: std::io::Error| SignerError::Store(e.to_string());
     let bytes = serde_json::to_vec_pretty(links).map_err(|e| SignerError::Store(e.to_string()))?;
-    let tmp = state_dir.join(format!("{FILE}.tmp"));
+    let tmp = state_dir.join(format!("{file}.tmp"));
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -66,7 +69,7 @@ fn store(state_dir: &Path, links: &Links) -> Result<(), SignerError> {
         .map_err(err)?;
     f.write_all(&bytes).map_err(err)?;
     f.sync_all().map_err(err)?;
-    fs::rename(&tmp, path(state_dir)).map_err(err)
+    fs::rename(&tmp, path(state_dir, file)).map_err(err)
 }
 
 /// Issues a token valid for `ttl`. Older expired links are dropped.
@@ -74,6 +77,14 @@ fn store(state_dir: &Path, links: &Links) -> Result<(), SignerError> {
 /// # Errors
 /// If the state folder can't be written.
 pub fn issue(state_dir: &Path, ttl: Duration) -> Result<String, SignerError> {
+    issue_in(state_dir, SETUP_LINKS, ttl)
+}
+
+/// Like [`issue`], for any of this module's one-time code files.
+///
+/// # Errors
+/// If the state folder can't be written.
+pub fn issue_in(state_dir: &Path, file: &str, ttl: Duration) -> Result<String, SignerError> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -81,13 +92,13 @@ pub fn issue(state_dir: &Path, ttl: Duration) -> Result<String, SignerError> {
         .map_err(|e| SignerError::Store(e.to_string()))?;
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let now = crate::now();
-    let mut links = load(state_dir);
+    let mut links = load(state_dir, file);
     links.links.retain(|l| l.expires > now);
     links.links.push(Link {
         hash: hash(&token),
         expires: now + ttl.as_secs(),
     });
-    store(state_dir, &links)?;
+    store(state_dir, file, &links)?;
     Ok(token)
 }
 
@@ -98,10 +109,16 @@ fn plausible(token: &str) -> bool {
 /// Whether a token is live, without using it up.
 #[must_use]
 pub fn is_valid(state_dir: &Path, token: &str) -> bool {
+    is_valid_in(state_dir, SETUP_LINKS, token)
+}
+
+/// Like [`is_valid`], for any of this module's one-time code files.
+#[must_use]
+pub fn is_valid_in(state_dir: &Path, file: &str, token: &str) -> bool {
     plausible(token) && {
         let h = hash(token);
         let now = crate::now();
-        load(state_dir)
+        load(state_dir, file)
             .links
             .iter()
             .any(|l| l.hash == h && l.expires > now)
@@ -113,17 +130,25 @@ pub fn is_valid(state_dir: &Path, token: &str) -> bool {
 /// # Errors
 /// If the state folder can't be written.
 pub fn redeem(state_dir: &Path, token: &str) -> Result<bool, SignerError> {
+    redeem_in(state_dir, SETUP_LINKS, token)
+}
+
+/// Like [`redeem`], for any of this module's one-time code files.
+///
+/// # Errors
+/// If the state folder can't be written.
+pub fn redeem_in(state_dir: &Path, file: &str, token: &str) -> Result<bool, SignerError> {
     if !plausible(token) {
         return Ok(false);
     }
     let h = hash(token);
     let now = crate::now();
-    let mut links = load(state_dir);
+    let mut links = load(state_dir, file);
     let before = links.links.len();
     let live = links.links.iter().any(|l| l.hash == h && l.expires > now);
     links.links.retain(|l| l.hash != h && l.expires > now);
     if links.links.len() != before {
-        store(state_dir, &links)?;
+        store(state_dir, file, &links)?;
     }
     Ok(live)
 }
@@ -149,10 +174,10 @@ mod tests {
     fn only_the_hash_is_stored_privately() {
         let tmp = tempfile::tempdir().unwrap();
         let token = issue(tmp.path(), Duration::from_mins(15)).unwrap();
-        let text = fs::read_to_string(tmp.path().join(FILE)).unwrap();
+        let text = fs::read_to_string(tmp.path().join(SETUP_LINKS)).unwrap();
         assert!(!text.contains(&token));
         assert_eq!(
-            fs::metadata(tmp.path().join(FILE))
+            fs::metadata(tmp.path().join(SETUP_LINKS))
                 .unwrap()
                 .permissions()
                 .mode()

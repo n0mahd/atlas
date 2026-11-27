@@ -100,3 +100,50 @@ pub struct ProjectView {
     pub project: Slug,
     pub harnesses: Vec<ProjectHarness>,
 }
+
+// ---------------------------------------------------------------- hub ↔ client messages
+
+/// A client asks to pair, with the one-time code the owner got from the hub.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PairRequest {
+    pub code: String,
+    /// The machine's name, such as its hostname.
+    pub machine: String,
+    /// The OS account the client runs as.
+    pub user: String,
+}
+
+/// The hub's answer: the client's own token, and the owner keys it should trust for
+/// release signatures from now on (until a signed release changes them).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PairResponse {
+    pub client_id: String,
+    pub token: String,
+    pub hub: String,
+    pub owner_keys: Vec<crate::release::OwnerKey>,
+}
+
+/// How one harness looks on a client after it applied a release.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HarnessReport {
+    pub kind: HarnessKind,
+    pub present: bool,
+    pub skills_from_atlas: u32,
+    pub skills_outside: u32,
+    pub broken: u32,
+    /// `linked`, `imports`, `separate` or `missing`.
+    pub instructions: String,
+    pub hooks_managed: u32,
+}
+
+/// What a client tells the hub after each run.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Report {
+    /// The release now applied, if any.
+    pub release: Option<u64>,
+    /// Seconds since the Unix epoch.
+    pub at: u64,
+    pub harnesses: Vec<HarnessReport>,
+    /// Things the client couldn't do, in words.
+    pub problems: Vec<String>,
+}

@@ -1,10 +1,18 @@
 //! One entry per harness: the files it reads, in the login's home folder and inside a
-//! project repo.
+//! project repo, plus the pure formats atlasd uses to write them (desired entries +
+//! current state → what the file should become). Nothing here does I/O.
 //!
-//! Phase 1 uses this to show what each harness sees. Phase 3 adds a pure format per
-//! harness (desired entries + current bytes → new bytes) next to each layout.
+//! Where each fact comes from (checked on an installed harness, or only documented) is
+//! recorded in `HARNESSES.md` next to this crate's `Cargo.toml`.
+
+pub mod change;
+pub mod hooks;
+pub mod instructions;
+pub mod skills;
 
 use std::path::{Path, PathBuf};
+
+pub use change::{Change, FormatError};
 
 use atlas_core::kernel::HarnessKind;
 
@@ -73,7 +81,7 @@ const LAYOUTS: [Layout; 6] = [
         kind: HarnessKind::Antigravity,
         skill_dirs: &[".gemini/config/skills", ".gemini/antigravity-cli/skills"],
         instruction_files: &[".gemini/config/AGENTS.md"],
-        hook_config: None,
+        hook_config: Some(".gemini/config/hooks.json"),
         marker: ".gemini",
         project_skill_dirs: &[".gemini/skills", ".agents/skills", ".agent/skills"],
         project_instructions: &["AGENTS.md", "GEMINI.md"],
@@ -137,6 +145,21 @@ mod tests {
                     !p.starts_with('/') && !p.split('/').any(|s| s == ".."),
                     "{p}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn harness_facts_table_covers_every_home_path() {
+        let doc = include_str!("../HARNESSES.md");
+        for l in &LAYOUTS {
+            for p in l
+                .skill_dirs
+                .iter()
+                .chain(l.instruction_files)
+                .chain(l.hook_config.iter())
+            {
+                assert!(doc.contains(&format!("`{p}`")), "HARNESSES.md lacks {p}");
             }
         }
     }

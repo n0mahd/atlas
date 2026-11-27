@@ -6,4 +6,5 @@
 pub mod catalog;
 pub mod distribution;
 pub mod kernel;
+pub mod release;
 pub mod untrusted;

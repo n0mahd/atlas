@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/atlas/store/hooks/old-reminder/run.sh # atlas:old-reminder"
+          }
+        ]
+      }
+    ]
+  }
+}

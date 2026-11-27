@@ -1,6 +1,6 @@
 [package]
 name = "atlas-harness"
-description = "Where each agent harness reads its skills, instructions and hooks."
+description = "Where each agent harness reads its skills, instructions and hooks, and the pure formats that write them."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 atlas-core = { path = "../atlas-core" }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
 
 [lints]
 workspace = true

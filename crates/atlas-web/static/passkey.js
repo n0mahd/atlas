@@ -78,6 +78,27 @@
     location.assign(done.next);
   }
 
+  // Signs the prepared release: the challenge is the release's digest (decision 0019).
+  async function signRelease(box) {
+    var opts = await post("/releases/sign/start", {});
+    var cred = await navigator.credentials.get({ publicKey: {
+      challenge: toBuf(opts.challenge),
+      rpId: opts.rpId,
+      allowCredentials: opts.allowCredentials.map(function (c) { return { id: toBuf(c.id), type: c.type }; }),
+      userVerification: opts.userVerification,
+      timeout: opts.timeout
+    } });
+    var done = await post("/releases/sign/finish", {
+      credential: {
+        credential_id: toB64(cred.rawId),
+        authenticator_data: toB64(cred.response.authenticatorData),
+        client_data_json: toB64(cred.response.clientDataJSON),
+        signature: toB64(cred.response.signature)
+      }
+    });
+    location.assign(done.next);
+  }
+
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-passkey] [data-action]");
     if (!button) return;
@@ -90,7 +111,8 @@
     }
     error.hidden = true;
     button.disabled = true;
-    var run = button.dataset.action === "enrol" ? enrol : signIn;
+    var action = button.dataset.action;
+    var run = action === "enrol" ? enrol : action === "sign-release" ? signRelease : signIn;
     run(box).catch(function (e) {
       error.textContent = e && e.name === "NotAllowedError" ? "The passkey prompt was closed. Try again." : (e.message || String(e));
       error.hidden = false;

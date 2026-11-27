@@ -46,6 +46,12 @@ pub struct Writer {
     started: std::time::Instant,
     /// How long after start the first passkey can be made without a setup link.
     first_run: std::time::Duration,
+    /// Paired machines and their clients' tokens.
+    pub clients: crate::clients::Clients,
+    /// Signed releases.
+    pub releases: crate::release::Store,
+    /// A release prepared and waiting for the owner's signature.
+    pub pending: Mutex<Option<crate::distribute::Pending>>,
 }
 
 impl std::fmt::Debug for Writer {
@@ -90,6 +96,9 @@ impl Writer {
             state_dir: state_dir.to_path_buf(),
             started: std::time::Instant::now(),
             first_run,
+            clients: crate::clients::Clients::open(state_dir),
+            releases: crate::release::Store::new(state_dir),
+            pending: Mutex::new(None),
         })
     }
 
@@ -143,7 +152,7 @@ impl Writer {
     }
 
     /// The live session, if this is a same-origin request carrying the session's token.
-    fn authorised(&self, headers: &HeaderMap, csrf: &str) -> bool {
+    pub(crate) fn authorised(&self, headers: &HeaderMap, csrf: &str) -> bool {
         auth::same_origin(headers, &self.origin)
             && self
                 .auth
@@ -470,6 +479,12 @@ pub struct CsrfForm {
     csrf: String,
 }
 
+impl CsrfForm {
+    pub(crate) fn csrf(&self) -> &str {
+        &self.csrf
+    }
+}
+
 pub(crate) async fn signout(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -505,7 +520,7 @@ struct KeyRow {
     last_used: String,
 }
 
-fn day(secs: u64) -> String {
+pub(crate) fn day(secs: u64) -> String {
     // Days since the epoch to a civil date (Howard Hinnant's algorithm).
     let days = i64::try_from(secs / 86_400).unwrap_or(0);
     let z = days + 719_468;

@@ -45,6 +45,11 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   the file has other uncommitted changes, but can't stop the owner committing meanwhile.
 - Links inside a repo are followed unless they point at a hidden file (`.env`, `.git`).
   Stricter would be "only files git tracks"; revisit when edits commit through Atlas.
+- One hook script and matcher can't serve every harness: Antigravity names tools
+  differently (`run_command`, not `Bash`) and sends different JSON. For now `harnesses` in
+  `hook.toml` limits a hook; per-harness matchers would fix it properly.
+- Atlas adds an `@` import to Claude's `CLAUDE.md` but has no way yet to remove it when a
+  machine stops being managed.
 - Harness folder paths in `atlas-harness` come from the existing `link-agents` script, not
   from each harness's docs. Check them when phase 3 writes to them.
 - The public site lists Amp, GrokBot, Muse and Herdr under "Works with", but Atlas has no

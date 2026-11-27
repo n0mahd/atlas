@@ -189,6 +189,49 @@ impl Repo {
         Ok(trimmed(&out.stdout))
     }
 
+    /// The commit HEAD points at and its tree, as full object ids.
+    ///
+    /// # Errors
+    /// No commits yet, or git fails.
+    pub fn head(&self) -> Result<(String, String), GitError> {
+        let out = self.git(&["rev-parse", "HEAD", "HEAD^{tree}"], LOCAL_TIMEOUT)?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut lines = text.lines().map(str::trim);
+        match (lines.next(), lines.next()) {
+            (Some(commit), Some(tree)) if !commit.is_empty() && !tree.is_empty() => {
+                Ok((commit.to_owned(), tree.to_owned()))
+            }
+            _ => Err(GitError::Command {
+                args: vec!["rev-parse".into(), "HEAD".into()],
+                stderr: "no HEAD".into(),
+            }),
+        }
+    }
+
+    /// The URL of the remote the current branch tracks, else `origin`'s. None when the
+    /// repo has neither.
+    ///
+    /// # Errors
+    /// If git fails.
+    pub fn remote_url(&self) -> Result<Option<String>, GitError> {
+        let branch = self.current_branch()?;
+        let tracked = match &branch {
+            Some(b) => self.config_value(&format!("branch.{b}.remote"))?,
+            None => None,
+        };
+        let remote = tracked.unwrap_or_else(|| "origin".to_owned());
+        self.config_value(&format!("remote.{remote}.url"))
+    }
+
+    fn config_value(&self, key: &str) -> Result<Option<String>, GitError> {
+        let out = self.run(&["config", "--get", key], LOCAL_TIMEOUT)?;
+        Ok(out
+            .status
+            .success()
+            .then(|| trimmed(&out.stdout))
+            .filter(|v| !v.is_empty()))
+    }
+
     /// Pushes the current branch to its configured upstream, never prompting.
     ///
     /// # Errors

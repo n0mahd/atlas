@@ -134,7 +134,8 @@ impl Page {
             ("III", "Memory", "/memory", true, false),
             ("IV", "Hooks", "/hooks", false, false),
             ("V", "Machines", "/machines", false, false),
-            ("VI", "MCP", "/mcp", false, true),
+            ("VI", "Releases", "/releases", false, false),
+            ("VII", "MCP", "/mcp", false, true),
         ];
         let nav: Vec<NavItem> = items
             .into_iter()
@@ -1209,10 +1210,21 @@ pub struct Machine {
     pub summary: String,
     pub harnesses: Vec<HarnessLine>,
     pub absent: Vec<&'static str>,
+    /// Clients (one per OS account) paired on this machine.
+    pub clients: Vec<PairedClient>,
 }
 
-#[must_use]
-pub fn machines(snap: &Snapshot, hub: &str, others: &[String]) -> Vec<Machine> {
+#[derive(Debug)]
+pub struct PairedClient {
+    pub id: String,
+    pub user: String,
+    pub status: String,
+    pub class: &'static str,
+    pub problems: Vec<String>,
+}
+
+/// The hub itself, from a live look at its own harness folders.
+fn hub_machine(snap: &Snapshot, hub: &str) -> Machine {
     let mut lines = Vec::new();
     let mut absent = Vec::new();
     let outside_total = outside_skills(snap).len();
@@ -1273,7 +1285,7 @@ pub fn machines(snap: &Snapshot, hub: &str, others: &[String]) -> Vec<Machine> {
                 .collect(),
         });
     }
-    let mut out = vec![Machine {
+    Machine {
         name: hub.to_owned(),
         hub: true,
         summary: format!(
@@ -1287,15 +1299,124 @@ pub fn machines(snap: &Snapshot, hub: &str, others: &[String]) -> Vec<Machine> {
         ),
         harnesses: lines,
         absent,
-    }];
-    out.extend(others.iter().map(|m| Machine {
-        name: m.clone(),
-        hub: false,
-        summary: "Not paired yet".to_owned(),
+        clients: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn machines(
+    snap: &Snapshot,
+    hub: &str,
+    others: &[String],
+    clients: &[crate::clients::Client],
+    latest: Option<u64>,
+) -> Vec<Machine> {
+    let mut out = vec![hub_machine(snap, hub)];
+    // Other machines: the configured names plus any machine a client paired from.
+    let mut names: Vec<String> = others.to_vec();
+    for c in clients {
+        if c.machine != hub && !names.contains(&c.machine) {
+            names.push(c.machine.clone());
+        }
+    }
+    out.extend(names.into_iter().map(|name| Machine {
+        summary: String::new(),
         harnesses: Vec::new(),
         absent: Vec::new(),
+        clients: Vec::new(),
+        hub: false,
+        name,
     }));
+    for m in &mut out {
+        m.clients = clients
+            .iter()
+            .filter(|c| c.machine == m.name)
+            .map(|c| paired(c, latest))
+            .collect();
+        if !m.hub {
+            if let Some(report) = clients
+                .iter()
+                .filter(|c| c.machine == m.name)
+                .find_map(|c| c.report.as_ref())
+            {
+                m.harnesses = report
+                    .harnesses
+                    .iter()
+                    .filter(|h| h.present)
+                    .map(report_line)
+                    .collect();
+            }
+            m.summary = if m.clients.is_empty() {
+                "Not paired yet".to_owned()
+            } else {
+                format!("{} paired", m.clients.len())
+            };
+        }
+    }
     out
+}
+
+fn ago(secs: u64) -> String {
+    let now = crate::clients::now();
+    match now.saturating_sub(secs) {
+        s if s < 90 => "just now".to_owned(),
+        s if s < 90 * 60 => format!("{} min ago", s / 60),
+        s if s < 36 * 3600 => format!("{} h ago", s / 3600),
+        s => format!("{} days ago", s / 86_400),
+    }
+}
+
+fn paired(c: &crate::clients::Client, latest: Option<u64>) -> PairedClient {
+    let applied = c.report.as_ref().and_then(|r| r.release);
+    let (status, class) = match (applied, latest) {
+        (_, None) => ("No release yet".to_owned(), "muted"),
+        (Some(a), Some(l)) if a >= l => (format!("Release {a}, up to date"), "ok"),
+        (Some(a), Some(l)) => (format!("Release {a}, {} behind", l - a), "warn"),
+        (None, Some(_)) => ("Hasn't applied a release".to_owned(), "warn"),
+    };
+    let seen = c
+        .last_seen
+        .map_or_else(|| "never seen".to_owned(), |t| format!("seen {}", ago(t)));
+    PairedClient {
+        id: c.id.clone(),
+        user: c.user.clone(),
+        status: format!("{status} · {seen}"),
+        class,
+        problems: c
+            .report
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.problems.clone()),
+    }
+}
+
+fn report_line(h: &atlas_core::distribution::HarnessReport) -> HarnessLine {
+    let mut parts = Vec::new();
+    if h.skills_outside > 0 {
+        parts.push(format!("{} outside", h.skills_outside));
+    }
+    if h.broken > 0 {
+        parts.push(format!("{} broken", h.broken));
+    }
+    let (instructions, instructions_class) = match h.instructions.as_str() {
+        "linked" => ("Global AGENTS.md linked".to_owned(), "ok"),
+        "imports" => ("Global AGENTS.md imported".to_owned(), "ok"),
+        "separate" => ("Own instructions file".to_owned(), "warn"),
+        _ => ("No global instructions".to_owned(), "warn"),
+    };
+    HarnessLine {
+        icon: icons::icon(h.kind),
+        name: short(h.kind),
+        skills: format!("{} skills from Atlas", h.skills_from_atlas),
+        skills_warn: parts.join(", "),
+        instructions,
+        instructions_class,
+        hooks: match h.hooks_managed {
+            0 => String::new(),
+            1 => "1 hook".to_owned(),
+            n => format!("{n} hooks"),
+        },
+        dirs: Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------- secrets

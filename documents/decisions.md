@@ -115,3 +115,28 @@ Otherwise, and to recover lost passkeys, `atlas-hub setup` on the hub prints a l
 code that work once for 15 minutes; the state folder keeps only the token's hash. Running
 it needs the hub machine, which is the trust the owner already has. Each passkey records
 how it was added. `deploy/install.sh` installs the hub and opens a setup link.
+
+## 0019 · 2026-11-27 · Releases, pairing and the client API
+A release is a JSON manifest: a number, the hub's origin, each store repo's git remote,
+commit and tree, and the owner's passkey public keys. The hub serialises it once; the
+owner's passkey signs SHA-256 of those exact bytes as an ordinary WebAuthn assertion whose
+challenge is the digest (user verification required). The hub checks the signature with
+the same verifier clients use (`atlas-verify`) before storing it, and numbers are never
+reused. Clients trust the keys they got at pairing, and a new key set only once a release
+signed by an already-trusted key carries it. They fetch content from the git remotes,
+which are untrusted storage: what counts is the pinned tree. Pairing: the signed-in owner
+gets a one-time code (15 minutes) and runs `atlasd pair <hub> <code>` on the machine; the
+client gets its own token (stored on the hub only as a hash). Clients call `/api/release`
+and `/api/report` with that token, behind the same Tailscale login check as the UI.
+
+## 0020 · 2026-11-27 · How Atlas writes harness files
+`atlas-harness` holds one pure function per format (current bytes + desired entries → new
+bytes), golden-tested on synthetic configs, with a facts table (`HARNESSES.md`) marking
+each path as verified on an installed harness or taken from docs. Hooks: Claude Code
+(`settings.json`) and Codex (`hooks.json`) get one matcher group per Atlas hook whose
+command ends in a shell comment `# atlas:<name>`, so Atlas can find and update only its
+own entries; Antigravity (`~/.gemini/config/hooks.json`) uses keys named `atlas:<name>`.
+OpenCode and Pi have hooks only as code plugins, so Atlas doesn't write them. Atlas never
+writes Codex's hook trust record: approving a new hook stays the owner's step in Codex.
+Skill links and instruction files only ever change links into roots Atlas manages; a
+user's own folder or file is reported as a conflict, never overwritten.

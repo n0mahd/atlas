@@ -260,3 +260,35 @@ fn push_without_upstream_fails_fast() {
     assert!(matches!(repo.push(), Err(GitError::Command { .. })));
     assert!(start.elapsed().as_secs() < 10);
 }
+
+#[test]
+fn head_and_remote_are_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("r");
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.name", "T"]);
+    git(&["config", "user.email", "t@example.com"]);
+    std::fs::write(dir.join("a"), "a").unwrap();
+    git(&["add", "a"]);
+    git(&["commit", "-qm", "a"]);
+    let repo = atlas_git::Repo::open(&dir).unwrap();
+    assert_eq!(repo.remote_url().unwrap(), None);
+    git(&["remote", "add", "origin", "https://git.example/r.git"]);
+    assert_eq!(
+        repo.remote_url().unwrap().as_deref(),
+        Some("https://git.example/r.git")
+    );
+    let (commit, tree) = repo.head().unwrap();
+    assert_eq!(commit, git(&["rev-parse", "HEAD"]));
+    assert_eq!(tree, git(&["rev-parse", "HEAD^{tree}"]));
+}
