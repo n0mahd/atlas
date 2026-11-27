@@ -107,6 +107,10 @@ pub struct ProjectView {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PairRequest {
     pub code: String,
+    /// The hub address the client was given, so a mismatch is refused before the code
+    /// is used up.
+    #[serde(default)]
+    pub hub: String,
     /// The machine's name, such as its hostname.
     pub machine: String,
     /// The OS account the client runs as.

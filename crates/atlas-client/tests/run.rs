@@ -1,0 +1,563 @@
+//! Whole passes against a temp home: local git repos stand in for the remotes, and
+//! releases are signed with a P-256 key made here, exactly as a passkey would.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::os::unix::fs::{PermissionsExt as _, symlink};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use atlas_client::config::{Config, Paths, State};
+use atlas_client::pass::{self, Fetched, Pass};
+use atlas_core::kernel::TreeHash;
+use atlas_core::release::{
+    CommitId, FORMAT, Manifest, OwnerKey, Signature, SignedRelease, Source, SourceId,
+};
+use atlas_verify::encode;
+use p256::ecdsa::SigningKey;
+use sha2::{Digest as _, Sha256};
+
+const HUB: &str = "https://hub.example";
+const RP: &str = "hub.example";
+
+struct Key {
+    id: Vec<u8>,
+    signing: SigningKey,
+    name: &'static str,
+}
+
+impl Key {
+    fn new(seed: u8, name: &'static str) -> Self {
+        Key {
+            id: vec![seed; 16],
+            signing: SigningKey::from_slice(&Sha256::digest([b'k', seed])).unwrap(),
+            name,
+        }
+    }
+
+    fn owner(&self) -> OwnerKey {
+        OwnerKey {
+            credential_id: encode(&self.id),
+            alg: "es256".into(),
+            public_key: encode(self.signing.verifying_key().to_sec1_point(false).as_bytes()),
+            name: self.name.into(),
+        }
+    }
+
+    /// A WebAuthn assertion over `challenge`, as a browser and authenticator make it.
+    fn sign(&self, challenge: &[u8]) -> Signature {
+        use p256::ecdsa::signature::Signer as _;
+        let mut auth = Sha256::digest(RP.as_bytes()).to_vec();
+        auth.push(0x05); // user present + verified
+        auth.extend_from_slice(&1u32.to_be_bytes());
+        let client = format!(
+            r#"{{"type":"webauthn.get","challenge":"{}","origin":"{HUB}"}}"#,
+            encode(challenge)
+        );
+        let mut message = auth.clone();
+        message.extend_from_slice(&Sha256::digest(client.as_bytes()));
+        let sig: p256::ecdsa::Signature = self.signing.sign(&message);
+        Signature {
+            credential_id: encode(&self.id),
+            authenticator_data: encode(&auth),
+            client_data_json: encode(client.as_bytes()),
+            signature: encode(sig.to_der().as_bytes()),
+        }
+    }
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+        .args([
+            "-c",
+            "init.defaultBranch=main",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+fn write(path: &Path, text: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// A repo made of `files`, committed; returns it as a release source.
+fn repo(dir: &Path, id: SourceId, files: &[(&str, &str)]) -> Source {
+    fs::create_dir_all(dir).unwrap();
+    git(dir, &["init", "--quiet"]);
+    for (path, text) in files {
+        write(&dir.join(path), text);
+    }
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "--quiet", "-m", "store"]);
+    Source {
+        id,
+        remote: dir.to_string_lossy().into_owned(),
+        commit: CommitId::new(git(dir, &["rev-parse", "HEAD"])).unwrap(),
+        tree: TreeHash::new(git(dir, &["rev-parse", "HEAD^{tree}"])).unwrap(),
+    }
+}
+
+struct World {
+    _tmp: tempfile::TempDir,
+    paths: Paths,
+    config: Config,
+    state: State,
+    sources: Vec<Source>,
+    adopt: PathBuf,
+}
+
+const HOOK: &str =
+    "description = \"Guard\"\nevent = \"pre-tool-use\"\nmatcher = \"Bash\"\nrun = \"run.sh\"\n";
+
+impl World {
+    fn new(key: &Key) -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = root.join("home");
+        for marker in [".claude", ".codex"] {
+            fs::create_dir_all(home.join(marker)).unwrap();
+        }
+        let knowledge = repo(
+            &root.join("remotes/knowledge"),
+            SourceId::Knowledge,
+            &[
+                ("AGENTS.md", "# Global\n"),
+                ("skills/alpha/SKILL.md", "---\nname: alpha\n---\n"),
+                ("skills/gamma/SKILL.md", "---\nname: gamma\n---\n"),
+                ("hooks/guard/hook.toml", HOOK),
+                ("hooks/guard/run.sh", "#!/bin/sh\nexit 0\n"),
+            ],
+        );
+        let public = repo(
+            &root.join("remotes/public"),
+            SourceId::PublicSkills,
+            &[
+                ("beta/SKILL.md", "---\nname: beta\n---\n"),
+                ("alpha/SKILL.md", "---\nname: alpha\n---\n"),
+            ],
+        );
+        let adopt = root.join("old-skills");
+        fs::create_dir_all(adopt.join("alpha")).unwrap();
+        World {
+            _tmp: tmp,
+            paths: Paths::new(&home),
+            config: Config {
+                hub: HUB.into(),
+                client_id: "c1".into(),
+                token: "t".into(),
+                machine: "box".into(),
+                adopt: vec![adopt.to_string_lossy().into_owned()],
+            },
+            state: State {
+                owner_keys: vec![key.owner()],
+                ..State::default()
+            },
+            sources: vec![knowledge, public],
+            adopt,
+        }
+    }
+
+    fn home(&self) -> &Path {
+        &self.paths.home
+    }
+
+    fn copy(&self, rel: &str) -> PathBuf {
+        self.paths.sources.join(rel)
+    }
+
+    fn manifest(&self, number: u64, keys: &[&Key]) -> Manifest {
+        Manifest {
+            format: FORMAT,
+            number,
+            created: 0,
+            hub: HUB.into(),
+            sources: self.sources.clone(),
+            owner_keys: keys.iter().map(|k| k.owner()).collect(),
+        }
+    }
+
+    /// Runs a pass and keeps the resulting state, as `atlasd run` does.
+    fn run(&mut self, release: &SignedRelease, dry_run: bool) -> Pass {
+        let pass = pass::run(
+            &self.paths,
+            &self.config,
+            &self.state,
+            Fetched::Release(Box::new(release.clone())),
+            dry_run,
+            1,
+        );
+        self.state = pass.state.clone();
+        pass
+    }
+}
+
+fn signed(manifest: &Manifest, by: &Key) -> SignedRelease {
+    let bytes = serde_json::to_vec(manifest).unwrap();
+    SignedRelease {
+        number: manifest.number,
+        manifest: encode(&bytes),
+        signature: by.sign(&Sha256::digest(&bytes)),
+    }
+}
+
+/// Every entry under `dir`, without following links: link targets, file bytes and modes.
+fn snapshot(dir: &Path) -> BTreeMap<PathBuf, String> {
+    fn walk(dir: &Path, out: &mut BTreeMap<PathBuf, String>) {
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            let m = fs::symlink_metadata(&p).unwrap();
+            let v = if m.file_type().is_symlink() {
+                format!("link {}", fs::read_link(&p).unwrap().display())
+            } else if m.is_dir() {
+                walk(&p, out);
+                "dir".to_owned()
+            } else {
+                format!(
+                    "file {:o} {}",
+                    m.permissions().mode(),
+                    String::from_utf8_lossy(&fs::read(&p).unwrap())
+                )
+            };
+            out.insert(p, v);
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, &mut out);
+    out
+}
+
+/// The home, minus Atlas's own cache of local copies.
+fn harness_files(w: &World) -> BTreeMap<PathBuf, String> {
+    let mut s = snapshot(w.home());
+    s.retain(|p, _| !p.starts_with(&w.paths.sources));
+    s
+}
+
+fn link(path: &Path) -> PathBuf {
+    fs::read_link(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+#[test]
+fn full_run_installs_everything_and_a_second_run_changes_nothing() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    write(&w.home().join(".claude/CLAUDE.md"), "# Mine\n");
+    let release = signed(&w.manifest(1, &[&key]), &key);
+
+    let pass = w.run(&release, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    let h = w.home().to_path_buf();
+    for dir in [".claude/skills", ".agents/skills"] {
+        assert_eq!(
+            link(&h.join(dir).join("alpha")),
+            w.copy("knowledge/skills/alpha")
+        );
+        assert_eq!(
+            link(&h.join(dir).join("gamma")),
+            w.copy("knowledge/skills/gamma")
+        );
+        assert_eq!(
+            link(&h.join(dir).join("beta")),
+            w.copy("public-skills/beta")
+        );
+        assert!(h.join(dir).join("beta/SKILL.md").is_file());
+    }
+    assert!(
+        !h.join(".config/opencode").exists() && !h.join(".pi").exists(),
+        "absent harnesses get nothing"
+    );
+    assert_eq!(
+        link(&h.join(".codex/AGENTS.md")),
+        w.copy("knowledge/AGENTS.md")
+    );
+    let claude_md = fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
+    let import = format!("@{}", w.copy("knowledge/AGENTS.md").display());
+    assert_eq!(claude_md, format!("# Mine\n{import}\n"));
+
+    let script = w.copy("knowledge/hooks/guard/run.sh");
+    let marker = format!("{} # atlas:guard", script.display());
+    for config in [".claude/settings.json", ".codex/hooks.json"] {
+        let text = fs::read_to_string(h.join(config)).unwrap();
+        assert!(text.contains(&marker), "{config}: {text}");
+    }
+    assert!(
+        pass.problems
+            .iter()
+            .any(|p| p.contains("skill alpha is in both")),
+        "{:?}",
+        pass.problems
+    );
+    assert_eq!(w.state.last_applied, Some(1));
+
+    let claude = &pass.report.harnesses[0];
+    assert_eq!(claude.skills_from_atlas, 3);
+    assert_eq!(claude.instructions, "imports");
+    assert_eq!(claude.hooks_managed, 1);
+    let codex = &pass.report.harnesses[1];
+    assert_eq!(
+        (codex.skills_from_atlas, codex.instructions.as_str()),
+        (3, "linked"),
+        "each skill once: Codex no longer gets a second copy in ~/.codex/skills"
+    );
+    assert_eq!(pass.report.release, Some(1));
+
+    let before = snapshot(w.home());
+    let again = w.run(&release, false);
+    assert!(!again.failed, "{:?}", again.problems);
+    assert_eq!(again.lines, vec!["Release 1 is applied.".to_owned()]);
+    assert_eq!(snapshot(w.home()), before, "the second run is idempotent");
+}
+
+#[test]
+fn own_folders_and_foreign_links_stay_and_adopted_links_move() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    write(&h.join(".claude/skills/alpha/SKILL.md"), "mine\n");
+    fs::create_dir_all(h.join(".agents/skills")).unwrap();
+    symlink(w.adopt.join("alpha"), h.join(".agents/skills/alpha")).unwrap();
+    fs::create_dir_all(h.join(".agents/skills")).unwrap();
+    symlink("/elsewhere/beta", h.join(".agents/skills/beta")).unwrap();
+
+    let pass = w.run(&signed(&w.manifest(1, &[&key]), &key), false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert_eq!(
+        fs::read_to_string(h.join(".claude/skills/alpha/SKILL.md")).unwrap(),
+        "mine\n"
+    );
+    assert!(
+        pass.problems
+            .iter()
+            .any(|p| p.contains("~/.claude/skills/alpha is your own folder"))
+    );
+    assert_eq!(
+        link(&h.join(".agents/skills/alpha")),
+        w.copy("knowledge/skills/alpha")
+    );
+    assert_eq!(
+        link(&h.join(".agents/skills/beta")),
+        PathBuf::from("/elsewhere/beta")
+    );
+    assert!(
+        pass.problems
+            .iter()
+            .any(|p| p.contains("~/.agents/skills/beta links to /elsewhere/beta")),
+        "{:?}",
+        pass.problems
+    );
+}
+
+/// Applies release 2 cleanly, then checks that `bad` is refused and changes nothing.
+fn assert_refused(make_bad: impl FnOnce(&World, &Key) -> SignedRelease, why: &str) {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let pass = w.run(&signed(&w.manifest(2, &[&key]), &key), false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    // A change the bad release would undo, were it applied.
+    fs::remove_file(w.home().join(".claude/skills/gamma")).unwrap();
+
+    let bad = make_bad(&w, &key);
+    let files = harness_files(&w);
+    let state = w.state.clone();
+    let pass = w.run(&bad, false);
+    assert!(pass.failed, "{why}: not refused");
+    assert!(
+        pass.problems
+            .iter()
+            .any(|p| p.starts_with("refused release") && p.contains(why)),
+        "{why}: {:?}",
+        pass.problems
+    );
+    assert_eq!(w.state, state, "{why}: state changed");
+    assert_eq!(harness_files(&w), files, "{why}: files changed");
+    assert_eq!(pass.report.release, Some(2));
+}
+
+#[test]
+fn a_bad_signature_is_refused() {
+    assert_refused(
+        |w, key| {
+            let mut r = signed(&w.manifest(3, &[key]), key);
+            let other = signed(&w.manifest(4, &[key]), key);
+            r.signature.signature = other.signature.signature;
+            r
+        },
+        "signature doesn't verify",
+    );
+}
+
+#[test]
+fn an_untrusted_key_is_refused() {
+    assert_refused(
+        |w, _| {
+            let stranger = Key::new(9, "Stranger");
+            signed(&w.manifest(3, &[&stranger]), &stranger)
+        },
+        "isn't an owner key",
+    );
+}
+
+#[test]
+fn a_lower_number_is_refused() {
+    assert_refused(|w, key| signed(&w.manifest(1, &[key]), key), "no rollbacks");
+}
+
+#[test]
+fn a_reused_number_with_other_contents_is_refused() {
+    assert_refused(
+        |w, key| {
+            let mut m = w.manifest(2, &[key]);
+            m.created = 99;
+            signed(&m, key)
+        },
+        "reuses the number 2",
+    );
+}
+
+#[test]
+fn a_tree_mismatch_is_refused() {
+    assert_refused(
+        |w, key| {
+            let mut m = w.manifest(3, &[key]);
+            m.sources[1].tree = TreeHash::new("0".repeat(40)).unwrap();
+            signed(&m, key)
+        },
+        "but the release pins",
+    );
+}
+
+#[test]
+fn new_keys_are_trusted_only_once_their_release_applied() {
+    let old = Key::new(1, "Old");
+    let new = Key::new(2, "New");
+    let mut w = World::new(&old);
+
+    // Release 1 rotates to the new key but can't apply: its tree doesn't match.
+    let mut m = w.manifest(1, &[&new]);
+    m.sources[0].tree = TreeHash::new("0".repeat(40)).unwrap();
+    assert!(w.run(&signed(&m, &old), false).failed);
+    assert_eq!(w.state.owner_keys, vec![old.owner()]);
+
+    let rotate = signed(&w.manifest(1, &[&new]), &old);
+    let pass = w.run(&rotate, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert_eq!(w.state.owner_keys, vec![new.owner()]);
+
+    // The same release, fetched again, still applies though its signer is now dropped.
+    assert!(!w.run(&rotate, false).failed);
+
+    let pass = w.run(&signed(&w.manifest(2, &[&old]), &old), false);
+    assert!(pass.failed);
+    assert!(
+        pass.problems[0].contains("isn't an owner key"),
+        "{:?}",
+        pass.problems
+    );
+    assert_eq!(w.state.last_applied, Some(1));
+
+    assert!(!w.run(&signed(&w.manifest(2, &[&new]), &new), false).failed);
+    assert_eq!(w.state.last_applied, Some(2));
+}
+
+#[test]
+fn a_dry_run_changes_nothing() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let first = signed(&w.manifest(1, &[&key]), &key);
+
+    let before = snapshot(w.home());
+    let pass = w.run(&first, true);
+    assert!(!pass.failed);
+    assert_eq!(snapshot(w.home()), before, "no copies are fetched either");
+    assert_eq!(w.state.last_applied, None);
+
+    assert!(!w.run(&first, false).failed);
+    fs::remove_file(w.home().join(".codex/AGENTS.md")).unwrap();
+    let before = snapshot(w.home());
+    let state = w.state.clone();
+    let pass = w.run(&signed(&w.manifest(2, &[&key]), &key), true);
+    assert_eq!(snapshot(w.home()), before);
+    assert_eq!(w.state, state);
+    assert!(
+        pass.lines
+            .iter()
+            .any(|l| l.starts_with("would link ~/.codex/AGENTS.md")),
+        "{:?}",
+        pass.lines
+    );
+}
+
+#[test]
+fn an_unreachable_hub_changes_nothing() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    assert!(!w.run(&signed(&w.manifest(1, &[&key]), &key), false).failed);
+    let before = snapshot(w.home());
+    let pass = pass::run(
+        &w.paths,
+        &w.config,
+        &w.state,
+        Fetched::Unreachable("connection refused".into()),
+        false,
+        2,
+    );
+    assert_eq!(snapshot(w.home()), before);
+    assert_eq!(pass.state, w.state);
+    assert!(pass.problems[0].contains("local copies (release 1)"));
+}
+
+#[test]
+fn config_and_state_are_private() {
+    let key = Key::new(1, "Laptop");
+    let w = World::new(&key);
+    w.config.save(&w.paths.config).unwrap();
+    w.state.save(&w.paths.state).unwrap();
+    for f in [&w.paths.config, &w.paths.state] {
+        assert_eq!(fs::metadata(f).unwrap().permissions().mode() & 0o777, 0o600);
+        let dir = f.parent().unwrap();
+        assert_eq!(
+            fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    let back = Config::load(&w.paths.config).unwrap();
+    assert_eq!(back.adopt, w.config.adopt);
+    assert!(!format!("{back:?}").contains("token: \"t\""));
+    assert_eq!(State::load(&w.paths.state).unwrap(), w.state);
+}
+
+#[test]
+fn each_harness_gets_its_skills_in_one_folder() {
+    // Codex reads ~/.agents/skills and ~/.codex/skills; links go only in the first.
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".codex")).unwrap();
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    std::fs::create_dir_all(home.path().join(".config/opencode")).unwrap();
+    let src = home.path().join("src/skills/demo");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("SKILL.md"), "---\ndescription: d\n---\n").unwrap();
+    let desired = atlas_client::desired::Desired {
+        skills: [("demo".to_owned(), src.clone())].into_iter().collect(),
+        ..Default::default()
+    };
+    let plan = atlas_client::plan::plan(home.path(), &desired, &[home.path().join("src")]);
+    let text = format!("{plan:?}");
+    assert!(text.contains(".agents/skills"), "{text}");
+    assert!(text.contains(".claude/skills"), "{text}");
+    assert!(
+        !text.contains(".codex/skills"),
+        "Codex would see the skill twice: {text}"
+    );
+    assert!(
+        !text.contains("opencode/skills"),
+        "OpenCode already reads Claude's and Codex's: {text}"
+    );
+}

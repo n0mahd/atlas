@@ -442,6 +442,13 @@ pub(crate) async fn api_pair(
     Json(req): Json<PairRequest>,
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
+    // Refuse a wrong address before the code is spent, so the owner can simply retry.
+    if !req.hub.is_empty() && req.hub.trim_end_matches('/') != w.origin() {
+        return Err(AppError::Bad(format!(
+            "This hub's address is {}; pair using that.",
+            w.origin()
+        )));
+    }
     let ok = atlas_signer::setup::redeem_in(
         &w.state_dir,
         atlas_signer::setup::PAIRING_CODES,
@@ -555,7 +562,15 @@ mod tests {
             std::time::Duration::from_mins(15),
         )
         .unwrap();
-        let pair = format!(r#"{{"code":"{code}","machine":"laptop","user":"me"}}"#);
+        let wrong = format!(
+            r#"{{"code":"{code}","hub":"https://elsewhere.test","machine":"laptop","user":"me"}}"#
+        );
+        let (status, body) = call(&app, json("/api/pair", wrong, None)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains("https://hub.test"), "names the right address");
+        let pair = format!(
+            r#"{{"code":"{code}","hub":"https://hub.test/","machine":"laptop","user":"me"}}"#
+        );
         let (status, body) = call(&app, json("/api/pair", pair.clone(), None)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let resp: atlas_core::distribution::PairResponse = serde_json::from_str(&body).unwrap();

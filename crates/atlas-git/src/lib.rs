@@ -189,6 +189,115 @@ impl Repo {
         Ok(trimmed(&out.stdout))
     }
 
+    /// Clones `remote` into `dir` (no checkout) the first time; afterwards opens the clone
+    /// and points `origin` at `remote`. For a client's local copies of release sources.
+    ///
+    /// # Errors
+    /// A remote that looks like an option, a failed clone, or a `dir` that isn't a clone.
+    pub fn clone_or_open(remote: &str, dir: &Path) -> Result<Repo, GitError> {
+        if remote.starts_with('-') || remote.contains(['\n', '\0']) || remote.starts_with("ext::") {
+            return Err(GitError::InvalidPath(PathBuf::from(remote)));
+        }
+        if !dir.join(".git").exists() {
+            let parent = dir
+                .parent()
+                .ok_or_else(|| GitError::InvalidPath(dir.to_path_buf()))?;
+            std::fs::create_dir_all(parent)?;
+            let at = Repo {
+                root: parent.to_path_buf(),
+            };
+            at.git(
+                &[
+                    os("clone"),
+                    os("--quiet"),
+                    os("--no-checkout"),
+                    os("--"),
+                    os(remote),
+                    dir.as_os_str(),
+                ],
+                PUSH_TIMEOUT,
+            )?;
+        }
+        let repo = Repo::open(dir)?;
+        repo.git(&["remote", "set-url", "origin", remote], LOCAL_TIMEOUT)?;
+        Ok(repo)
+    }
+
+    /// Fetches `commit` from `origin` unless it's already here.
+    ///
+    /// # Errors
+    /// Not a full commit id, or the remote doesn't have it.
+    pub fn fetch_commit(&self, commit: &str) -> Result<(), GitError> {
+        check_oid(commit)?;
+        let have = self.run(
+            &["cat-file", "-e", &format!("{commit}^{{commit}}")],
+            LOCAL_TIMEOUT,
+        )?;
+        if have.status.success() {
+            return Ok(());
+        }
+        // Most hosts serve a commit by id; otherwise fetch the branches and look again.
+        if self
+            .git(
+                &["fetch", "--quiet", "--no-tags", "origin", commit],
+                PUSH_TIMEOUT,
+            )
+            .is_err()
+        {
+            self.git(&["fetch", "--quiet", "--no-tags", "origin"], PUSH_TIMEOUT)?;
+        }
+        Ok(())
+    }
+
+    /// Checks out `commit` detached, discarding anything else in the working tree.
+    /// Only for Atlas's own copies, never a user's repo.
+    ///
+    /// # Errors
+    /// Not a full commit id, or git fails.
+    pub fn checkout_detached(&self, commit: &str) -> Result<(), GitError> {
+        check_oid(commit)?;
+        self.git(
+            &[
+                "-c",
+                "advice.detachedHead=false",
+                "checkout",
+                "--quiet",
+                "--force",
+                "--detach",
+                commit,
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        self.git(&["clean", "-ffdxq"], LOCAL_TIMEOUT)?;
+        Ok(())
+    }
+
+    /// The tree of `commit`.
+    ///
+    /// # Errors
+    /// Not a full commit id, or it isn't here.
+    pub fn tree_of(&self, commit: &str) -> Result<String, GitError> {
+        check_oid(commit)?;
+        let out = self.git(
+            &["rev-parse", "--verify", &format!("{commit}^{{tree}}")],
+            LOCAL_TIMEOUT,
+        )?;
+        Ok(trimmed(&out.stdout))
+    }
+
+    /// How many commits HEAD is ahead of its upstream: `Some(0)` when pushed, None when
+    /// the branch tracks nothing.
+    ///
+    /// # Errors
+    /// If git fails for another reason.
+    pub fn unpushed(&self) -> Result<Option<u32>, GitError> {
+        let out = self.run(&["rev-list", "--count", "@{upstream}..HEAD"], LOCAL_TIMEOUT)?;
+        if !out.status.success() {
+            return Ok(None);
+        }
+        Ok(trimmed(&out.stdout).parse().ok())
+    }
+
     /// The commit HEAD points at and its tree, as full object ids.
     ///
     /// # Errors
@@ -388,6 +497,18 @@ thread_local! {
     /// `spawn_blocking` threads (or plain threads in tests), never inside async code.
     static RUNTIME: Result<tokio::runtime::Runtime, io::Error> =
         tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build();
+}
+
+/// Accepts only full lowercase hex object ids, so nothing reaches git as an option.
+fn check_oid(oid: &str) -> Result<(), GitError> {
+    let hex = oid
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if hex && matches!(oid.len(), 40 | 64) {
+        Ok(())
+    } else {
+        Err(GitError::InvalidPath(PathBuf::from(oid)))
+    }
 }
 
 /// Accepts only non-empty relative paths made of plain components.

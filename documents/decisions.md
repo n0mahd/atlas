@@ -174,3 +174,18 @@ login's home; "repo" means inside a project.
 
 Marks: Amp's and Muse's one-colour icons from the Agent Client Protocol registry; Herdr gets
 a monogram like T3 Code. `Layout` has no MCP or memory fields yet; phase 4 adds MCP paths.
+
+## 0021 · 2026-11-27 · How atlasd applies a release
+`atlasd` (crate `atlas-client`) runs as each OS account, from a systemd user timer every
+10 minutes, never as root. Each run: fetch the latest signed release, check it against the
+keys trusted at pairing (or carried by an applied release), refuse rollbacks and reused
+numbers, fetch every pinned repo into `~/.local/share/atlas/sources/` and check each tree
+before checking any out, then plan and apply: skill links in one folder per harness (a
+harness that already reads a linked folder gets nothing more, so no skill appears twice),
+the global `AGENTS.md` linked or, for Claude Code, imported once in `CLAUDE.md` (an older
+import pointing into a managed root is replaced, not duplicated), and Atlas's hooks in
+each harness's own hook file. Only entries in roots Atlas manages are changed; `adopt`
+roots in `client.toml` let it take over links made by earlier scripts. New keys and the
+release number are saved only after everything applied. With the hub unreachable nothing
+changes, so harnesses keep working from the local copies. On a machine running atlasd,
+`~/Knowledge/bin/sync` must stop calling `link-agents`, or both would manage the same links.

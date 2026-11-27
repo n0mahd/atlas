@@ -1,0 +1,11 @@
+# Runs atlasd.service every 10 minutes. See atlasd.service for install steps.
+[Unit]
+Description=Run atlasd every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/10
+Persistent=true
+
+[Install]
+WantedBy=timers.target

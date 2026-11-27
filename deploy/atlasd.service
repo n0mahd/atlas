@@ -1,0 +1,33 @@
+# atlasd: keeps this login's harnesses in step with the owner's signed releases.
+# One per OS account on each machine, as a user service; never as root.
+#
+# Install (as the login that runs the agents):
+#   cargo build --release -p atlas-client && install -Dm755 target/release/atlasd ~/.local/bin/atlasd
+#   atlasd pair https://<hub> <code>        # code from the hub's Machines page
+#   atlasd run --dry-run                    # read the plan before the first real run
+#   mkdir -p ~/.config/systemd/user
+#   ln -sf "$PWD/deploy/atlasd.service" "$PWD/deploy/atlasd.timer" ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now atlasd.timer
+#   loginctl enable-linger "$USER"          # keep the timer running without a login session
+#
+# atlasd takes over from ~/Knowledge/bin/link-agents. On a machine running atlasd, stop
+# ~/Knowledge/bin/sync from calling link-agents, or both will manage the same links and
+# keep repointing them. Links that link-agents made can be handed over by listing their
+# folders under `adopt` in ~/.config/atlas/client.toml (for example "~/Knowledge" and
+# "~/Skills"); atlasd then repoints them into its own copies.
+[Unit]
+Description=Atlas client: apply the latest signed release
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/atlasd run
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+# Home stays writable: harness configs, links and local copies live there.
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+ProtectKernelTunables=yes
+SystemCallArchitectures=native
+TimeoutStartSec=10min

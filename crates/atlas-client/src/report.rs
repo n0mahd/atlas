@@ -1,0 +1,93 @@
+//! What each harness looks like after a pass, for the hub's Machines screen.
+
+use std::fs;
+use std::path::Path;
+
+use atlas_core::distribution::{HarnessReport, InstalledSkill, InstructionLink};
+use atlas_core::kernel::HarnessKind;
+use atlas_fs::Sources;
+use atlas_harness::hooks::managed_name;
+use serde_json::Value;
+
+use crate::sources::key;
+
+const MAX_FILE: u64 = 1024 * 1024;
+
+fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Atlas's hooks in a harness's hook config, as written there now.
+fn managed_hooks(kind: HarnessKind, config: &Path) -> u32 {
+    let small = fs::symlink_metadata(config).is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
+    let Some(json) = small
+        .then(|| fs::read(config).ok())
+        .flatten()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+    else {
+        return 0;
+    };
+    if kind == HarnessKind::Antigravity {
+        return json.as_object().map_or(0, |o| {
+            count(o.keys().filter(|k| k.starts_with("atlas:")).count())
+        });
+    }
+    let handlers = json
+        .get("hooks")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|events| events.values())
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|group| group.get("hooks").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|h| h.get("command").and_then(Value::as_str))
+        .filter(|c| managed_name(c).is_some())
+        .count();
+    count(handlers)
+}
+
+/// One report per harness layout, counted from the files as they are now.
+#[must_use]
+pub fn harnesses(home: &Path, sources_dir: &Path) -> Vec<HarnessReport> {
+    let public = sources_dir.join(key(&atlas_core::release::SourceId::PublicSkills));
+    let sources = Sources {
+        home: home.to_path_buf(),
+        knowledge: sources_dir.join(key(&atlas_core::release::SourceId::Knowledge)),
+        public_skills: public.is_dir().then_some(public),
+        projects: Vec::new(),
+    };
+    let layouts = atlas_harness::layouts();
+    atlas_fs::scan_harnesses(&sources)
+        .into_iter()
+        .zip(layouts)
+        .map(|(view, layout)| {
+            let entries = view.skill_dirs.iter().flat_map(|d| d.entries.iter());
+            let (mut atlas, mut outside, mut broken) = (0, 0, 0);
+            for e in entries {
+                match e {
+                    InstalledSkill::FromAtlas { .. } => atlas += 1,
+                    InstalledSkill::Outside { .. } => outside += 1,
+                    InstalledSkill::Broken { .. } => broken += 1,
+                }
+            }
+            let instructions = match view.instructions.first().map(|i| &i.link) {
+                Some(InstructionLink::Linked) => "linked",
+                Some(InstructionLink::Imports) => "imports",
+                Some(InstructionLink::Separate) => "separate",
+                Some(InstructionLink::Missing) | None => "missing",
+            };
+            HarnessReport {
+                kind: view.kind,
+                present: view.present,
+                skills_from_atlas: atlas,
+                skills_outside: outside,
+                broken,
+                instructions: instructions.to_owned(),
+                hooks_managed: layout
+                    .hook_config
+                    .map_or(0, |c| managed_hooks(view.kind, &home.join(c))),
+            }
+        })
+        .collect()
+}

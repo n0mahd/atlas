@@ -1,0 +1,32 @@
+[package]
+name = "atlas-client"
+description = "atlasd: pulls signed releases from the hub, checks them, and writes each harness's links and config for one login."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "atlasd"
+path = "src/main.rs"
+
+[dependencies]
+atlas-core = { path = "../atlas-core" }
+atlas-fs = { path = "../atlas-fs" }
+atlas-git = { path = "../atlas-git" }
+atlas-harness = { path = "../atlas-harness" }
+atlas-verify = { path = "../atlas-verify" }
+base64 = "0.23"
+# reqwest 0.13 renamed 0.12's `rustls-tls` feature to `rustls`.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+toml = "1"
+
+[dev-dependencies]
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+tempfile = "3"
+
+[lints]
+workspace = true

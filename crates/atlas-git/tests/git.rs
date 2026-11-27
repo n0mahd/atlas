@@ -292,3 +292,52 @@ fn head_and_remote_are_read() {
     assert_eq!(commit, git(&["rev-parse", "HEAD"]));
     assert_eq!(tree, git(&["rev-parse", "HEAD^{tree}"]));
 }
+
+#[test]
+fn a_client_copy_follows_a_pinned_commit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    git(&src, &["init", "-q", "-b", "main"]);
+    git(&src, &["config", "user.name", "T"]);
+    git(&src, &["config", "user.email", "t@example.com"]);
+    std::fs::write(src.join("a"), "one").unwrap();
+    git(&src, &["add", "a"]);
+    git(&src, &["commit", "-qm", "one"]);
+    let first = git(&src, &["rev-parse", "HEAD"]);
+    std::fs::write(src.join("a"), "two").unwrap();
+    git(&src, &["commit", "-qam", "two"]);
+    let second = git(&src, &["rev-parse", "HEAD"]);
+
+    let copy = tmp.path().join("cache/src");
+    let remote = src.to_str().unwrap();
+    let repo = atlas_git::Repo::clone_or_open(remote, &copy).unwrap();
+    repo.fetch_commit(&first).unwrap();
+    repo.checkout_detached(&first).unwrap();
+    assert_eq!(std::fs::read_to_string(copy.join("a")).unwrap(), "one");
+    assert_eq!(
+        repo.tree_of(&first).unwrap(),
+        git(&src, &["rev-parse", &format!("{first}^{{tree}}")])
+    );
+    std::fs::write(copy.join("stray"), "x").unwrap();
+    let repo = atlas_git::Repo::clone_or_open(remote, &copy).unwrap();
+    repo.fetch_commit(&second).unwrap();
+    repo.checkout_detached(&second).unwrap();
+    assert_eq!(std::fs::read_to_string(copy.join("a")).unwrap(), "two");
+    assert!(!copy.join("stray").exists());
+    assert!(repo.checkout_detached("--help").is_err());
+    assert!(atlas_git::Repo::clone_or_open("--upload-pack=x", &tmp.path().join("bad")).is_err());
+}

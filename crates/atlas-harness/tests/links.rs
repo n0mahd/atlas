@@ -196,6 +196,8 @@ fn claude_plan(current: &InstructionFile) -> InstructionAction {
         Path::new("/u/.claude/CLAUDE.md"),
         current,
         Path::new(AGENTS),
+        &[],
+        Path::new("/u"),
     )
 }
 
@@ -255,7 +257,38 @@ fn claude_md_cases() {
             Path::new("/u/.claude/CLAUDE.md"),
             &InstructionFile::Missing,
             Path::new("/srv/my knowledge/AGENTS.md"),
+            &[],
+            Path::new("/u"),
         ),
         InstructionAction::Conflict(InstructionConflict::UnimportablePath)
     );
+}
+
+#[test]
+fn claude_md_repoints_an_import_from_an_adopted_folder() {
+    let before = "# Mine\n@~/Notes/AGENTS.md\n@~/Knowledge/AGENTS.md\ntail\n";
+    let plan = |text: &str| {
+        plan_claude_md(
+            Path::new("/u/.claude/CLAUDE.md"),
+            &InstructionFile::File(text.to_owned()),
+            Path::new(AGENTS),
+            &[p("/u/Knowledge")],
+            Path::new("/u"),
+        )
+    };
+    let InstructionAction::Write(out) = plan(before) else {
+        panic!("expected a write")
+    };
+    let out = String::from_utf8(out).unwrap();
+    assert_eq!(
+        out,
+        format!("# Mine\n@~/Notes/AGENTS.md\n@{AGENTS}\ntail\n"),
+        "replaced in place, other imports kept"
+    );
+    assert_eq!(plan(&out), InstructionAction::Keep, "idempotent");
+    let doubled = format!("@{AGENTS}\nx\n@{AGENTS}\n");
+    let InstructionAction::Write(once) = plan(&doubled) else {
+        panic!("repeats dropped")
+    };
+    assert_eq!(String::from_utf8(once).unwrap(), format!("@{AGENTS}\nx\n"));
 }

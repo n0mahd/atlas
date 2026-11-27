@@ -40,12 +40,23 @@ pub fn build(
     for (id, root) in repos {
         let label = label(&id);
         match pin(&root) {
-            Ok((remote, commit, tree)) => pinned.push(Source {
-                id,
-                remote,
-                commit,
-                tree,
-            }),
+            Ok((remote, commit, tree, unpushed)) => {
+                if let Some(n) = unpushed.filter(|n| *n > 0) {
+                    skipped.push(Skipped {
+                        source: label,
+                        reason: format!(
+                            "has {n} commit{} not pushed yet, so machines can't fetch this release until it is",
+                            if n == 1 { "" } else { "s" }
+                        ),
+                    });
+                }
+                pinned.push(Source {
+                    id,
+                    remote,
+                    commit,
+                    tree,
+                });
+            }
             Err(reason) => skipped.push(Skipped {
                 source: label,
                 reason,
@@ -71,17 +82,19 @@ fn label(id: &SourceId) -> String {
     }
 }
 
-fn pin(root: &Path) -> Result<(String, CommitId, TreeHash), String> {
+fn pin(root: &Path) -> Result<(String, CommitId, TreeHash, Option<u32>), String> {
     let repo = atlas_git::Repo::open(root).map_err(|e| e.to_string())?;
     let remote = repo
         .remote_url()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "has no git remote, so machines couldn't fetch it".to_owned())?;
     let (commit, tree) = repo.head().map_err(|e| e.to_string())?;
+    let unpushed = repo.unpushed().map_err(|e| e.to_string())?;
     Ok((
         remote,
         CommitId::new(commit).map_err(|e| e.to_string())?,
         TreeHash::new(tree).map_err(|e| e.to_string())?,
+        unpushed,
     ))
 }
 
