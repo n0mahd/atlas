@@ -1,0 +1,6 @@
+{
+  "name": "atlas-site",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public" },
+  "routes": [{ "pattern": "atlas.abdlh.com", "custom_domain": true }]
+}

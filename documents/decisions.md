@@ -97,3 +97,12 @@ that file with hooks disabled; a failed commit restores the old text. Project re
 on `main` (0003). Saving commits only by default; a setting pushes after each save, except
 the public skills repo, which is always pushed by hand after a privacy check. Agents' own
 per-repo memory stays read-only because it isn't in git.
+
+## 0017 · 2026-11-27 · Public site is static, on Cloudflare
+The landing page (`site/`) is one static HTML page in the hub's design language, with no
+script. It leads with the problem (each agent keeps its own copy of the setup, so copies
+drift), then shows the fix. It is served by the Cloudflare Worker `atlas-site` (assets
+only) at atlas.abdlh.com, so it never depends on a home machine. Deploy: `npx wrangler
+deploy` from `site/` with Cloudflare credentials in the environment. Fonts, grain, key and
+logo are copies of `atlas-web`'s; change both together. The zone caches static files for
+hours, so rename an asset rather than editing it in place.

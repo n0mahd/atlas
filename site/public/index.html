@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas</title>
+<meta name="description" content="One copy of your agents' skills, instructions, memory, hooks and MCP servers, carried to every machine and every agent.">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:title" content="Atlas">
+<meta property="og:description" content="Every AI agent keeps its own copy of your setup. Atlas keeps one.">
+<meta property="og:image" content="https://atlas.abdlh.com/logo-512.png">
+<link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/eb-garamond.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face { font-family: "Cinzel"; src: url("/fonts/cinzel.woff2") format("woff2"); font-weight: 400 900; font-display: swap; }
+@font-face { font-family: "EB Garamond"; src: url("/fonts/eb-garamond.woff2") format("woff2"); font-weight: 400 800; font-display: swap; }
+@font-face { font-family: "EB Garamond"; src: url("/fonts/eb-garamond-italic.woff2") format("woff2"); font-weight: 400 800; font-style: italic; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/fonts/ibm-plex-mono-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+
+:root {
+  --ground: #ECEAE3; --ground-deep: #E4E1D7; --ink: #16181D; --ink-soft: #2A2D34; --muted: #5A5D65;
+  --hair: #CFCBBE; --verdigris: #2E6B5E; --gilt: #9A7632; --gilt-orn: #B08A3E; --oxblood: #7A2430;
+  --grain: 0.14;
+  --serif: "EB Garamond", Georgia, serif; --display: "Cinzel", "Trajan Pro", serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0E1220; --ground-deep: #151A2C; --ink: #E6E2D6; --ink-soft: #D3CEC0; --muted: #A39F93;
+    --hair: #2A3044; --verdigris: #6FB3A2; --gilt: #C9A35A; --gilt-orn: #C9A35A; --oxblood: #E0848F;
+    --grain: 0.08; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0E1220; --ground-deep: #151A2C; --ink: #E6E2D6; --ink-soft: #D3CEC0; --muted: #A39F93;
+  --hair: #2A3044; --verdigris: #6FB3A2; --gilt: #C9A35A; --gilt-orn: #C9A35A; --oxblood: #E0848F;
+  --grain: 0.08; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--serif); font-size: 19px; line-height: 1.45; }
+body::before { content: ""; position: fixed; inset: 0; background: url("/grain.svg"); opacity: var(--grain); pointer-events: none; z-index: 10; }
+.page { max-width: 980px; margin: 0 auto; padding: 0 24px 56px; }
+
+/* masthead */
+.running { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0 6px; border-bottom: 1px solid var(--ink);
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.key { height: 8px; margin-top: 6px; background: url("/key.svg") repeat-x; background-size: 12px 8px; }
+
+/* hero */
+.hero { display: grid; grid-template-columns: 1fr 200px; gap: 40px; align-items: center; padding: 56px 0 48px; }
+.wordmark { margin: 0 0 22px; font-family: var(--display); font-weight: 900; font-size: 15px; letter-spacing: 0.32em; color: var(--gilt); }
+h1 { margin: 0; font-family: var(--display); font-weight: 900; font-size: 46px; line-height: 1.1; letter-spacing: 0.02em; text-wrap: balance; }
+.lede { margin: 20px 0 0; font-size: 22px; line-height: 1.4; color: var(--ink-soft); max-width: 32em; }
+.lede strong { color: var(--ink); font-weight: 600; }
+.medallion { width: 200px; height: 200px; display: block; border: 1px solid var(--gilt-orn); box-shadow: 0 0 0 4px var(--ground), 0 0 0 5px var(--gilt-orn); }
+
+/* sections */
+section { padding: 36px 0 8px; }
+.head { display: flex; align-items: baseline; gap: 14px; padding-bottom: 6px; border-bottom: 3px double var(--ink); margin-bottom: 20px; }
+.num { font-family: var(--display); font-weight: 700; font-size: 17px; color: var(--gilt); min-width: 22px; }
+h2 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: 0.12em; text-transform: uppercase; }
+.say { margin: 0 0 22px; font-size: 22px; line-height: 1.35; max-width: 34em; }
+.say em { color: var(--oxblood); font-style: italic; }
+.say .good { color: var(--verdigris); font-style: italic; }
+
+/* the ledger: one skill across agents and machines */
+.ledgers { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+figure { margin: 0; }
+figcaption { margin-top: 8px; font-size: 15px; font-style: italic; color: var(--muted); }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12.5px; }
+caption { text-align: left; padding: 0 0 8px; font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+caption .tag { font-family: var(--mono); font-weight: 400; letter-spacing: 0.04em; text-transform: none; color: var(--muted); }
+th, td { padding: 8px 8px; border-bottom: 1px solid var(--hair); text-align: left; white-space: nowrap; }
+thead th { font-weight: 400; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--ink); }
+tbody th { font-family: var(--serif); font-size: 16px; font-weight: 600; }
+td.ok { color: var(--verdigris); }
+td.bad { color: var(--oxblood); }
+td.none { color: var(--muted); }
+.mark { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+td.none .mark { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+
+/* the fix: hub, clients, agents */
+.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: stretch; border-bottom: 3px double var(--ink); }
+.stage { padding: 18px 18px 20px; }
+.stage .label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gilt); }
+.stage h3 { margin: 6px 0 6px; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: 0.04em; }
+.stage p { margin: 0; font-size: 17px; color: var(--ink-soft); }
+.arrow { display: grid; place-items: center; width: 28px; color: var(--gilt-orn); }
+.arrow svg { width: 22px; height: 22px; }
+
+/* steps */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.steps li { padding: 14px 16px 16px; border-right: 1px solid var(--hair); }
+.steps li:last-child { border-right: 0; }
+.steps .roman { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--gilt); }
+.steps b { display: block; margin: 4px 0 4px; font-family: var(--display); font-size: 17px; letter-spacing: 0.04em; }
+.steps span { font-size: 16px; color: var(--ink-soft); }
+
+/* promises */
+.promises { list-style: none; margin: 0; padding: 0; }
+.promises li { display: grid; grid-template-columns: 220px 1fr; gap: 16px; padding: 11px 4px; border-bottom: 1px solid var(--hair); }
+.promises b { font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.06em; padding-top: 2px; }
+.promises span { font-size: 18px; color: var(--ink-soft); }
+
+.manages { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 0; padding: 0; list-style: none; }
+.manages li { padding: 5px 12px; border: 1px solid var(--hair); font-family: var(--mono); font-size: 12.5px; }
+.manages.agents li { border-color: var(--ink); }
+.pair { display: grid; grid-template-columns: max-content 1fr; gap: 12px 20px; align-items: center; }
+.pair .k { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+
+/* status */
+.status { margin-top: 44px; padding: 14px 18px; border-left: 3px solid var(--gilt-orn); background: var(--ground-deep); font-size: 18px; font-style: italic; color: var(--ink-soft); }
+.status b { font-style: normal; font-family: var(--display); font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink); margin-right: 8px; }
+footer { margin-top: 40px; padding-top: 10px; border-top: 3px double var(--ink); display: flex; justify-content: space-between; gap: 12px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+
+@media (max-width: 820px) {
+  .hero { grid-template-columns: 1fr; gap: 28px; padding: 36px 0 28px; }
+  .medallion { width: 120px; height: 120px; order: -1; }
+  h1 { font-size: 34px; }
+  .lede, .say { font-size: 19px; }
+  .ledgers { grid-template-columns: 1fr; }
+  .flow { grid-template-columns: 1fr; }
+  .arrow { width: auto; height: 26px; }
+  .arrow svg { transform: rotate(90deg); }
+  .steps { grid-template-columns: 1fr 1fr; }
+  .steps li:nth-child(2) { border-right: 0; }
+  .steps li:nth-child(-n+2) { border-bottom: 1px solid var(--hair); }
+  .promises li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (max-width: 480px) {
+  .page { padding: 0 16px 40px; }
+  h1 { font-size: 29px; }
+  .running .opt { display: none; }
+  th, td { padding: 8px 5px; font-size: 11.5px; }
+  tbody th { font-size: 15px; }
+  .mark { margin-right: 5px; }
+  .steps { grid-template-columns: 1fr; }
+  .steps li { border-right: 0; border-bottom: 1px solid var(--hair); }
+  .pair { grid-template-columns: 1fr; gap: 6px; }
+  .pair .k:not(:first-child) { margin-top: 8px; }
+  footer { flex-direction: column; gap: 4px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="running"><span>Atlas</span><span class="opt">For people who run AI coding agents</span><span>MMXXVI</span></div>
+  <div class="key" aria-hidden="true"></div>
+</header>
+
+<main>
+<div class="hero">
+  <div>
+    <p class="wordmark">ATLAS</p>
+    <h1>Every AI agent keeps its own copy of your setup.</h1>
+    <p class="lede">Skills, instructions, memory, hooks and MCP servers live apart in Claude Code, Codex, OpenCode, Pi and Antigravity, on every machine. Fix one and the rest drift. <strong>Atlas keeps one copy and carries it everywhere.</strong></p>
+  </div>
+  <img class="medallion" src="/logo-512.png" width="200" height="200" alt="The Atlas medallion: Atlas crouching under an armillary sphere">
+</div>
+
+<section aria-labelledby="problem">
+  <div class="head"><span class="num">I</span><h2 id="problem">The problem</h2></div>
+  <p class="say">You improve a skill on your laptop. Your desktop still runs last month's. Codex never got it. <em>Nobody can tell which copy is right.</em></p>
+  <div class="ledgers">
+    <figure>
+      <table>
+        <caption>Without Atlas <span class="tag">· skill “review-pr”</span></caption>
+        <thead><tr><th scope="col">Agent</th><th scope="col">Laptop</th><th scope="col">Desktop</th><th scope="col">Server</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Claude Code</th><td class="ok"><i class="mark"></i>v4</td><td class="bad"><i class="mark"></i>v2</td><td class="bad"><i class="mark"></i>v3</td></tr>
+          <tr><th scope="row">Codex</th><td class="bad"><i class="mark"></i>v1</td><td class="none"><i class="mark"></i>none</td><td class="none"><i class="mark"></i>none</td></tr>
+          <tr><th scope="row">OpenCode</th><td class="none"><i class="mark"></i>none</td><td class="bad"><i class="mark"></i>v2</td><td class="none"><i class="mark"></i>none</td></tr>
+          <tr><th scope="row">Pi</th><td class="bad"><i class="mark"></i>edited</td><td class="none"><i class="mark"></i>none</td><td class="bad"><i class="mark"></i>v3</td></tr>
+          <tr><th scope="row">Antigravity</th><td class="none"><i class="mark"></i>none</td><td class="none"><i class="mark"></i>none</td><td class="none"><i class="mark"></i>none</td></tr>
+        </tbody>
+      </table>
+      <figcaption>Seven copies, five versions, eight gaps.</figcaption>
+    </figure>
+    <figure>
+      <table>
+        <caption>With Atlas <span class="tag">· skill “review-pr”</span></caption>
+        <thead><tr><th scope="col">Agent</th><th scope="col">Laptop</th><th scope="col">Desktop</th><th scope="col">Server</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Claude Code</th><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td></tr>
+          <tr><th scope="row">Codex</th><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td></tr>
+          <tr><th scope="row">OpenCode</th><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td></tr>
+          <tr><th scope="row">Pi</th><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td></tr>
+          <tr><th scope="row">Antigravity</th><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td><td class="ok"><i class="mark"></i>v4</td></tr>
+        </tbody>
+      </table>
+      <figcaption>One copy, edited once, current everywhere.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section aria-labelledby="fix">
+  <div class="head"><span class="num">II</span><h2 id="fix">How Atlas fixes it</h2></div>
+  <div class="flow">
+    <div class="stage">
+      <div class="label">One hub</div>
+      <h3>Keeps everything</h3>
+      <p>All your skills, instructions, memory, hooks and MCP servers, in git. One screen to read and edit them.</p>
+    </div>
+    <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h17M14 6l6 6-6 6"/></svg></div>
+    <div class="stage">
+      <div class="label">Every machine</div>
+      <h3>Pulls the latest</h3>
+      <p>A small client checks each signed release, then applies it.</p>
+    </div>
+    <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h17M14 6l6 6-6 6"/></svg></div>
+    <div class="stage">
+      <div class="label">Every agent</div>
+      <h3>Gets its own files</h3>
+      <p>Written in each agent's own format and folders. Nothing to patch.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="change">
+  <div class="head"><span class="num">III</span><h2 id="change">A change, start to finish</h2></div>
+  <ol class="steps">
+    <li><span class="roman">i</span><b>Edit once</b><span>In the hub, or in the file.</span></li>
+    <li><span class="roman">ii</span><b>Commit</b><span>Every save is a git commit you can undo.</span></li>
+    <li><span class="roman">iii</span><b>Sign</b><span>One passkey tap approves the release.</span></li>
+    <li><span class="roman">iv</span><b>Arrive</b><span>Every machine and agent is current.</span></li>
+  </ol>
+</section>
+
+<section aria-labelledby="promises">
+  <div class="head"><span class="num">IV</span><h2 id="promises">What it promises</h2></div>
+  <ul class="promises">
+    <li><b>Nothing is lost</b><span>Every change is a commit. Roll back any time.</span></li>
+    <li><b>Works offline</b><span>Agents read local copies. If the hub is down, nothing breaks.</span></li>
+    <li><b>Your edits stay</b><span>Atlas writes only the entries it manages.</span></li>
+    <li><b>Keys stay put</b><span>MCP secrets live in the hub's keystore, never in git.</span></li>
+    <li><b>Plain files</b><span>Markdown and TOML. Edit them by hand whenever you like.</span></li>
+  </ul>
+</section>
+
+<section aria-labelledby="covers">
+  <div class="head"><span class="num">V</span><h2 id="covers">What it covers</h2></div>
+  <div class="pair">
+    <span class="k">Manages</span>
+    <ul class="manages"><li>Skills</li><li>Instructions</li><li>Memory</li><li>Hooks</li><li>MCP servers</li></ul>
+    <span class="k">For</span>
+    <ul class="manages agents"><li>Claude Code</li><li>Codex</li><li>OpenCode</li><li>Pi</li><li>Antigravity</li></ul>
+  </div>
+</section>
+
+<p class="status"><b>Status</b>In development. The hub reads and edits everything today; syncing to every machine comes next.</p>
+</main>
+
+<footer><span>Atlas</span><span>Carry it once</span></footer>
+</div>
+</body>
+</html>
