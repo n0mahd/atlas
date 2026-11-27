@@ -14,7 +14,10 @@ use atlas_core::distribution::PairRequest;
 
 const USAGE: &str = "\
 usage:
-  atlasd pair <hub-url> <code> [--machine NAME]   pair this login with the hub
+  atlasd pair <hub-url> <code> [--machine NAME] [--adopt DIR]...
+                                                  pair this login with the hub; --adopt lets
+                                                  atlasd take over links an older script made
+                                                  into DIR (such as ~/Knowledge)
   atlasd run [--dry-run]                          apply the latest signed release
   atlasd status                                   show the pairing and the pending plan";
 
@@ -28,8 +31,20 @@ fn main() -> ExitCode {
             .collect::<Vec<_>>()
             .as_slice()
         {
-            ["pair", hub, code] => pair(&paths, hub, code, None),
-            ["pair", hub, code, "--machine", name] => pair(&paths, hub, code, Some(name)),
+            ["pair", hub, code, rest @ ..] => {
+                let mut machine = None;
+                let mut adopt = Vec::new();
+                let mut opts = rest.iter();
+                loop {
+                    match (opts.next(), opts.next()) {
+                        (None, _) => break,
+                        (Some(&"--machine"), Some(name)) => machine = Some(*name),
+                        (Some(&"--adopt"), Some(dir)) => adopt.push((*dir).to_owned()),
+                        _ => return Err(USAGE.to_owned()),
+                    }
+                }
+                pair(&paths, hub, code, machine, adopt)
+            }
             ["run"] => run(&paths, false),
             ["run", "--dry-run"] => run(&paths, true),
             ["status"] => status(&paths),
@@ -70,7 +85,13 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn pair(paths: &Paths, hub: &str, code: &str, machine: Option<&str>) -> Result<ExitCode, String> {
+fn pair(
+    paths: &Paths,
+    hub: &str,
+    code: &str,
+    machine: Option<&str>,
+    adopt_dirs: Vec<String>,
+) -> Result<ExitCode, String> {
     let (origin, _) = release::origin_and_rp(hub)?;
     let request = PairRequest {
         code: code.to_owned(),
@@ -88,7 +109,13 @@ fn pair(paths: &Paths, hub: &str, code: &str, machine: Option<&str>) -> Result<E
     if resp.owner_keys.is_empty() {
         return Err("the hub has no owner passkey yet, so no release could be trusted".to_owned());
     }
-    let adopt = Config::load(&paths.config).map_or_else(|_| Vec::new(), |c| c.adopt);
+    // Folders to take over: those given now, plus any from an earlier pairing.
+    let mut adopt = Config::load(&paths.config).map_or_else(|_| Vec::new(), |c| c.adopt);
+    for dir in adopt_dirs {
+        if !adopt.contains(&dir) {
+            adopt.push(dir);
+        }
+    }
     Config {
         hub: resp.hub,
         client_id: resp.client_id,

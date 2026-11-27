@@ -416,7 +416,10 @@ pub(crate) async fn pair_code(
     crate::machines_page(
         &s,
         &headers,
-        Some(format!("atlasd pair {} {code}", w.origin())),
+        Some(format!(
+            "curl -fsSL {}/install | sh -s -- {code}",
+            w.origin()
+        )),
     )
     .await
 }

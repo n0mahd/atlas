@@ -4,9 +4,9 @@
   {% if let Some(cmd) = pair_command %}
   <section class="section">
     <div class="section-head"><span class="num">§</span><h2>Pair a machine</h2></div>
-    <p>On the machine, as the account whose agents Atlas should manage, run:</p>
+    <p>On the machine, in a terminal, as the account whose agents Atlas should manage:</p>
     <pre class="ink-block">{{ cmd }}</pre>
-    <p class="editor-note">The code works once, for 15 minutes.</p>
+    <p class="editor-note">It installs atlasd and pairs it. The code works once, for 15 minutes.</p>
   </section>
   {% else if page.signed_in %}
   <form method="post" action="/machines/pair" class="setting-row">

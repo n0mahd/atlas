@@ -50,6 +50,10 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   `hook.toml` limits a hook; per-harness matchers would fix it properly.
 - Atlas adds an `@` import to Claude's `CLAUDE.md` but has no way yet to remove it when a
   machine stops being managed.
+- Machines install atlasd with `curl <hub>/install | sh -s -- <code>`; the hub serves
+  builds it was given in `<state>/dist/` (static musl builds via `cargo zigbuild`), checked
+  by SHA-256 in the script. They aren't signed yet: signed release builds from CI are the
+  fix. Linux only for now; macOS needs a build and a launchd job instead of systemd.
 - Harness folder paths in `atlas-harness` for Claude Code, Codex, OpenCode and Pi come from
   the existing `link-agents` script, not from each harness's docs (Amp, Muse and Herdr were
   checked, decision 0021; Grok Build, 0022). Check them when phase 3 writes to them.

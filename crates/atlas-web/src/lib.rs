@@ -9,6 +9,7 @@ pub mod clients;
 mod distribute;
 mod edit;
 mod icons;
+mod install;
 mod markdown;
 pub mod release;
 pub mod views;
@@ -158,6 +159,8 @@ pub fn router(state: AppState, access: Access) -> Router {
         )
         .route("/machines/pair", post(distribute::pair_code))
         .route("/machines/{id}/remove", post(distribute::unpair))
+        .route("/install", get(install::script))
+        .route("/install/{name}", get(install::binary))
         .route("/api/pair", post(distribute::api_pair))
         .route("/api/release", get(distribute::api_release))
         .route("/api/report", post(distribute::api_report))
