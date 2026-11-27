@@ -108,12 +108,36 @@ async fn main() {
         .unwrap_or_else(|e| fail(format!("can't listen on {}: {e}", socket.display())));
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))
         .unwrap_or_else(|e| fail(format!("can't restrict {}: {e}", socket.display())));
+    check_private(&socket);
     tracing::info!("listening on {}", socket.display());
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            // systemd stops services with SIGTERM; Ctrl-C covers running by hand.
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .unwrap_or_else(|e| fail(format!("can't watch for SIGTERM: {e}")));
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
         })
         .await
         .unwrap_or_else(|e| fail(e));
+}
+
+/// Refuses to serve if the socket's folder could let another user in: it must belong to
+/// the same user as the socket and allow nobody else.
+fn check_private(socket: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let Some(dir) = socket.parent() else { return };
+    let (Ok(sock), Ok(folder)) = (std::fs::metadata(socket), std::fs::metadata(dir)) else {
+        fail(format!("can't inspect {}", dir.display()));
+    };
+    if folder.uid() != sock.uid() || folder.mode() & 0o077 != 0 {
+        fail(format!(
+            "{} must belong to this user and be closed to others (chmod 700)",
+            dir.display()
+        ));
+    }
 }

@@ -35,9 +35,15 @@ fn link_wiki_names(text: &str, names: &HashSet<&str>) -> String {
                 out.extend(["[", name, "](/memory/", name, ")"]);
                 rest = &after[end + 2..];
             }
-            _ => {
+            Some(_) => {
                 out.push_str("[[");
                 rest = after;
+            }
+            // No closing `]]` anywhere after this: nothing more can link.
+            None => {
+                out.push_str("[[");
+                out.push_str(after);
+                return out;
             }
         }
     }
@@ -74,6 +80,15 @@ mod tests {
         for bad in ["<script", "onerror", "href=\"javascript"] {
             assert!(!html.contains(bad), "{bad} in {html}");
         }
+    }
+
+    #[test]
+    fn unclosed_brackets_stay_fast() {
+        let hostile = "[[".repeat(500_000);
+        let start = std::time::Instant::now();
+        let html = render(&md(&hostile), &HashSet::from(["x"]));
+        assert!(html.len() >= hostile.len());
+        assert!(start.elapsed().as_secs() < 2, "took {:?}", start.elapsed());
     }
 
     #[test]

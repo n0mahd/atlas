@@ -851,7 +851,7 @@ pub fn hooks(snap: &Snapshot) -> Hooks {
             harness,
             event: f.event.clone(),
             matcher: f.matcher.clone().unwrap_or_else(|| "every tool".to_owned()),
-            command: f.command.clone(),
+            command: mask_secrets(&f.command),
             timeout: f
                 .timeout
                 .map_or_else(|| "default".to_owned(), |t| format!("{t}s")),
@@ -932,4 +932,61 @@ pub fn machines(snap: &Snapshot) -> Vec<HarnessCard> {
             hooks: h.hooks.len(),
         })
         .collect()
+}
+
+/// Hides values that look like credentials in a command line before it's shown:
+/// `NAME=value` where the name mentions a key, token, secret or password, the word after
+/// `Bearer`, and long opaque strings.
+#[must_use]
+pub fn mask_secrets(command: &str) -> String {
+    const HINTS: [&str; 6] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASS", "AUTH"];
+    let mut out = Vec::new();
+    let mut after_bearer = false;
+    for word in command.split(' ') {
+        let bare = word.trim_matches(['"', '\'']);
+        let masked = if after_bearer && !bare.is_empty() {
+            Some("••••".to_owned())
+        } else if let Some((name, value)) = bare.split_once('=')
+            && !value.is_empty()
+            && HINTS.iter().any(|h| name.to_uppercase().contains(h))
+        {
+            Some(format!("{name}=••••"))
+        } else if bare.len() >= 24
+            && bare
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_+/=.".contains(c))
+            && bare.chars().any(|c| c.is_ascii_digit())
+            && bare.chars().any(|c| c.is_ascii_alphabetic())
+            && !bare.contains('/')
+        {
+            Some("••••".to_owned())
+        } else {
+            None
+        };
+        after_bearer = bare.eq_ignore_ascii_case("bearer");
+        out.push(masked.unwrap_or_else(|| word.to_owned()));
+    }
+    out.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mask_secrets;
+
+    #[test]
+    fn masks_credentials_but_keeps_ordinary_commands() {
+        assert_eq!(
+            mask_secrets("python3 ~/.claude/hooks/no-worktrees-in-projects.py"),
+            "python3 ~/.claude/hooks/no-worktrees-in-projects.py"
+        );
+        assert_eq!(mask_secrets("API_KEY=abc123 run.sh"), "API_KEY=•••• run.sh");
+        assert_eq!(
+            mask_secrets("curl -H \"Authorization: Bearer sk-live-1\" x"),
+            "curl -H \"Authorization: Bearer •••• x"
+        );
+        assert_eq!(
+            mask_secrets("notify ghp_abcdefghijklmnop1234567890"),
+            "notify ••••"
+        );
+    }
 }

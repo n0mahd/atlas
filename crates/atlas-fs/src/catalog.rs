@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use atlas_core::catalog::{
@@ -17,6 +17,12 @@ use crate::paths::Sources;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// A skill folder listing stops after this many files.
 const MAX_LISTED_FILES: usize = 200;
+/// Memory pages read per snapshot; more are reported, not silently dropped.
+const MAX_MEMORY_PAGES: usize = 5000;
+/// Skills read from one home.
+const MAX_SKILLS_PER_HOME: usize = 2000;
+/// Bytes read for one snapshot. A huge or hostile repo can't exhaust memory.
+const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DEPTH: usize = 4;
 
 /// Reads everything in the store. Never fails as a whole: anything unreadable becomes a
@@ -26,6 +32,7 @@ pub fn load_catalog(sources: &Sources) -> Catalog {
     let mut r = Reader {
         sources,
         catalog: Catalog::default(),
+        bytes: 0,
     };
 
     if let Some(knowledge) = r.open_root(&sources.knowledge) {
@@ -64,6 +71,7 @@ pub fn load_catalog(sources: &Sources) -> Catalog {
 struct Reader<'a> {
     sources: &'a Sources,
     catalog: Catalog,
+    bytes: u64,
 }
 
 impl Reader<'_> {
@@ -130,8 +138,31 @@ impl Reader<'_> {
                 return Read::Failed;
             }
         }
-        match dir.read_to_string(rel) {
-            Ok(text) => Read::Text(text),
+        if let Some(reason) = hidden_link_target(dir, rel) {
+            self.problem(shown, reason);
+            return Read::Failed;
+        }
+        if self.bytes > MAX_SNAPSHOT_BYTES {
+            self.problem(shown, "skipped: the store is over Atlas's read budget");
+            return Read::Failed;
+        }
+        // Read at most the limit, even if the file grew since the size check.
+        let mut text = String::new();
+        let read = dir
+            .open(rel)
+            .and_then(|f| f.take(MAX_FILE_BYTES + 1).read_to_string(&mut text));
+        match read {
+            Ok(n) if n as u64 > MAX_FILE_BYTES => {
+                self.problem(
+                    shown,
+                    format!("skipped: larger than {MAX_FILE_BYTES} bytes"),
+                );
+                Read::Failed
+            }
+            Ok(n) => {
+                self.bytes += n as u64;
+                Read::Text(text)
+            }
             Err(e) => {
                 self.problem(shown, format!("can't read: {}", describe(&e)));
                 Read::Failed
@@ -183,6 +214,7 @@ impl Reader<'_> {
         let Some(skills) = self.open_sub(dir, root, rel) else {
             return;
         };
+        let mut count = 0;
         let base = if rel == "." {
             root.to_path_buf()
         } else {
@@ -200,6 +232,14 @@ impl Reader<'_> {
                 }
                 EntryKind::File => continue,
                 EntryKind::Dir => {}
+            }
+            count += 1;
+            if count > MAX_SKILLS_PER_HOME {
+                self.problem(
+                    &base,
+                    format!("only the first {MAX_SKILLS_PER_HOME} skills are read"),
+                );
+                break;
             }
             let Ok(slug) = Slug::new(name.clone()) else {
                 self.problem(
@@ -224,7 +264,7 @@ impl Reader<'_> {
             let (fm, body): (SkillFrontmatter, String) = self.parse_front(&skill_md, &text);
             let declared_name = fm.name.filter(|n| n != slug.as_str());
             let mut files = Vec::new();
-            self.walk(&folder, &shown, "", 0, &mut files);
+            self.walk(&folder, &shown, "", 0, MAX_LISTED_FILES, &mut files);
             files.retain(|f| f != "SKILL.md");
             self.catalog.skills.push(Skill {
                 name: slug,
@@ -244,7 +284,13 @@ impl Reader<'_> {
         };
         let base = root.join("memory");
         let mut files = Vec::new();
-        self.walk(&memory, &base, "", 0, &mut files);
+        self.walk(&memory, &base, "", 0, MAX_MEMORY_PAGES, &mut files);
+        if files.len() >= MAX_MEMORY_PAGES {
+            self.problem(
+                &base,
+                format!("only the first {MAX_MEMORY_PAGES} memory files are read"),
+            );
+        }
         for rel in files {
             let Some(stem) = rel.strip_suffix(".md") else {
                 continue;
@@ -375,9 +421,17 @@ impl Reader<'_> {
     }
 
     /// Collects regular files under `dir`, as paths relative to where the walk began.
-    fn walk(&mut self, dir: &Dir, shown: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
+    fn walk(
+        &mut self,
+        dir: &Dir,
+        shown: &Path,
+        prefix: &str,
+        depth: usize,
+        limit: usize,
+        out: &mut Vec<String>,
+    ) {
         for (name, kind) in self.list(dir, shown) {
-            if out.len() >= MAX_LISTED_FILES {
+            if out.len() >= limit {
                 return;
             }
             let rel = if prefix.is_empty() {
@@ -390,13 +444,30 @@ impl Reader<'_> {
                 EntryKind::Dir if depth + 1 < MAX_DEPTH => {
                     let sub_shown: PathBuf = shown.join(&name);
                     if let Some(sub) = self.open_sub(dir, shown, &name) {
-                        self.walk(&sub, &sub_shown, &rel, depth + 1, out);
+                        self.walk(&sub, &sub_shown, &rel, depth + 1, limit, out);
                     }
                 }
                 EntryKind::Dir | EntryKind::Symlink => {}
             }
         }
     }
+}
+
+/// A link inside a repo may point at another tracked file (a skill kept in `docs/`),
+/// but not at hidden files such as `.env` or anything under `.git`.
+fn hidden_link_target(dir: &Dir, rel: &str) -> Option<String> {
+    let is_link = dir
+        .symlink_metadata(rel)
+        .is_ok_and(|m| m.file_type().is_symlink());
+    if !is_link {
+        return None;
+    }
+    let target = dir.read_link(rel).ok()?;
+    let hidden = target.components().any(|c| {
+        let part = c.as_os_str().to_string_lossy();
+        part.starts_with('.') && part != "." && part != ".."
+    });
+    hidden.then(|| format!("skipped: links to a hidden file ({})", target.display()))
 }
 
 enum Read {

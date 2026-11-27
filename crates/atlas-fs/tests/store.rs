@@ -330,3 +330,29 @@ fn accepts_what_harnesses_accept() {
         .collect();
     assert!(noisy.is_empty(), "{noisy:#?}");
 }
+
+#[test]
+fn links_to_hidden_files_in_a_repo_are_refused() {
+    let (_tmp, sources) = fixture();
+    let repo = &sources.projects[0].root;
+    write(&repo.join(".env"), "TOKEN=hunter2\n");
+    fs::remove_file(repo.join("AGENTS.md")).unwrap();
+    symlink(".env", repo.join("AGENTS.md")).unwrap();
+
+    let catalog = load_catalog(&sources);
+    assert!(!format!("{catalog:?}").contains("hunter2"));
+    assert!(
+        catalog
+            .instructions
+            .iter()
+            .all(|i| !i.body.raw().as_str().contains("hunter2"))
+    );
+    assert!(
+        catalog
+            .problems
+            .iter()
+            .any(|p| p.message.contains("hidden file")),
+        "{:#?}",
+        catalog.problems
+    );
+}

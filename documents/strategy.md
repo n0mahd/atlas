@@ -28,5 +28,7 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
 - Phase 1 trusts the `Tailscale-User-Login` header from `tailscale serve` instead of a
   passkey (decision 0012). Any process running as the hub's user can reach the socket.
   Pay off in phase 2, before the first write.
+- Links inside a repo are followed unless they point at a hidden file (`.env`, `.git`).
+  Stricter would be "only files git tracks"; revisit when edits commit through Atlas.
 - Harness folder paths in `atlas-harness` come from the existing `link-agents` script, not
   from each harness's docs. Check them when phase 3 writes to them.

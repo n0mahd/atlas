@@ -2,6 +2,7 @@
 #   cargo build --release -p atlas-hub && install -Dm755 target/release/atlas-hub ~/.local/bin/atlas-hub
 #   ln -sf "$PWD/deploy/atlas-hub.service" ~/.config/systemd/user/ && systemctl --user daemon-reload
 #   systemctl --user enable --now atlas-hub
+#   loginctl enable-linger "$USER"   # keep it running without a login session
 #   tailscale serve --bg --https=<port> "unix:$XDG_RUNTIME_DIR/atlas/hub.sock"
 [Unit]
 Description=Atlas hub (web UI over a Unix socket for tailscale serve)
@@ -9,13 +10,22 @@ Description=Atlas hub (web UI over a Unix socket for tailscale serve)
 [Service]
 ExecStart=%h/.local/bin/atlas-hub
 Restart=on-failure
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ReadOnlyPaths=%h
 RuntimeDirectory=atlas
 RuntimeDirectoryMode=0700
-RuntimeDirectoryPreserve=no
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ReadOnlyPaths=%h
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+MemoryMax=512M
+TasksMax=64
 
 [Install]
 WantedBy=default.target

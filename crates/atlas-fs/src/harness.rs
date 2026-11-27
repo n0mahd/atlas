@@ -135,7 +135,8 @@ fn scan_instruction(sources: &Sources, file: &Path) -> InstructionView {
                 InstructionLink::Separate
             }
         }
-        Ok(meta) if meta.len() > MAX_CONFIG_BYTES => InstructionLink::Separate,
+        // A pipe or device here would block the read forever.
+        Ok(meta) if !meta.is_file() || meta.len() > MAX_CONFIG_BYTES => InstructionLink::Separate,
         Ok(_) => {
             let text = fs::read_to_string(file).unwrap_or_default();
             if imports(sources, &text, store.as_deref()) {
@@ -166,7 +167,7 @@ fn imports(sources: &Sources, text: &str, store: Option<&Path>) -> bool {
 
 /// Reads hooks from a Claude-style config: `{"hooks": {Event: [{matcher, hooks: [..]}]}}`.
 fn read_hooks(config: &Path) -> Vec<FoundHook> {
-    let too_big = fs::metadata(config).map_or(true, |m| m.len() > MAX_CONFIG_BYTES);
+    let too_big = fs::metadata(config).map_or(true, |m| !m.is_file() || m.len() > MAX_CONFIG_BYTES);
     if too_big {
         return Vec::new();
     }

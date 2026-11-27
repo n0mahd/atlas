@@ -73,12 +73,13 @@ pub struct MemoryMetadata {
 #[must_use]
 pub fn wiki_links(body: &str) -> Vec<String> {
     let mut links = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut rest = body;
     while let Some(start) = rest.find("[[") {
         rest = &rest[start + 2..];
         let Some(end) = rest.find("]]") else { break };
         let name = rest[..end].trim();
-        if !name.is_empty() && !name.contains('\n') && !links.iter().any(|l| l == name) {
+        if !name.is_empty() && !name.contains('\n') && seen.insert(name) {
             links.push(name.to_owned());
         }
         rest = &rest[end + 2..];
