@@ -159,3 +159,13 @@ async fn wiki_links_and_search_work() {
     let (_, _, none) = get(&app, "/memory?q=zzz", Some(OWNER)).await;
     assert!(none.contains("No note matches."));
 }
+
+#[tokio::test]
+async fn logo_and_favicon_are_served_as_png() {
+    let (_tmp, app) = app();
+    for path in ["/static/logo.png", "/static/favicon.png"] {
+        let (status, headers, _) = get(&app, path, Some(OWNER)).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(headers["content-type"], "image/png", "{path}");
+    }
+}

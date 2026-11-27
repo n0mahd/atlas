@@ -404,9 +404,14 @@ const STATIC: &[(&str, &str, &[u8])] = &[
         include_bytes!("../static/antigravity.png"),
     ),
     (
-        "emblem.svg",
-        "image/svg+xml",
-        include_bytes!("../static/emblem.svg"),
+        "logo.png",
+        "image/png",
+        include_bytes!("../static/logo.png"),
+    ),
+    (
+        "favicon.png",
+        "image/png",
+        include_bytes!("../static/favicon.png"),
     ),
     (
         "fonts/cinzel.woff2",

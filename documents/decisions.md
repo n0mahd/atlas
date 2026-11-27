@@ -77,3 +77,10 @@ line plus a truncated description. Agents appear as brand marks only when they h
 item, or as one gilt sparkles mark when every agent does; detail opens inline. Machines
 list machines, each with a row per agent. Project memory is the agent's own per-repo notes
 (Claude Code's `~/.claude/projects/<repo>/memory`), shown read-only.
+
+## 0015 · 2026-11-27 · Flat engraved Atlas medallion logo
+Replaced the placeholder SVG armillary sphere with a flat 2D maximalist engraved medallion
+inspired by the crouching verdigris Atlas statue holding a gilt armillary sphere inside a
+Greek-key ring with acanthus and star corners. Master multi-size PNGs live in `assets/logo/`
+(for desktop/Tauri packaging and launcher icons); `atlas-web` embeds quantized web assets
+at `crates/atlas-web/static/logo.png` and `favicon.png`.

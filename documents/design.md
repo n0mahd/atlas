@@ -13,7 +13,9 @@ Approved direction (2026-11-26): https://claude.ai/artifact/8CMa3Poe5mLiZ6ASsyj6
 Type: Cinzel (titles, nav, buttons), EB Garamond (body), IBM Plex Mono (paths, labels,
 status). Motifs: double rules, a gilt Greek key under the masthead, Roman-numeral
 sections, numbered "plates", film grain, ink code blocks with a gilt hairline,
-an armillary sphere emblem.
+and a flat 2D engraved medallion logo of the crouching verdigris Atlas statue bearing a
+gilt armillary sphere (`assets/logo/`, served in `atlas-web` as `/static/logo.png` and
+`/static/favicon.png`).
 
 ## Density (2026-11-27)
 The look stays; the space goes to content. Approved after the owner found v1 wasteful.
