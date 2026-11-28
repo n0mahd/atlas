@@ -21,6 +21,9 @@ pub struct Paths {
     pub state: PathBuf,
     /// `~/.local/share/atlas/sources`: one local copy per release source.
     pub sources: PathBuf,
+    /// `~/.local/state/atlas-client/replaced`: copies of what atlasd replaced or removed
+    /// when what took its place doesn't hold the same bytes, by UTC date ([`crate::keep`]).
+    pub replaced: PathBuf,
 }
 
 impl Paths {
@@ -32,6 +35,7 @@ impl Paths {
             cli: home.join(".config/atlas/cli.toml"),
             state: home.join(".local/state/atlas-client/state.json"),
             sources: home.join(".local/share/atlas/sources"),
+            replaced: home.join(".local/state/atlas-client/replaced"),
         }
     }
 }

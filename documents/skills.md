@@ -135,7 +135,10 @@ rule: after an import the original is gone and agents read Atlas's copy.
 - On every machine, atlasd replaces a real folder or file at a managed name with Atlas's
   link **only if it is an exact copy** of what Atlas now holds (`library::Tree::exact_digest`
   for folders, which excludes any folder holding a link, a `.git` or a special file).
-  Anything that differs stays and is reported, so nothing is lost.
+  Anything that differs stays and is reported, so nothing is lost. Whatever atlasd
+  replaces without the new content holding it byte for byte is first copied to
+  `~/.local/state/atlas-client/replaced/<UTC date>/`, named in the pass's report, and
+  restored by copying it back (decision 0037).
 
 ### Skills
 
@@ -167,7 +170,8 @@ why the others don't (`atlas_harness::readers`, sourced in `HARNESSES.md`; compu
 the hub's own machine). An agent's own home file offers **Use Global instead**: its text
 is appended to Global and committed; atlasd then swaps the file for the link (Claude's
 `CLAUDE.md` for just the import) on each machine only where every non-blank line of it
-is in Global (`instructions::contained`, re-checked when applied). A project's
+is in Global (`instructions::contained`, re-checked when applied), keeping a copy of the
+file first (above). A project's
 `CLAUDE.md` can become `AGENTS.md` or merge into it, and the same confirmation offers
 Claude's option when Claude would still skip `AGENTS.md`; **Move to Global** and **Copy
 to this project** move text the other ways. Moved text is appended after a blank line

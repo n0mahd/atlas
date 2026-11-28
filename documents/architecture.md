@@ -145,3 +145,7 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 | Projects, machines | `atlas.toml` in the hub's data repo |
 
 `<knowledge>` is the user's knowledge repo, configured on the hub.
+
+On each machine, atlasd copies anything it replaces that the new content doesn't hold byte
+for byte to `~/.local/state/atlas-client/replaced/<UTC date>/<path in the home>` first, and
+its report names each copy (`atlas-client::keep`, decision 0037).

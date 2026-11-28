@@ -15,7 +15,7 @@ link ~/.gemini/config/skills/moved → ~/.local/share/atlas/sources/knowledge/sk
 write ~/.claude/CLAUDE.md (add the import of the global instructions)
     | # Mine
     | @/R/home/.local/share/atlas/sources/knowledge/AGENTS.md
-write ~/.claude/settings.json (update Atlas's hooks)
+keep a copy in ~/.local/state/atlas-client/replaced and write ~/.claude/settings.json (update Atlas's hooks)
     | {
     |   "theme": "dark",
     |   "hooks": {

@@ -89,7 +89,7 @@ fn fixture(root: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
 fn render(plan: &Plan, home: &Path, root: &Path) -> String {
     let mut out = String::new();
     for a in &plan.actions {
-        out.push_str(&a.describe(home));
+        out.push_str(&a.describe(home, &home.join(".local/state/atlas-client/replaced")));
         out.push('\n');
         if let Action::WriteFile { bytes, .. } | Action::WriteInstruction { bytes, .. } = a {
             for line in String::from_utf8_lossy(bytes).lines() {

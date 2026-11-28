@@ -18,6 +18,23 @@ pub(crate) fn parse_object(current: Option<&[u8]>) -> Result<Map<String, Value>,
     }
 }
 
+/// Whether a file is a JSON object laid out exactly as the formats here write one, or
+/// blank. Rewriting such a file changes only the entries a format edits; any other file
+/// (its own spacing or a repeated key) loses some of its bytes when it is rendered again.
+#[must_use]
+pub fn in_atlas_layout(bytes: &[u8]) -> bool {
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return true;
+    }
+    let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) else {
+        return false;
+    };
+    serde_json::to_vec_pretty(&map).is_ok_and(|mut b| {
+        b.push(b'\n');
+        b == bytes
+    })
+}
+
 /// Compares the edited object with the original and renders the outcome: two-space
 /// JSON with a trailing newline, the layout the harnesses write themselves; an object
 /// left empty means the file goes.
@@ -34,4 +51,25 @@ pub(crate) fn finish(
     let mut bytes = serde_json::to_vec_pretty(edited)?;
     bytes.push(b'\n');
     Ok(Change::Write(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_atlas_s_own_layout_survives_a_rewrite_byte_for_byte() {
+        assert!(in_atlas_layout(b""));
+        assert!(in_atlas_layout(
+            b"{\n  \"b\": 1,\n  \"a\": [\n    true\n  ]\n}\n"
+        ));
+        assert!(!in_atlas_layout(b"{\"b\": 1}\n"), "its own spacing");
+        assert!(!in_atlas_layout(b"{\n  \"b\": 1\n}"), "no final newline");
+        assert!(
+            !in_atlas_layout(b"{\n  \"b\": 1,\n  \"b\": 2\n}\n"),
+            "a repeated key"
+        );
+        assert!(!in_atlas_layout(b"[]\n"));
+        assert!(!in_atlas_layout(b"// note\n{}\n"));
+    }
 }

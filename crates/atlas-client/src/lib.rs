@@ -3,7 +3,8 @@
 //! One pass: check a signed release against the keys this login trusts ([`release`]),
 //! bring the local copies of its sources to the pinned trees ([`sources`]), read what
 //! should be installed from those copies ([`desired`]), plan the links and files each
-//! present harness needs ([`plan`]), apply the plan ([`apply`]) and describe the result
+//! present harness needs ([`plan`]), apply the plan ([`apply`], keeping a copy of anything
+//! it replaces that the new content doesn't hold byte for byte: [`keep`]) and describe the result
 //! for the hub ([`report`]). [`pass`] strings them together. Nothing here runs content
 //! it receives.
 
@@ -13,6 +14,7 @@ pub mod config;
 pub mod desired;
 mod fsx;
 pub mod http;
+pub mod keep;
 pub mod pass;
 mod place;
 pub mod plan;

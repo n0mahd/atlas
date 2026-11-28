@@ -17,6 +17,7 @@ pub mod switches;
 use std::path::{Path, PathBuf};
 
 pub use change::{Change, FormatError};
+pub use json::in_atlas_layout;
 
 use atlas_core::kernel::HarnessKind;
 

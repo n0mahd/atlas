@@ -6,7 +6,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use atlas_client::config::Paths;
 use atlas_client::desired::{self, Desired};
+use atlas_client::keep::Keeper;
 use atlas_client::{apply, plan};
 
 struct Machine {
@@ -48,6 +50,11 @@ impl Machine {
         )
     }
 
+    fn apply(&self, p: &plan::Plan) -> apply::Applied {
+        let paths = Paths::new(&self.home);
+        apply::apply(p, &self.home, &Keeper::new(&paths.replaced, &self.home, 1))
+    }
+
     fn write(&self, rel: &str, text: &str) -> PathBuf {
         let path = self.home.join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -77,11 +84,11 @@ fn an_own_file_fully_in_global_is_linked_and_one_that_isnt_is_kept_and_reported(
         "{:?}",
         p.conflicts
     );
-    let (done, failed) = apply::apply(&p, &h.home);
+    let apply::Applied { done, failed, .. } = h.apply(&p);
     assert!(failed.is_empty(), "{failed:?}");
     assert!(
         done.iter()
-            .any(|l| l.starts_with("replace ~/.codex/AGENTS.md with a link")),
+            .any(|l| l.contains("replace ~/.codex/AGENTS.md with a link")),
         "{done:?}"
     );
     assert_eq!(link_target(&codex), Some(h.store()));
@@ -97,7 +104,7 @@ fn a_file_edited_after_planning_is_kept() {
     assert_eq!(p.actions.len(), 1, "{:?}", p.actions);
     // The owner adds a line between planning and applying.
     fs::write(&codex, "Use rg.\nNew rule.\n").unwrap();
-    let (_, failed) = apply::apply(&p, &h.home);
+    let failed = h.apply(&p).failed;
     assert_eq!(failed.len(), 1, "{failed:?}");
     assert!(failed[0].contains("changed since the plan"), "{failed:?}");
     assert_eq!(fs::read_to_string(&codex).unwrap(), "Use rg.\nNew rule.\n");
@@ -107,7 +114,7 @@ fn a_file_edited_after_planning_is_kept() {
     let codex = h.write(".codex/AGENTS.md", "Use rg.\n");
     let p = h.plan(&h.desired());
     fs::write(h.store(), "# Global\n").unwrap();
-    let (_, failed) = apply::apply(&p, &h.home);
+    let failed = h.apply(&p).failed;
     assert!(
         failed[0].contains("no longer hold all its text"),
         "{failed:?}"
@@ -120,7 +127,7 @@ fn claudes_own_text_in_global_leaves_just_the_import() {
     let h = Machine::new("# Global\nUse rg.\n", &[".claude"]);
     let claude = h.write(".claude/CLAUDE.md", "Use rg.\n");
     let p = h.plan(&h.desired());
-    let (_, failed) = apply::apply(&p, &h.home);
+    let failed = h.apply(&p).failed;
     assert!(failed.is_empty(), "{failed:?}");
     assert_eq!(
         fs::read_to_string(&claude).unwrap(),
@@ -130,7 +137,7 @@ fn claudes_own_text_in_global_leaves_just_the_import() {
     // Text Global lacks stays, with the import added.
     let h = Machine::new("# Global\n", &[".claude"]);
     let claude = h.write(".claude/CLAUDE.md", "Mine.\n");
-    let (_, failed) = apply::apply(&h.plan(&h.desired()), &h.home);
+    let failed = h.apply(&h.plan(&h.desired())).failed;
     assert!(failed.is_empty(), "{failed:?}");
     assert_eq!(
         fs::read_to_string(&claude).unwrap(),
@@ -167,7 +174,7 @@ fn claudes_agents_md_option_is_written_beside_atlas_hooks() {
         .filter(|a| matches!(a, plan::Action::WriteFile { path, .. } if *path == settings))
         .collect();
     assert_eq!(writes.len(), 1, "one write carries both: {:?}", p.actions);
-    let (_, failed) = apply::apply(&p, &h.home);
+    let failed = h.apply(&p).failed;
     assert!(failed.is_empty(), "{failed:?}");
     let v: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();

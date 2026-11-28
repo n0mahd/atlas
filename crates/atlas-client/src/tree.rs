@@ -27,22 +27,46 @@ pub fn digest(dir: &Path) -> Option<String> {
     read_tree(dir).ok()?.exact_digest()
 }
 
-/// Whether every file of `tree` is in `target` with the same bytes.
+/// How much of a folder's content another folder holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    /// Some file is missing there or has other bytes.
+    Not,
+    /// Every file is there with the same bytes, but some execute bit differs.
+    Bytes,
+    /// Every file is there with the same bytes and execute bit: the folder can be made
+    /// again from it byte for byte (more files there are fine).
+    Exactly,
+}
+
+/// How `target` holds the files of `tree`.
 #[must_use]
-pub fn held_by(tree: &Tree, target: &Path) -> bool {
+pub fn held_by(tree: &Tree, target: &Path) -> Held {
     let Ok(theirs) = read_tree(target) else {
-        return false;
+        return Held::Not;
     };
-    let theirs: BTreeMap<&PathBuf, &Vec<u8>> =
-        theirs.files.iter().map(|f| (&f.rel, &f.bytes)).collect();
-    tree.files
+    let theirs: BTreeMap<&PathBuf, (&Vec<u8>, bool)> = theirs
+        .files
         .iter()
-        .all(|f| theirs.get(&f.rel).is_some_and(|b| **b == f.bytes))
+        .map(|f| (&f.rel, (&f.bytes, f.executable)))
+        .collect();
+    let mut held = Held::Exactly;
+    for f in &tree.files {
+        match theirs.get(&f.rel) {
+            Some((b, x)) if **b == f.bytes => {
+                if *x != f.executable {
+                    held = Held::Bytes;
+                }
+            }
+            _ => return Held::Not,
+        }
+    }
+    held
 }
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
 
     use super::*;
 
@@ -55,7 +79,7 @@ mod tests {
         fs::write(dir.join("scripts/run.sh"), "y").unwrap();
         let (tree, digest) = exact(&dir).unwrap();
         assert_eq!(Some(digest), read_tree(&dir).unwrap().exact_digest());
-        assert!(held_by(&tree, &dir));
+        assert_eq!(held_by(&tree, &dir), Held::Exactly);
 
         symlink("/etc", dir.join("scripts/etc")).unwrap();
         assert!(exact(&dir).is_none(), "a link inside");
@@ -72,10 +96,28 @@ mod tests {
         let other = tmp.path().join("other");
         fs::create_dir_all(&other).unwrap();
         fs::write(other.join("SKILL.md"), "x").unwrap();
-        assert!(!held_by(&tree, &other), "scripts/run.sh is missing there");
+        assert_eq!(
+            held_by(&tree, &other),
+            Held::Not,
+            "scripts/run.sh is missing there"
+        );
         fs::create_dir_all(other.join("scripts")).unwrap();
         fs::write(other.join("scripts/run.sh"), "y").unwrap();
         fs::write(other.join("more.md"), "z").unwrap();
-        assert!(held_by(&tree, &other), "more files there are fine");
+        assert_eq!(
+            held_by(&tree, &other),
+            Held::Exactly,
+            "more files there are fine"
+        );
+        fs::set_permissions(
+            other.join("scripts/run.sh"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        assert_eq!(
+            held_by(&tree, &other),
+            Held::Bytes,
+            "an execute bit differs"
+        );
     }
 }

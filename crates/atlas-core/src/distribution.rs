@@ -173,6 +173,16 @@ pub struct OutsideSkill {
     pub digest: Option<String>,
 }
 
+/// A copy atlasd kept of a file or folder before it replaced or removed it, because
+/// what took its place doesn't hold the same bytes. Copying it back restores it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KeptCopy {
+    /// What was replaced or removed, home shown as `~`.
+    pub original: String,
+    /// Where the copy is, home shown as `~`.
+    pub copy: String,
+}
+
 /// What a client tells the hub after each run.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Report {
@@ -187,6 +197,10 @@ pub struct Report {
     /// Absent in reports from older clients.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outside: Vec<OutsideSkill>,
+    /// Copies kept this run of what atlasd replaced or removed. Absent in reports from
+    /// older clients.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<KeptCopy>,
 }
 
 // ---------------------------------------------------------------- hub ↔ admin CLI messages

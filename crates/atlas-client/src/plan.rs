@@ -19,7 +19,7 @@ use atlas_harness::skills::{
     Entry, SkillConflict, SkillOp, SkillPlan, plan_skill_links, plan_skill_links_adopting,
 };
 use atlas_harness::switches::{Base, SwitchOff, render_switches, switch_file};
-use atlas_harness::{Change, FormatError, Layout, layouts};
+use atlas_harness::{Change, FormatError, Layout, in_atlas_layout, layouts};
 
 use crate::checkout::Checkout;
 use crate::desired::Desired;
@@ -45,21 +45,28 @@ pub enum Action {
         path: PathBuf,
         target: PathBuf,
     },
+    /// `keep`: the current file is copied first ([`crate::keep`]), because the new bytes
+    /// don't hold all of its own (a JSON file in its own layout, rendered again).
     WriteFile {
         path: PathBuf,
         bytes: Vec<u8>,
         why: &'static str,
+        keep: bool,
     },
     RemoveFile {
         path: PathBuf,
+        keep: bool,
     },
-    /// Replace a real folder that is an exact copy of what Atlas holds with a link to it.
+    /// Replace a real folder whose every file is in what Atlas holds with a link to it.
     /// `digest` is what the folder held when planned; it is checked again before anything
-    /// is removed.
+    /// is removed. `keep`: the folder is copied first, because the link wouldn't show it
+    /// byte for byte (an execute bit differs); applying copies it too if that turns out
+    /// so then.
     AdoptDir {
         path: PathBuf,
         target: PathBuf,
         digest: String,
+        keep: bool,
     },
     /// An instruction file planned from `was` (`None`: there was none) gets `bytes`. When
     /// the new text drops some of `was` (Claude's `CLAUDE.md` becoming just the import),
@@ -74,20 +81,51 @@ pub enum Action {
         /// at an older path): they are replaced, so they needn't be in `kept_in`.
         imports: Vec<String>,
         why: &'static str,
+        /// `was` is copied first, because the new text doesn't hold all of it as written
+        /// (its order, repeated lines or line endings).
+        keep: bool,
     },
     /// An agent's own instruction file whose every line is in `target` becomes a link to
-    /// it, if it still holds `was` and `target` still holds every line of it.
+    /// it, if it still holds `was` and `target` still holds every line of it. `keep`:
+    /// `was` is copied first, because `target` doesn't hold the same bytes.
     FileToLink {
         path: PathBuf,
         was: Vec<u8>,
         target: PathBuf,
+        keep: bool,
     },
 }
 
 impl Action {
-    /// The change in plain words.
+    /// The change in plain words. `kept_in` is where copies of what it replaces go
+    /// (`Paths::replaced`).
     #[must_use]
-    pub fn describe(&self, home: &Path) -> String {
+    pub fn describe(&self, home: &Path, kept_in: &Path) -> String {
+        let change = self.change(home);
+        if self.keeps() {
+            format!("keep a copy in {} and {change}", display(home, kept_in))
+        } else {
+            change
+        }
+    }
+
+    /// Whether a copy of what this replaces is kept first.
+    #[must_use]
+    pub fn keeps(&self) -> bool {
+        match self {
+            Self::WriteFile { keep, .. }
+            | Self::RemoveFile { keep, .. }
+            | Self::AdoptDir { keep, .. }
+            | Self::WriteInstruction { keep, .. }
+            | Self::FileToLink { keep, .. } => *keep,
+            Self::CreateDir(_)
+            | Self::CreateLink { .. }
+            | Self::ReplaceLink { .. }
+            | Self::RemoveLink { .. } => false,
+        }
+    }
+
+    fn change(&self, home: &Path) -> String {
         let d = |p: &Path| display(home, p);
         match self {
             Self::CreateDir(p) => format!("create folder {}", d(p)),
@@ -101,11 +139,11 @@ impl Action {
             Self::WriteFile { path, why, .. } | Self::WriteInstruction { path, why, .. } => {
                 format!("write {} ({why})", d(path))
             }
-            Self::RemoveFile { path } => {
+            Self::RemoveFile { path, .. } => {
                 format!("remove {} (Atlas's entries were all it held)", d(path))
             }
             Self::AdoptDir { path, target, .. } => format!(
-                "replace folder {}, a copy of what Atlas holds, with a link to {}",
+                "replace folder {}, whose files are all in what Atlas holds, with a link to {}",
                 d(path),
                 d(target)
             ),
@@ -712,6 +750,8 @@ fn link_dir(
                 path: dir.join(name),
                 target,
                 digest,
+                // Planned only for an exact copy (same files, bytes and execute bits).
+                keep: false,
             },
         });
     }
@@ -830,10 +870,13 @@ fn instruction(
                 .map_or_else(Default::default, String::from_utf8_lossy);
             let ours = |l: &str| is_atlas_import(l, store, roots, parent, home);
             let imports: Vec<String> = old.lines().filter(|l| ours(l)).map(str::to_owned).collect();
-            let drops = !contained(&old, &String::from_utf8_lossy(&bytes), ours);
+            let new = String::from_utf8_lossy(&bytes);
+            let drops = !contained(&old, &new, ours);
+            let keep = was.is_some() && own_lines(&old, &ours) != own_lines(&new, &ours);
             plan.actions.push(Action::WriteInstruction {
                 path: file.to_path_buf(),
                 was,
+                keep,
                 kept_in: drops.then(|| store.to_path_buf()),
                 imports,
                 why: if drops {
@@ -846,10 +889,13 @@ fn instruction(
         }
         InstructionAction::ReplaceFileWithLink { target } => {
             if let Some(was) = was {
+                // The link shows the store's text: nothing to keep when that is these bytes.
+                let keep = was != store_text.as_bytes();
                 plan.actions.push(Action::FileToLink {
                     path: file.to_path_buf(),
                     was,
                     target,
+                    keep,
                 });
             }
         }
@@ -868,6 +914,16 @@ fn instruction(
     }
 }
 
+/// `text`'s lines other than Atlas's imports, each with its own line ending (`\r` stays);
+/// a last line without a newline counts as one with it. Equal for two texts when one can
+/// be made from the other by adding or removing Atlas's import alone.
+fn own_lines<'a>(text: &'a str, ours: &impl Fn(&str) -> bool) -> Vec<&'a str> {
+    text.split_inclusive('\n')
+        .map(|l| l.strip_suffix('\n').unwrap_or(l))
+        .filter(|l| !ours(l))
+        .collect()
+}
+
 /// A format over a config file's current bytes.
 type Render = Box<dyn Fn(Option<&[u8]>) -> Result<Change, FormatError>>;
 
@@ -877,6 +933,9 @@ pub(crate) struct Step {
     what: &'static str,
     /// Atlas has entries to put there, so a link at the path is worth reporting.
     wanted: bool,
+    /// The format renders the whole file again (strict JSON), so the file's own layout
+    /// goes; false for the formats that edit the text in place (TOML, JSONC).
+    rerenders: bool,
     render: Render,
 }
 
@@ -886,6 +945,7 @@ fn agents_md_step(choice: ClaudeAgentsMd) -> Step {
     Step {
         what: "Claude Code's AGENTS.md option",
         wanted: true,
+        rerenders: true,
         render: Box::new(move |current| claude_agents_md_setting(current, choice)),
     }
 }
@@ -902,6 +962,7 @@ fn hook_step(kind: HarnessKind, wanted: Vec<ManagedHook>) -> Option<Step> {
     Some(Step {
         what: "hooks",
         wanted: !wanted.is_empty(),
+        rerenders: true,
         render: Box::new(move |current| render(current, &wanted)),
     })
 }
@@ -913,6 +974,7 @@ fn switch_step(kind: HarnessKind, reach: Reach, off: BTreeSet<SwitchOff>) -> Ste
     Step {
         what: "skill switches",
         wanted: !off.is_empty(),
+        rerenders: !matches!(kind, HarnessKind::Codex | HarnessKind::OpenCode),
         render: Box::new(move |current| {
             if current.is_none() && off.is_empty() {
                 return Ok(Change::Unchanged);
@@ -976,18 +1038,23 @@ pub(crate) fn edit_config(plan: &mut Plan, home: &Path, config: &Path, steps: &[
             }
         },
     };
+    // A file in its own layout loses that when a strict JSON format renders it again.
+    let own_layout = current.as_deref().is_some_and(|b| !in_atlas_layout(b));
     let mut bytes = current;
     let mut changed: Vec<&str> = Vec::new();
+    let mut rerendered = false;
     for step in steps {
         match (step.render)(bytes.as_deref()) {
             Ok(Change::Unchanged) => {}
             Ok(Change::Write(b)) => {
                 bytes = Some(b);
                 changed.push(step.what);
+                rerendered |= step.rerenders;
             }
             Ok(Change::Remove) => {
                 bytes = None;
                 changed.push(step.what);
+                rerendered |= step.rerenders;
             }
             Err(e) => {
                 plan.conflicts.push(format!("{shown} was left alone: {e}"));
@@ -998,6 +1065,7 @@ pub(crate) fn edit_config(plan: &mut Plan, home: &Path, config: &Path, steps: &[
     if changed.is_empty() {
         return;
     }
+    let keep = own_layout && rerendered;
     match bytes {
         Some(bytes) => {
             plan.ensure_dir(config.parent().unwrap_or(home));
@@ -1005,10 +1073,12 @@ pub(crate) fn edit_config(plan: &mut Plan, home: &Path, config: &Path, steps: &[
                 path: config.to_path_buf(),
                 bytes,
                 why: why(&changed),
+                keep,
             });
         }
         None => plan.actions.push(Action::RemoveFile {
             path: config.to_path_buf(),
+            keep,
         }),
     }
 }
@@ -1021,6 +1091,7 @@ mod tests {
         Step {
             what,
             wanted: true,
+            rerenders: true,
             render: Box::new(move |current| {
                 let mut b = current.unwrap_or_default().to_vec();
                 b.extend_from_slice(add.as_bytes());
@@ -1047,6 +1118,7 @@ mod tests {
                 path: file.clone(),
                 bytes: b"mine;hooks;switches;".to_vec(),
                 why: "update Atlas's hooks and skill switches",
+                keep: true,
             }],
             "one write, with both formats' entries and the owner's"
         );
@@ -1054,6 +1126,7 @@ mod tests {
         let unchanged = Step {
             what: "hooks",
             wanted: false,
+            rerenders: true,
             render: Box::new(|_| Ok(Change::Unchanged)),
         };
         let mut plan = Plan::default();
@@ -1094,9 +1167,18 @@ mod tests {
             agents_md_step(ClaudeAgentsMd::Alongside),
         ];
         edit_config(&mut plan, dir.path(), &file, &steps);
-        let [Action::WriteFile { bytes, why, .. }] = &plan.actions[..] else {
+        let [
+            Action::WriteFile {
+                bytes, why, keep, ..
+            },
+        ] = &plan.actions[..]
+        else {
             panic!("one write: {:?}", plan.actions);
         };
+        assert!(
+            !keep,
+            "the file was in Atlas's layout, and the owner's setting stays"
+        );
         assert_eq!(
             *why,
             "update Atlas's hooks, skill switches and Claude Code's AGENTS.md option"
@@ -1136,6 +1218,7 @@ mod tests {
         let broken = Step {
             what: "skill switches",
             wanted: true,
+            rerenders: true,
             render: Box::new(|_| {
                 Err(FormatError::UnexpectedShape {
                     at: "settings".into(),
