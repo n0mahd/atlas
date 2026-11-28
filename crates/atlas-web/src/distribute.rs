@@ -468,12 +468,8 @@ pub(crate) async fn pair_code(
 }
 
 fn issue_pairing_code(w: &Writer) -> Result<String, AppError> {
-    atlas_signer::setup::issue_in(
-        &w.state_dir,
-        atlas_signer::setup::PAIRING_CODES,
-        PAIRING_TTL,
-    )
-    .map_err(|e| AppError::Bad(e.to_string()))
+    atlas_signer::setup::issue_pairing(&w.state_dir, PAIRING_TTL)
+        .map_err(|e| AppError::Bad(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -774,16 +770,24 @@ pub(crate) async fn api_pair(
             w.origin()
         )));
     }
-    let ok = atlas_signer::setup::redeem_in(
-        &w.state_dir,
-        atlas_signer::setup::PAIRING_CODES,
-        req.code.trim(),
-    )
-    .map_err(|e| AppError::Bad(e.to_string()))?;
-    if !ok {
-        return Ok(forbidden(
-            "That pairing code has expired or was already used. Make a new one on the hub's Machines page.\n",
-        ));
+    match atlas_signer::setup::redeem_pairing(&w.state_dir, &req.code)
+        .map_err(|e| AppError::Bad(e.to_string()))?
+    {
+        atlas_signer::setup::Pairing::Paired => {}
+        atlas_signer::setup::Pairing::Wrong => {
+            tracing::warn!("a wrong pairing code was tried");
+            return Ok(forbidden(
+                "That pairing code is wrong, has expired or was already used. Make a new one on the hub's Machines page.\n",
+            ));
+        }
+        atlas_signer::setup::Pairing::TooMany => {
+            tracing::warn!("pairing refused: too many wrong codes in the last minute");
+            return Ok((
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many wrong codes. Wait a minute and try again.\n",
+            )
+                .into_response());
+        }
     }
     let (client_id, token) = w
         .clients
@@ -853,6 +857,158 @@ mod tests {
         (status, String::from_utf8_lossy(&body).into_owned())
     }
 
+    /// A hub with no passkey, for the client API.
+    fn pairing_hub() -> (tempfile::TempDir, std::path::PathBuf, axum::Router) {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        let k = home.join("Knowledge");
+        std::fs::create_dir_all(&k).unwrap();
+        let sources = atlas_fs::Sources {
+            home: home.clone(),
+            knowledge: k,
+            public_skills: None,
+            projects: Vec::new(),
+        };
+        let state = home.join("state");
+        let writer =
+            crate::Writer::open("https://hub.test", &state, std::time::Duration::ZERO).unwrap();
+        let app = crate::router(
+            crate::AppState::new(sources, "hub", vec!["laptop".into()], Some(writer)),
+            crate::Access::new(vec!["owner@github".into()]),
+        );
+        (tmp, state, app)
+    }
+
+    fn pair_request(code: &str) -> Request<Body> {
+        let body = serde_json::json!({
+            "code": code, "hub": "https://hub.test", "machine": "laptop", "user": "me"
+        });
+        Request::post("/api/pair")
+            .header("tailscale-user-login", "owner@github")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    fn pairing_file(state: &std::path::Path) -> serde_json::Value {
+        let text = std::fs::read_to_string(state.join(atlas_signer::setup::PAIRING_CODES)).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    fn sha256_hex(text: &str) -> String {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(text.as_bytes())
+            .iter()
+            .fold(String::new(), |mut out, b| {
+                use std::fmt::Write as _;
+                let _ = write!(out, "{b:02x}");
+                out
+            })
+    }
+
+    fn fresh_code(state: &std::path::Path) -> String {
+        atlas_signer::setup::issue_pairing(state, std::time::Duration::from_mins(15)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn pairing_codes_are_short_grouped_and_stored_only_as_a_hash() {
+        let (_tmp, state, app) = pairing_hub();
+        let code = fresh_code(&state);
+        assert_eq!(code.len(), 11, "{code}");
+        assert_eq!(&code[4..5], "-", "{code}");
+        let plain = code.replace('-', "");
+        let file = std::fs::read_to_string(state.join(atlas_signer::setup::PAIRING_CODES)).unwrap();
+        assert!(!file.contains(&plain) && !file.contains(&code), "{file}");
+        assert!(file.contains(&sha256_hex(&plain)), "{file}");
+        let (status, body) = call(&app, pair_request(&code)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    /// The owner reads the code off a screen: case, grouping and look-alikes don't matter.
+    #[tokio::test]
+    async fn a_pairing_code_typed_loosely_still_pairs() {
+        let (_tmp, state, app) = pairing_hub();
+        let _ = fresh_code(&state);
+        // A code with every look-alike in it, as if the hub had shown K7QF-0X1R2D.
+        let mut file = pairing_file(&state);
+        file["links"][0]["hash"] = sha256_hex("K7QF0X1R2D").into();
+        std::fs::write(
+            state.join(atlas_signer::setup::PAIRING_CODES),
+            file.to_string(),
+        )
+        .unwrap();
+        let (status, body) = call(&app, pair_request(" k7qf oxlr-2d ")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let code = fresh_code(&state);
+        let (status, body) = call(&app, pair_request(&code.to_lowercase().replace('1', "i"))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn wrong_pairing_codes_are_counted_and_then_refused_for_a_minute() {
+        let (_tmp, state, app) = pairing_hub();
+        let code = fresh_code(&state);
+        for wrong in [
+            "0000-000000",
+            "not a code",
+            "ZZZZ-ZZZZZZ",
+            "",
+            "1234-567890",
+        ] {
+            let (status, _) = call(&app, pair_request(wrong)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{wrong:?}");
+        }
+        assert_eq!(
+            pairing_file(&state)["failures"].as_array().unwrap().len(),
+            5
+        );
+        let (status, body) = call(&app, pair_request(&code)).await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the right code, sixth in a minute"
+        );
+        assert_eq!(
+            body.trim(),
+            "Too many wrong codes. Wait a minute and try again."
+        );
+        // A minute later the code still works.
+        let mut file = pairing_file(&state);
+        file["failures"] = serde_json::json!([0, 0, 0, 0, 0]);
+        std::fs::write(
+            state.join(atlas_signer::setup::PAIRING_CODES),
+            file.to_string(),
+        )
+        .unwrap();
+        let (status, body) = call(&app, pair_request(&code)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn twenty_wrong_codes_void_every_pairing_code() {
+        let (_tmp, state, app) = pairing_hub();
+        let codes = [fresh_code(&state), fresh_code(&state)];
+        for _ in 0..20 {
+            let (status, _) = call(&app, pair_request("0000-000000")).await;
+            assert_ne!(status, StatusCode::OK);
+        }
+        let mut file = pairing_file(&state);
+        assert_eq!(file["links"].as_array().unwrap().len(), 0, "{file}");
+        file["failures"] = serde_json::json!([]);
+        std::fs::write(
+            state.join(atlas_signer::setup::PAIRING_CODES),
+            file.to_string(),
+        )
+        .unwrap();
+        for code in &codes {
+            let (status, _) = call(&app, pair_request(code)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "voided");
+        }
+        // A new code starts a fresh count.
+        let (status, body) = call(&app, pair_request(&fresh_code(&state))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     #[tokio::test]
     async fn a_machine_pairs_once_and_reports() {
         let tmp = tempfile::tempdir().unwrap();
@@ -881,12 +1037,8 @@ mod tests {
             }
             r.body(Body::from(body)).unwrap()
         };
-        let code = atlas_signer::setup::issue_in(
-            &state,
-            atlas_signer::setup::PAIRING_CODES,
-            std::time::Duration::from_mins(15),
-        )
-        .unwrap();
+        let code =
+            atlas_signer::setup::issue_pairing(&state, std::time::Duration::from_mins(15)).unwrap();
         let wrong = format!(
             r#"{{"code":"{code}","hub":"https://elsewhere.test","machine":"laptop","user":"me"}}"#
         );
