@@ -567,7 +567,7 @@ of runs costs the hub one small file write. Each run still logs a line ("Update 
 applied.") to the journal, or to `~/Library/Logs/atlasd.log` on a Mac, which grows by
 about 30 KB a day there.
 
-## 00XX · 2026-11-27 · End-to-end verification skill
+## 0043 · 2026-11-27 · End-to-end verification skill
 Atlas is verified by running it, not by unit tests alone. The project skill
 `.agents/skills/verify` (inspired by pstack's verification skills) starts throwaway worlds:
 seeded repos with local bare remotes, a real `atlas-hub` with a sandboxed `HOME`, a proxy
