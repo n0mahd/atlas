@@ -338,7 +338,7 @@ async fn require_login(State(access): State<Arc<Access>>, req: Request, next: Ne
 }
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; \
-img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+img-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 async fn security_headers(req: Request, next: Next) -> Response {
     let is_static = req.uri().path().starts_with("/static/");
@@ -823,6 +823,21 @@ const STATIC: &[(&str, &str, &[u8])] = &[
         "favicon.png",
         "image/png",
         include_bytes!("../static/favicon.png"),
+    ),
+    (
+        "icon-192.png",
+        "image/png",
+        include_bytes!("../static/icon-192.png"),
+    ),
+    (
+        "icon-512.png",
+        "image/png",
+        include_bytes!("../static/icon-512.png"),
+    ),
+    (
+        "manifest.webmanifest",
+        "application/manifest+json",
+        include_bytes!("../static/manifest.webmanifest"),
     ),
     (
         "fonts/cinzel.woff2",

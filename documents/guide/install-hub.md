@@ -116,3 +116,14 @@ journalctl --user -u atlas-hub -n 20
 
 Open the page. **Machines** should list the hub with the agents it found. Next:
 [add a machine](add-a-machine.md).
+
+## Add Atlas to your app launcher
+
+Open the hub page in Chrome, Chromium, Brave or Edge and choose **Install Atlas** (the
+install icon at the end of the address bar, or the browser menu's *Cast, save and share →
+Install page as app*). The browser adds an Atlas launcher with the Atlas icon, opens it in
+its own window, and keeps that window grouped under the same icon in your dock or task bar.
+
+A launcher made by hand, such as Omarchy's *Install Web App*, gets the icon too, but it has
+to guess the window's name from the browser. If its window shows a generic icon in the
+dock, remove that launcher and use the browser's **Install Atlas** instead.
