@@ -13,6 +13,7 @@ pub mod desired;
 mod fsx;
 pub mod http;
 pub mod pass;
+mod place;
 pub mod plan;
 pub mod release;
 pub mod report;

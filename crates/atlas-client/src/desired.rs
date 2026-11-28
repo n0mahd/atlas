@@ -1,12 +1,13 @@
 //! What should be installed for this login, read from the local copies: global skills,
-//! the global instructions and the global hooks.
+//! where each goes (`atlas/placements.toml`), the global instructions and the global hooks.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use atlas_core::catalog::HookManifest;
+use atlas_core::catalog::{HookManifest, PLACEMENTS_FILE, Placement, Placements};
 use atlas_core::kernel::{HarnessKind, Slug};
+use atlas_fs::library::LibraryError;
 use atlas_harness::hooks::ManagedHook;
 
 const MAX_HOOK_TOML: u64 = 64 * 1024;
@@ -22,6 +23,11 @@ pub struct HookSpec {
 pub struct Desired {
     /// Skill name → its folder in a local copy.
     pub skills: BTreeMap<String, PathBuf>,
+    /// Where each skill goes. Only exceptions are listed.
+    pub placements: Placements,
+    /// `atlas/placements.toml` couldn't be read. No skill link or switch changes then, so
+    /// a typo can't strip every skill; the reason is in `problems`.
+    pub placements_invalid: bool,
     /// The global `AGENTS.md` in the knowledge copy.
     pub instructions: Option<PathBuf>,
     pub hooks: Vec<HookSpec>,
@@ -29,6 +35,15 @@ pub struct Desired {
 }
 
 impl Desired {
+    /// Where a global skill goes; the default when it isn't listed or isn't a valid name.
+    #[must_use]
+    pub fn placement(&self, name: &str) -> Placement {
+        Slug::new(name)
+            .ok()
+            .and_then(|s| self.placements.global.get(&s).cloned())
+            .unwrap_or_default()
+    }
+
     /// The hooks one harness should get.
     #[must_use]
     pub fn hooks_for(&self, kind: HarnessKind) -> Vec<ManagedHook> {
@@ -120,6 +135,19 @@ pub fn read(knowledge: Option<&Path>, public_skills: Option<&Path>) -> Desired {
     let Some(knowledge) = knowledge else {
         return d;
     };
+    match atlas_fs::library::read_placements(knowledge) {
+        Ok((placements, _)) => d.placements = placements,
+        Err(e) => {
+            d.placements_invalid = true;
+            let why = match e {
+                LibraryError::Invalid(_) | LibraryError::Symlink(_) => e.to_string(),
+                other => format!("{PLACEMENTS_FILE} can't be read: {other}"),
+            };
+            d.problems.push(format!(
+                "{why}; no skill links or switches change until it is fixed"
+            ));
+        }
+    }
     let agents = knowledge.join("AGENTS.md");
     if fs::symlink_metadata(&agents).is_ok_and(|m| m.is_file()) {
         d.instructions = Some(agents);

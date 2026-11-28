@@ -11,13 +11,14 @@ use atlas_harness::hooks::{ManagedHook, antigravity_hooks, claude_settings, code
 use atlas_harness::instructions::{
     InstructionAction, InstructionConflict, InstructionFile, plan_claude_md, plan_instruction_link,
 };
-use atlas_harness::placement::{Reach, Solved, solve};
+use atlas_harness::placement::Reach;
 use atlas_harness::skills::{Entry, SkillConflict, SkillOp, plan_skill_links};
-use atlas_harness::switches::can_switch_off;
-use atlas_harness::{Change, Layout, layouts};
+use atlas_harness::switches::{render_switches, switch_file};
+use atlas_harness::{Change, FormatError, Layout, layouts};
 
 use crate::desired::Desired;
 use crate::display;
+use crate::place::{Placed, Placer};
 
 const MAX_FILE: u64 = 1024 * 1024;
 
@@ -64,7 +65,7 @@ impl Action {
             }
             Self::WriteFile { path, why, .. } => format!("write {} ({why})", d(path)),
             Self::RemoveFile { path } => {
-                format!("remove {} (Atlas's hooks were all it held)", d(path))
+                format!("remove {} (Atlas's entries were all it held)", d(path))
             }
         }
     }
@@ -75,6 +76,19 @@ pub struct Plan {
     pub actions: Vec<Action>,
     /// Things Atlas wanted to change but won't, because they aren't its own.
     pub conflicts: Vec<String>,
+    /// The skills each agent is told to switch off, and where, whether or not its file
+    /// changes this time.
+    pub switches: Vec<SwitchIntent>,
+}
+
+/// Skills an agent must not use although it reads a folder that holds them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwitchIntent {
+    pub kind: HarnessKind,
+    /// The agent's own settings file.
+    pub file: PathBuf,
+    /// Skill name → the folder the agent loads it from.
+    pub off: BTreeMap<String, PathBuf>,
 }
 
 impl Plan {
@@ -109,15 +123,34 @@ pub fn present(home: &Path) -> Vec<&'static Layout> {
         .collect()
 }
 
-/// Plans every present harness: skill links, instruction files and hook configs.
+/// Plans every present harness: skill links, skill switches, instruction files and hook
+/// configs. Links into `managed_roots` are Atlas's; the first is its own local copies,
+/// which only atlasd links into.
 #[must_use]
 pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
     let mut plan = Plan::default();
     let harnesses = present(home);
-    for (dir, skills) in home_skill_folders(&harnesses, desired) {
-        skill_dir(&mut plan, home, &home.join(dir), &skills, managed_roots);
+    let managed = managed_roots;
+    let mut off = BTreeMap::new();
+    if !desired.placements_invalid {
+        let placed = home_skills(&harnesses, desired, home);
+        for (dir, skills) in &placed.folders {
+            skill_dir(&mut plan, home, &home.join(dir), skills, managed);
+        }
+        // A folder no skill goes in any more loses the links Atlas made there.
+        let mut seen: BTreeSet<&str> = placed.folders.iter().map(|(f, _)| *f).collect();
+        for dir in harnesses.iter().flat_map(|l| l.skill_dirs) {
+            if seen.insert(dir)
+                && let Some(own) = managed.first()
+            {
+                unlink_all(&mut plan, &home.join(dir), own);
+            }
+        }
+        plan.conflicts.extend(placed.stuck);
+        off = placed.off;
     }
     let claude = harnesses.iter().any(|l| l.kind == HarnessKind::ClaudeCode);
+    let mut switched = BTreeSet::new();
     for layout in &harnesses {
         if let Some(store) = &desired.instructions {
             for file in layout.instruction_files {
@@ -127,7 +160,7 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
                     layout.kind,
                     &home.join(file),
                     store,
-                    managed_roots,
+                    managed,
                 );
             }
         }
@@ -139,61 +172,68 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
                 let via_claude = desired.hooks_for(HarnessKind::ClaudeCode);
                 wanted.retain(|h| !via_claude.iter().any(|c| c.name == h.name));
             }
-            hooks(
-                &mut plan,
-                home,
-                layout.kind,
-                &hook_file(layout.kind, &home.join(config)),
-                &wanted,
-            );
+            let file = hook_file(layout.kind, &home.join(config));
+            let mut steps: Vec<Step> = hook_step(layout.kind, wanted).into_iter().collect();
+            // Claude Code keeps its switches beside its hooks: both edit the same bytes.
+            let own_file = switch_file(layout.kind, Reach::Home).map(|f| home.join(f));
+            if !desired.placements_invalid && own_file.as_deref() == Some(file.as_path()) {
+                steps.push(switch_step(
+                    &mut plan,
+                    layout.kind,
+                    Reach::Home,
+                    &file,
+                    off.get(&layout.kind),
+                ));
+                switched.insert(layout.kind);
+            }
+            edit_config(&mut plan, home, &file, &steps);
+        }
+    }
+    if !desired.placements_invalid {
+        for layout in &harnesses {
+            if let Some(file) = switch_file(layout.kind, Reach::Home)
+                && !switched.contains(&layout.kind)
+            {
+                let file = home.join(file);
+                let step = switch_step(
+                    &mut plan,
+                    layout.kind,
+                    Reach::Home,
+                    &file,
+                    off.get(&layout.kind),
+                );
+                edit_config(&mut plan, home, &file, &[step]);
+            }
         }
     }
     plan
 }
 
-/// The home skill folders Atlas manages and the skills each should hold. Each skill goes
-/// in the folders [`solve`] picks for the agents that want it. With every agent wanted that
-/// is each harness's first folder, unless a folder it reads already has the links (`OpenCode`
-/// reads Claude's and Codex's), and never a harness's other folders, or it would see every
-/// skill twice (Codex reads both ~/.agents/skills and ~/.codex/skills). The folders used
-/// with nothing off are always listed, so a skill that leaves one is unlinked there.
-fn home_skill_folders(
-    harnesses: &[&Layout],
-    desired: &Desired,
-) -> Vec<(&'static str, BTreeMap<String, PathBuf>)> {
-    let everyone: BTreeSet<HarnessKind> = HarnessKind::ALL.into_iter().collect();
-    let switchable = |k| can_switch_off(k, Reach::Home);
-    let mut folders: Vec<(&'static str, BTreeMap<String, PathBuf>)> =
-        solve(harnesses, &everyone, Reach::Home, &[], switchable)
-            .folders
-            .into_iter()
-            .map(|f| (f, BTreeMap::new()))
-            .collect();
-    // Skills with the same agents off share one solution.
-    let mut solved: BTreeMap<BTreeSet<HarnessKind>, Solved> = BTreeMap::new();
+/// Where each global skill used in the home goes. Skills used only in some projects get
+/// no home links.
+fn home_skills(harnesses: &[&'static Layout], desired: &Desired, home: &Path) -> Placed {
+    let mut placer = Placer::new(harnesses, Reach::Home, home);
+    placer.seed(&[]);
     for (name, source) in &desired.skills {
-        let off = BTreeSet::new();
-        let s = solved.entry(off).or_insert_with_key(|off| {
-            let wanted: BTreeSet<HarnessKind> = everyone.difference(off).copied().collect();
-            solve(harnesses, &wanted, Reach::Home, &[], switchable)
-        });
-        for folder in &s.folders {
-            let at = folders
-                .iter()
-                .position(|(f, _)| f == folder)
-                .unwrap_or_else(|| {
-                    folders.push((folder, BTreeMap::new()));
-                    folders.len() - 1
-                });
-            folders[at].1.insert(name.clone(), source.clone());
+        let placement = desired.placement(name);
+        if placement.global() {
+            placer.add(name, source, &placement.off, &[]);
         }
     }
-    folders
+    placer.placed
 }
+
+/// More entries than this in one skills folder and Atlas leaves the folder alone.
+const MAX_ENTRIES: usize = 5000;
 
 fn read_entries(dir: &Path) -> io::Result<BTreeMap<String, Entry>> {
     let mut out = BTreeMap::new();
-    for entry in fs::read_dir(dir)? {
+    for (i, entry) in fs::read_dir(dir)?.enumerate() {
+        if i >= MAX_ENTRIES {
+            return Err(io::Error::other(format!(
+                "it has more than {MAX_ENTRIES} entries"
+            )));
+        }
         let entry = entry?;
         let Ok(name) = entry.file_name().into_string() else {
             continue;
@@ -220,6 +260,22 @@ fn read_entries(dir: &Path) -> io::Result<BTreeMap<String, Entry>> {
     Ok(out)
 }
 
+/// What a skills folder holds now, or why Atlas leaves it alone. None: the folder
+/// doesn't exist.
+fn current_entries(dir: &Path, shown: &str) -> Result<Option<BTreeMap<String, Entry>>, String> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.file_type().is_symlink() => Err(format!(
+            "{shown} is a link to another folder; Atlas leaves it and its skills alone"
+        )),
+        Ok(m) if !m.is_dir() => Err(format!("{shown} isn't a folder; Atlas leaves it alone")),
+        Ok(_) => read_entries(dir)
+            .map(Some)
+            .map_err(|e| format!("can't read {shown}: {e}")),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("can't read {shown}: {e}")),
+    }
+}
+
 fn skill_dir(
     plan: &mut Plan,
     home: &Path,
@@ -228,33 +284,16 @@ fn skill_dir(
     roots: &[PathBuf],
 ) {
     let shown = display(home, dir);
-    let current = match fs::symlink_metadata(dir) {
-        Ok(m) if m.file_type().is_symlink() => {
-            plan.conflicts.push(format!(
-                "{shown} is a link to another folder; Atlas leaves it and its skills alone"
-            ));
-            return;
-        }
-        Ok(m) if !m.is_dir() => {
-            plan.conflicts
-                .push(format!("{shown} isn't a folder; Atlas leaves it alone"));
-            return;
-        }
-        Ok(_) => match read_entries(dir) {
-            Ok(entries) => entries,
-            Err(e) => {
-                plan.conflicts.push(format!("can't read {shown}: {e}"));
-                return;
-            }
-        },
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+    let current = match current_entries(dir, &shown) {
+        Ok(Some(entries)) => entries,
+        Ok(None) => {
             if !skills.is_empty() {
                 plan.ensure_dir(dir);
             }
             BTreeMap::new()
         }
         Err(e) => {
-            plan.conflicts.push(format!("can't read {shown}: {e}"));
+            plan.conflicts.push(e);
             return;
         }
     };
@@ -290,6 +329,23 @@ fn skill_dir(
                 display(home, &source)
             ),
         });
+    }
+}
+
+/// Removes every link into `own` from a folder Atlas no longer places skills in. Nothing
+/// else there is touched or reported.
+fn unlink_all(plan: &mut Plan, dir: &Path, own: &Path) {
+    let Ok(Some(current)) = current_entries(dir, "") else {
+        return;
+    };
+    let planned = plan_skill_links(dir, &current, &BTreeMap::new(), &[own.to_path_buf()]);
+    for op in planned.ops {
+        if let SkillOp::RemoveLink { name, target } = op {
+            plan.actions.push(Action::RemoveLink {
+                path: dir.join(name),
+                target,
+            });
+        }
     }
 }
 
@@ -368,15 +424,80 @@ fn instruction(
     }
 }
 
-fn hooks(plan: &mut Plan, home: &Path, kind: HarnessKind, config: &Path, wanted: &[ManagedHook]) {
-    // Atlas writes hooks only in these formats; other harnesses' hook files are only read.
-    // Grok Build's hook files use Claude Code's shape.
+/// A format over a config file's current bytes.
+type Render = Box<dyn Fn(Option<&[u8]>) -> Result<Change, FormatError>>;
+
+/// One rewrite of a config file: a format applied to the bytes the step before left.
+struct Step {
+    /// What Atlas keeps there, for messages: "hooks" or "skill switches".
+    what: &'static str,
+    /// Atlas has entries to put there, so a link at the path is worth reporting.
+    wanted: bool,
+    render: Render,
+}
+
+/// Atlas writes hooks only in these formats; other harnesses' hook files are only read.
+/// Grok Build's hook files use Claude Code's shape.
+fn hook_step(kind: HarnessKind, wanted: Vec<ManagedHook>) -> Option<Step> {
     let render = match kind {
         HarnessKind::ClaudeCode | HarnessKind::Grok => claude_settings,
         HarnessKind::Codex => codex_hooks,
         HarnessKind::Antigravity => antigravity_hooks,
-        _ => return,
+        _ => return None,
     };
+    Some(Step {
+        what: "hooks",
+        wanted: !wanted.is_empty(),
+        render: Box::new(move |current| render(current, &wanted)),
+    })
+}
+
+/// Switches `off` (skill name → the folder the agent loads it from) off in `kind`'s own
+/// setting at `file`, and Atlas's other switches there back on.
+fn switch_step(
+    plan: &mut Plan,
+    kind: HarnessKind,
+    reach: Reach,
+    file: &Path,
+    off: Option<&BTreeMap<String, PathBuf>>,
+) -> Step {
+    if let Some(off) = off.filter(|o| !o.is_empty()) {
+        plan.switches.push(SwitchIntent {
+            kind,
+            file: file.to_path_buf(),
+            off: off.clone(),
+        });
+    }
+    let names: BTreeSet<String> = off.into_iter().flat_map(|o| o.keys().cloned()).collect();
+    // `render_switches` hands each lookup a borrow tied to the name it is given, so only
+    // 'static paths fit it. atlasd runs one pass per process, so the few folders of skills
+    // that are switched off are leaked rather than changing that signature here.
+    let dirs: BTreeMap<String, &'static Path> = off
+        .into_iter()
+        .flatten()
+        .map(|(name, dir)| {
+            let leaked: &'static Path = Box::leak(dir.clone().into_boxed_path());
+            (name.clone(), leaked)
+        })
+        .collect();
+    Step {
+        what: "skill switches",
+        wanted: !names.is_empty(),
+        render: Box::new(move |current| {
+            if current.is_none() && names.is_empty() {
+                return Ok(Change::Unchanged);
+            }
+            render_switches(kind, reach, current, &names, &|n| dirs.get(n).copied())
+        }),
+    }
+}
+
+/// Runs `steps` in order over one config file's bytes and plans a single write (or
+/// removal) with the result, so formats sharing a file never undo each other.
+fn edit_config(plan: &mut Plan, home: &Path, config: &Path, steps: &[Step]) {
+    if steps.is_empty() {
+        return;
+    }
     let shown = display(home, config);
     let current = match fs::symlink_metadata(config) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
@@ -385,9 +506,11 @@ fn hooks(plan: &mut Plan, home: &Path, kind: HarnessKind, config: &Path, wanted:
             return;
         }
         Ok(m) if m.file_type().is_symlink() => {
+            let wanted: Vec<&str> = steps.iter().filter(|s| s.wanted).map(|s| s.what).collect();
             if !wanted.is_empty() {
                 plan.conflicts.push(format!(
-                    "{shown} is a link; Atlas doesn't write hooks through it"
+                    "{shown} is a link; Atlas doesn't write {} through it",
+                    wanted.join(" or ")
                 ));
             }
             return;
@@ -405,19 +528,124 @@ fn hooks(plan: &mut Plan, home: &Path, kind: HarnessKind, config: &Path, wanted:
             }
         },
     };
-    match render(current.as_deref(), wanted) {
-        Ok(Change::Unchanged) => {}
-        Ok(Change::Write(bytes)) => {
+    let mut bytes = current;
+    let mut changed: Vec<&str> = Vec::new();
+    for step in steps {
+        match (step.render)(bytes.as_deref()) {
+            Ok(Change::Unchanged) => {}
+            Ok(Change::Write(b)) => {
+                bytes = Some(b);
+                changed.push(step.what);
+            }
+            Ok(Change::Remove) => {
+                bytes = None;
+                changed.push(step.what);
+            }
+            Err(e) => {
+                plan.conflicts.push(format!("{shown} was left alone: {e}"));
+                return;
+            }
+        }
+    }
+    if changed.is_empty() {
+        return;
+    }
+    match bytes {
+        Some(bytes) => {
             plan.ensure_dir(config.parent().unwrap_or(home));
             plan.actions.push(Action::WriteFile {
                 path: config.to_path_buf(),
                 bytes,
-                why: "update Atlas's hooks",
+                why: match changed.as_slice() {
+                    ["hooks"] => "update Atlas's hooks",
+                    ["skill switches"] => "update Atlas's skill switches",
+                    _ => "update Atlas's hooks and skill switches",
+                },
             });
         }
-        Ok(Change::Remove) => plan.actions.push(Action::RemoveFile {
+        None => plan.actions.push(Action::RemoveFile {
             path: config.to_path_buf(),
         }),
-        Err(e) => plan.conflicts.push(format!("{shown} was left alone: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(what: &'static str, add: &'static str) -> Step {
+        Step {
+            what,
+            wanted: true,
+            render: Box::new(move |current| {
+                let mut b = current.unwrap_or_default().to_vec();
+                b.extend_from_slice(add.as_bytes());
+                Ok(Change::Write(b))
+            }),
+        }
+    }
+
+    #[test]
+    fn formats_sharing_a_file_build_on_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "mine;").unwrap();
+        let mut plan = Plan::default();
+        edit_config(
+            &mut plan,
+            dir.path(),
+            &file,
+            &[step("hooks", "hooks;"), step("skill switches", "switches;")],
+        );
+        assert_eq!(
+            plan.actions,
+            [Action::WriteFile {
+                path: file.clone(),
+                bytes: b"mine;hooks;switches;".to_vec(),
+                why: "update Atlas's hooks and skill switches",
+            }],
+            "one write, with both formats' entries and the owner's"
+        );
+
+        let unchanged = Step {
+            what: "hooks",
+            wanted: false,
+            render: Box::new(|_| Ok(Change::Unchanged)),
+        };
+        let mut plan = Plan::default();
+        edit_config(
+            &mut plan,
+            dir.path(),
+            &file,
+            &[unchanged, step("skill switches", "s;")],
+        );
+        assert!(matches!(
+            &plan.actions[..],
+            [Action::WriteFile {
+                why: "update Atlas's skill switches",
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn a_failing_format_leaves_the_whole_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "{").unwrap();
+        let broken = Step {
+            what: "skill switches",
+            wanted: true,
+            render: Box::new(|_| {
+                Err(FormatError::UnexpectedShape {
+                    at: "settings".into(),
+                    expected: "an object",
+                })
+            }),
+        };
+        let mut plan = Plan::default();
+        edit_config(&mut plan, dir.path(), &file, &[step("hooks", "h"), broken]);
+        assert_eq!(plan.actions, []);
+        assert_eq!(plan.conflicts.len(), 1, "{:?}", plan.conflicts);
     }
 }
