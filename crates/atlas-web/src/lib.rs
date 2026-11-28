@@ -139,6 +139,7 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/hooks", get(hooks))
         .route("/mcp", get(mcp))
         .route("/machines", get(machines))
+        .route("/machines/list", get(machines_list))
         .route("/signin", get(edit::signin_page))
         .route("/setup/{token}", get(edit::setup_link))
         .route("/auth/enrol/start", post(edit::enrol_start))
@@ -335,6 +336,14 @@ struct MachinesPage {
     machines: Vec<views::Machine>,
     pair_command: Option<String>,
     ssh_result: Option<SshResult>,
+}
+
+/// The machine ledgers alone, polled by the Machines page.
+#[derive(Template)]
+#[template(path = "machines_list.html")]
+struct MachinesList {
+    page: Page,
+    machines: Vec<views::Machine>,
 }
 
 /// What an install over SSH from the Machines page came to.
@@ -581,14 +590,20 @@ async fn machines(State(s): State<AppState>, headers: HeaderMap) -> Result<Respo
     machines_page(&s, &headers, None, None).await
 }
 
-/// The Machines page; `pair_command` shows a fresh pairing command once, `ssh_result`
-/// how an install over SSH went.
-pub(crate) async fn machines_page(
+/// The machine list, polled every 10 seconds so a newly paired machine appears.
+async fn machines_list(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let (page, machines) = machines_data(&s, &headers).await?;
+    Ok(Html(MachinesList { page, machines }.render()?).into_response())
+}
+
+/// The page frame and the machines, for the Machines page and its polled list.
+async fn machines_data(
     s: &AppState,
     headers: &HeaderMap,
-    pair_command: Option<String>,
-    ssh_result: Option<SshResult>,
-) -> Result<Response, AppError> {
+) -> Result<(Page, Vec<views::Machine>), AppError> {
     let snap = s.snapshot().await?;
     let mut page = s.page(
         headers,
@@ -608,6 +623,18 @@ pub(crate) async fn machines_page(
         .filter(|m| m.hub || !m.clients.is_empty())
         .count();
     page.totals = format!("{} machines · {paired} reporting", machines.len());
+    Ok((page, machines))
+}
+
+/// The Machines page; `pair_command` shows a fresh pairing command once, `ssh_result`
+/// how an install over SSH went.
+pub(crate) async fn machines_page(
+    s: &AppState,
+    headers: &HeaderMap,
+    pair_command: Option<String>,
+    ssh_result: Option<SshResult>,
+) -> Result<Response, AppError> {
+    let (page, machines) = machines_data(s, headers).await?;
     Ok(Html(
         MachinesPage {
             page,

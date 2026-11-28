@@ -39,6 +39,34 @@
     button.textContent = form.getAttribute("data-busy");
   });
 
+  // Lists marked data-poll refresh themselves (hx-trigger "every 10s"). They don't poll
+  // while the tab is hidden, aren't swapped when nothing changed (so focus and selection
+  // stay), and rows left open stay open. The htmx config forbids eval, so this lives here
+  // rather than in an hx-trigger filter.
+  var lastPoll = {};
+  var openRows = null;
+  document.addEventListener("htmx:beforeRequest", function (event) {
+    var el = event.detail.elt;
+    if (el.hasAttribute("data-poll") && document.visibilityState !== "visible") event.preventDefault();
+  });
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    var target = event.detail.target;
+    if (!target.hasAttribute || !target.hasAttribute("data-poll") || !event.detail.shouldSwap) return;
+    var html = event.detail.serverResponse;
+    if (lastPoll[target.id] === html) { event.detail.shouldSwap = false; return; }
+    lastPoll[target.id] = html;
+    openRows = [];
+    target.querySelectorAll("details[open][data-key]").forEach(function (d) { openRows.push(d.getAttribute("data-key")); });
+  });
+  document.addEventListener("htmx:load", function (event) {
+    var el = event.detail.elt;
+    if (!openRows || !el.hasAttribute || !el.hasAttribute("data-poll")) return;
+    el.querySelectorAll("details[data-key]").forEach(function (d) {
+      if (openRows.indexOf(d.getAttribute("data-key")) !== -1) d.open = true;
+    });
+    openRows = null;
+  });
+
   document.addEventListener("DOMContentLoaded", function () {
     var toggle = document.querySelector("[data-rail-toggle]");
     if (toggle) toggle.setAttribute("aria-expanded", root.getAttribute("data-rail") === "collapsed" ? "false" : "true");

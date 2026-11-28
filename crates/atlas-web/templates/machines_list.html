@@ -1,0 +1,39 @@
+{#- The machine ledgers, on the Machines page and alone from /machines/list, which the
+    page polls so a newly paired machine shows up without a reload. -#}
+<div id="machine-list" class="machine-list" hx-get="/machines/list" hx-trigger="every 10s, visibilitychange from:document" hx-swap="outerHTML" data-poll>
+  {% for m in machines %}
+  <section class="ledger{% if !m.hub && m.clients.is_empty() %} unpaired{% endif %}">
+    <div class="ledger-head">
+      <h2>{{ m.name }}</h2>
+      {% if m.hub %}<span class="badge">Hub</span>{% endif %}
+      <span class="ledger-sum">{{ m.summary }}</span>
+    </div>
+    {% if !m.harnesses.is_empty() %}
+    <ul class="rows">
+      {% for h in m.harnesses %}
+      <li>
+        <details class="row" data-key="{{ m.name }}/{{ h.name }}">
+          <summary>
+            <span class="mark lead" aria-hidden="true">{{ h.icon|safe }}</span>
+            <span class="row-name agent-name">{{ h.name }}</span>
+            <span class="cell">{{ h.skills }}{% if !h.skills_warn.is_empty() %} · <span class="warn">{{ h.skills_warn }}</span>{% endif %}</span>
+            <span class="cell {{ h.instructions_class }}">{{ h.instructions }}</span>
+            <span class="cell muted">{{ h.hooks }}</span>
+            <span class="chev" aria-hidden="true"></span>
+          </summary>
+          <div class="drawer"><ul class="list-plain mono muted">{% for d in h.dirs %}<li>{{ d }}</li>{% endfor %}</ul></div>
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if !m.absent.is_empty() %}<p class="ledger-note">Not set up here: {% for a in m.absent %}{{ a }}{% if !loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+    {% endif %}
+    {% for c in m.clients %}
+    <div class="row static client-row">
+      <span class="row-main"><span class="row-name">{{ c.user }}</span><span class="row-desc {{ c.class }}">{{ c.status }}</span>{% for p in c.problems %}<span class="row-desc warn">{{ p }}</span>{% endfor %}</span>
+      {% if page.signed_in %}<form method="post" action="/machines/{{ c.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Unpair {{ c.user }} on {{ m.name }}" aria-label="Unpair {{ c.user }} on {{ m.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></form>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</div>

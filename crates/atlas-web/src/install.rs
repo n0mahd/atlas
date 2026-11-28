@@ -97,9 +97,13 @@ cat > "$units/atlasd.timer" <<'UNIT'
 systemctl --user daemon-reload
 systemctl --user enable --now atlasd.timer
 loginctl enable-linger "$USER" 2>/dev/null || true
+# A first run now, so the hub's Machines page shows this machine within seconds rather
+# than at the next timer tick. Through systemd, so it runs under the same unit as every
+# later run and never alongside one; --no-block so the install doesn't wait for it.
+systemctl --user start --no-block atlasd.service
 
 echo
-echo "Done. atlasd checks for changes every 10 minutes."
+echo "Done. atlasd is making its first run now, then checks for changes every 10 minutes."
 echo "To see what it would change now: atlasd run --dry-run"
 "#
     );
