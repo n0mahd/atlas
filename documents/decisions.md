@@ -419,8 +419,11 @@ skips a hook whose folder, script or any other file in it is a link, and one who
 `hooks` folder is a link, and reports why ("its script is a link, so machines will skip
 this hook"); the page flags every link (git mode 120000) in a hook folder the same way.
 Hooks a skill (`SKILL.md`) or subagent (`agents/*.md`) declares in its frontmatter run
-while it's in use, so a new or changed `hooks` block there is listed with the other hooks
-("Hooks in the skill pdf", "While the skill is in use"), the block in full or as a diff.
+while it's in use. A subagent's new or changed `hooks` block is listed with the other
+hooks ("Hooks in the subagent reviewer"). A skill with a `hooks` block at either pinned
+commit can run anything in its folder, so any change in that folder is listed ("Hooks in
+the skill pdf", "While the skill is in use") with the folder's diff and its link flags; a
+skill without one is only counted.
 
 The page shows what will be signed: when it is built, the hub builds the update right
 then, keeps its exact manifest bytes server-side under a random id tied to the session

@@ -28,7 +28,7 @@
         <div class="hook-body">
           {% if !h.link.is_empty() %}<p class="marginalia warn-note">{{ h.link }}</p>{% endif %}
           {% if h.not_runnable %}<p class="marginalia warn-note">Its script isn't marked as runnable, so your machines will skip this hook.</p>{% endif %}
-          {% if h.new %}
+          {% if h.diff.is_empty() %}
           {% for f in h.files %}
           <p class="file-name mono">{{ f.name }}</p>
           {% if f.note.is_empty() %}<pre class="ink-block wrap">{{ f.text }}</pre>{% else %}<p class="marginalia warn-note">{{ f.note }}</p>{% endif %}

@@ -63,7 +63,9 @@ must be in the hook's own folder.
 
 Skills and subagents can declare hooks of their own in their frontmatter (a `hooks:`
 block), which run while that skill or subagent is in use. When that block is new or
-changes, the page lists it with the other hooks, as "Hooks in the skill pdf".
+changes, the page lists it with the other hooks, as "Hooks in the skill pdf". For a skill
+with such a block, any change in its folder (a script its hooks run, say) is shown the
+same way.
 
 ## Settings → Updates
 

@@ -38,27 +38,20 @@ enum Runs {
     HooksFolder,
 }
 
-/// A file whose frontmatter may declare hooks the harness runs while it's in use.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum WithHooks {
-    Skill(String),
-    Subagent(String),
-}
-
-/// The skill or subagent file at `path`, if its frontmatter can carry hooks.
-fn with_hooks(source: &SourceId, path: &str) -> Option<WithHooks> {
+/// The subagent whose file is at `path`: its frontmatter may declare hooks.
+fn subagent_of(source: &SourceId, path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
     match (source, parts.as_slice()) {
-        (SourceId::Knowledge, ["skills", name, "SKILL.md"])
-        | (SourceId::PublicSkills, [name, "SKILL.md"])
-            if !name.starts_with('.') =>
-        {
-            Some(WithHooks::Skill((*name).to_owned()))
-        }
-        (SourceId::Knowledge, ["agents", file]) => file
-            .strip_suffix(".md")
-            .map(|n| WithHooks::Subagent(n.to_owned())),
+        (SourceId::Knowledge, ["agents", file]) => file.strip_suffix(".md").map(str::to_owned),
         _ => None,
+    }
+}
+
+/// A skill's folder in its repo.
+fn skill_dir(source: &SourceId, name: &str) -> String {
+    match source {
+        SourceId::PublicSkills => name.to_owned(),
+        _ => format!("skills/{name}"),
     }
 }
 
@@ -360,9 +353,23 @@ pub(crate) fn review(sources: &Sources, previous: Option<&Manifest>, next: &Mani
             }
         }
         for c in &changed {
-            if let Some(owner) = with_hooks(&src.id, &c.path)
-                && let Some(h) = frontmatter_change(&repo, base.as_deref(), head, &c.path, &owner)
+            if let Some(name) = subagent_of(&src.id, &c.path)
+                && let Some(h) = frontmatter_change(&repo, base.as_deref(), head, &c.path, &name)
             {
+                out.hooks.push(h);
+            }
+        }
+        // A skill that declares hooks runs what's in its folder: any change there shows.
+        let skills: BTreeSet<&String> = acted
+            .iter()
+            .filter_map(|(a, _)| match a {
+                Acted::Skill(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        for name in skills {
+            let dir = skill_dir(&src.id, name);
+            if let Some(h) = skill_change(&repo, base.as_deref(), head, &dir, name) {
                 out.hooks.push(h);
             }
         }
@@ -594,13 +601,78 @@ pub(crate) fn frontmatter_hooks(text: &str) -> Option<String> {
     (!block.is_empty()).then(|| block.join("\n"))
 }
 
-/// Hooks a skill or subagent declares in its frontmatter that are new or changed.
+/// A skill whose `SKILL.md` declares hooks (at either commit) and whose folder changed: its
+/// hooks run what the folder holds, so the folder's change is shown like a hook's. None for
+/// a skill without hooks, which is only counted.
+fn skill_change(
+    repo: &Repo,
+    base: Option<&str>,
+    head: &str,
+    dir: &str,
+    name: &str,
+) -> Option<HookChange> {
+    let md = format!("{dir}/SKILL.md");
+    let block = |commit: &str| {
+        let bytes = repo.file_at(commit, &md, SHOW_MAX).ok()??;
+        frontmatter_hooks(&String::from_utf8(bytes).ok()?)
+    };
+    let now = block(head);
+    let before = base.and_then(block);
+    if now.is_none() && before.is_none() {
+        return None;
+    }
+    let entries = repo.tree_entries(head, dir).unwrap_or_default();
+    let short = |p: &str| p.trim_start_matches(&format!("{dir}/")).to_owned();
+    let link = entries
+        .iter()
+        .find(|(m, _)| m == LINK)
+        .map_or_else(String::new, |(_, p)| {
+            format!(
+                "Its folder holds a link ({}), so a change there wouldn't show here.",
+                short(p)
+            )
+        });
+    let mut change = HookChange {
+        name: name.to_owned(),
+        place: format!("in the skill {name}"),
+        new: before.is_none(),
+        when: "While the skill is in use".to_owned(),
+        link,
+        ..HookChange::blank()
+    };
+    if let Some(base) = base {
+        change.diff = parse_diff(&repo.diff(base, head, dir).unwrap_or_default(), dir);
+        return Some(change);
+    }
+    // First update: the hooks block, then every other file in the folder.
+    change.files.push(HookFile {
+        name: "SKILL.md".to_owned(),
+        text: now.unwrap_or_default(),
+        note: String::new(),
+    });
+    for (mode, path) in entries.iter().filter(|(_, p)| *p != md) {
+        let (text, note) = text_of(repo, head, path);
+        let (text, note) = if mode == LINK {
+            (String::new(), format!("A link to {text}"))
+        } else {
+            (text, note)
+        };
+        change.files.push(HookFile {
+            name: short(path),
+            text,
+            note,
+        });
+    }
+    Some(change)
+}
+
+/// Hooks a subagent declares in its frontmatter that are new or changed.
 fn frontmatter_change(
     repo: &Repo,
     base: Option<&str>,
     head: &str,
     path: &str,
-    owner: &WithHooks,
+    name: &str,
 ) -> Option<HookChange> {
     let read = |commit: &str| {
         let bytes = repo.file_at(commit, path, SHOW_MAX).ok()??;
@@ -611,20 +683,12 @@ fn frontmatter_change(
     if before.as_deref() == Some(now.as_str()) {
         return None;
     }
-    let (name, place, when_text) = match owner {
-        WithHooks::Skill(n) => (n, format!("in the skill {n}"), "While the skill is in use"),
-        WithHooks::Subagent(n) => (
-            n,
-            format!("in the subagent {n}"),
-            "While the subagent is in use",
-        ),
-    };
     let file = path.rsplit('/').next().unwrap_or(path).to_owned();
     let mut change = HookChange {
-        name: name.clone(),
-        place,
+        name: name.to_owned(),
+        place: format!("in the subagent {name}"),
         new: before.is_none(),
-        when: when_text.to_owned(),
+        when: "While the subagent is in use".to_owned(),
         ..HookChange::blank()
     };
     match before {

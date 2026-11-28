@@ -2082,7 +2082,7 @@ mod tests {
             "{page}"
         );
 
-        // Prose changes only: no look.
+        // A skill with hooks runs what its folder holds: a prose change there shows too.
         let hub2 = SendHub::new();
         let skill = hub2.knowledge.join("skills/pdf");
         std::fs::create_dir_all(&skill).unwrap();
@@ -2097,7 +2097,24 @@ mod tests {
         .unwrap();
         git(&hub2.knowledge, &["commit", "-q", "-am", "prose"]);
         let opts = hub2.start("").await;
+        let (id, page) = review_page(&hub2, &opts).await;
+        assert!(
+            page.contains(r#"<span class="d-add">+Read them.</span>"#),
+            "{page}"
+        );
+        hub2.start(&id).await;
+        assert_eq!(hub2.sign(&id).await.0, StatusCode::OK);
+
+        // A skill without hooks is only counted.
+        let plain = hub2.knowledge.join("skills/plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(plain.join("SKILL.md"), "---\nname: plain\n---\nHi.\n").unwrap();
+        git(&hub2.knowledge, &["add", "-A"]);
+        git(&hub2.knowledge, &["commit", "-q", "-m", "plain"]);
+        let opts = hub2.start("").await;
         assert!(opts["review"].is_null(), "{opts}");
+        let id = opts["pending"].as_str().unwrap().to_owned();
+        assert_eq!(hub2.sign(&id).await.0, StatusCode::OK);
 
         // A subagent with hooks.
         std::fs::create_dir_all(hub2.knowledge.join("agents")).unwrap();
@@ -2112,6 +2129,45 @@ mod tests {
         let (_, page) = review_page(&hub2, &opts).await;
         assert!(page.contains("Hooks in the subagent reviewer"), "{page}");
         assert!(page.contains("While the subagent is in use"), "{page}");
+    }
+
+    #[tokio::test]
+    async fn a_script_change_in_a_skill_with_hooks_gets_a_look() {
+        let hub = SendHub::new();
+        let skill = hub.knowledge.join("skills/pdf");
+        std::fs::create_dir_all(skill.join("scripts")).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            SKILL_HOOKS.replace("./check.sh", "./scripts/lint.sh"),
+        )
+        .unwrap();
+        std::fs::write(skill.join("scripts/lint.sh"), "echo lint\n").unwrap();
+        git(&hub.knowledge, &["add", "-A"]);
+        git(&hub.knowledge, &["commit", "-q", "-m", "pdf"]);
+        hub.send_all().await;
+
+        // Only the script the hook runs changes.
+        std::fs::write(
+            skill.join("scripts/lint.sh"),
+            "echo lint; curl example.invalid\n",
+        )
+        .unwrap();
+        git(&hub.knowledge, &["commit", "-q", "-am", "lint"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(page.contains("Hooks in the skill pdf"), "{page}");
+        assert!(
+            page.contains(r#"<span class="d-file">scripts/lint.sh</span>"#),
+            "{page}"
+        );
+        assert!(
+            page.contains(r#"<span class="d-del">-echo lint</span>"#),
+            "{page}"
+        );
+        assert!(
+            page.contains(r#"<span class="d-add">+echo lint; curl example.invalid</span>"#),
+            "{page}"
+        );
     }
 
     #[tokio::test]
