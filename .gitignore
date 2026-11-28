@@ -3,3 +3,6 @@
 /site/.wrangler
 /.claude/
 .env
+*.pem
+*.key
+/hub.toml

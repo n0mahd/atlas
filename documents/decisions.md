@@ -384,3 +384,35 @@ the name, any short flag (`Also global`, `Not in …`, `Broken link`), agent mar
 chevron; the full description (or source path for skills outside Atlas) sits inside the
 inline drawer when expanded, and search still matches descriptions. Reading and attention
 are treated as currency across the UI (`documents/design.md`).
+
+## 0036 · 2026-11-27 · The Machines page polls its list; installs start a first run
+The machine ledgers live in one partial (`machines_list.html`) that the page renders and
+`GET /machines/list` serves alone; the page polls it every 10 seconds, and at once when
+the tab comes back into view, so a newly paired machine appears without a reload. Polling,
+not server-sent events: one fragment endpoint, no open connections, and a machine reports
+at most every few seconds anyway. `atlas.js` skips polls while the tab is hidden (the htmx
+config forbids eval, so no `hx-trigger` filter), leaves the list alone when the response is
+unchanged (focus and selection survive) and reopens rows that were open, by `data-key`.
+The pairing command and the SSH form sit outside the list and are never replaced. The
+running head's totals ("2 machines · 1 reporting") refresh only on reload.
+The install script ends with `systemctl --user start --no-block atlasd.service` so the
+machine's first report reaches the hub within seconds rather than at the next timer tick.
+Through systemd rather than running `atlasd run` directly: the run gets the same sandbox
+as every later one, its output goes to the journal, systemd never runs it twice at once,
+and `--no-block` keeps the install (and an install over SSH) from waiting for it.
+
+## 0037 · 2026-11-27 · A first run that doesn't assume the owner's machine
+`deploy/install.sh` is the path a newcomer takes, so it now checks its needs (Linux,
+cargo, git, a signed-in Tailscale, systemd user services) before the long build and
+names what's missing in one sentence; reads the login from `tailscale whois` rather than
+`python3`; lists what it will create, asking once only when run from a terminal; and
+shows Tailscale's own output and the hub's journal instead of hiding failures. It never
+changes an existing `hub.toml` or knowledge repo. When there is no `~/Knowledge` it
+makes a starter repo on `main` (`AGENTS.md`, `skills/`, `memory/`, `hooks/`, `agents/`)
+and says the one step left, adding a remote and `git push -u`, since updates pin the
+upstream commit. `public_skills` and `projects_dir` are written only when those folders
+exist. The unit is copied, not linked into the clone. It also builds atlasd for the
+hub's own CPU into `<state>/dist/`, static (musl) when that target is installed, else
+native with a warning that it suits only similar systems; other CPUs stay a manual
+cross-build. `deploy/test-install.sh` runs the script in throwaway homes with stand-in
+system tools, so it can be checked without touching the machine.
