@@ -17,14 +17,14 @@ StateDirectory=atlas-hub
 StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
-PrivateTmp=yes
-# The web UI is a Unix socket; INET is only for git push when the owner turns it on.
+# The web UI is a Unix socket; INET is for git push and for installing atlasd over SSH.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ProtectSystem=strict
-# Home stays writable: edits commit to the store and project repos there.
+# No PrivateTmp, ProtectSystem or ProtectKernelTunables (decision 0025): in a user service
+# they put the hub in a user namespace where root's files look owned by nobody, and ssh
+# then refuses /etc/ssh/ssh_config.d/*. The hub runs as its user, who can't write /usr,
+# /etc or /proc/sys anyway, and home must stay writable for commits.
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-ProtectKernelTunables=yes
 SystemCallFilter=@system-service
 SystemCallArchitectures=native
 MemoryMax=512M

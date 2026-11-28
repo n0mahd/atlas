@@ -12,6 +12,7 @@ mod icons;
 mod install;
 mod markdown;
 pub mod release;
+pub mod remote;
 pub mod views;
 
 use std::sync::Arc;
@@ -154,6 +155,7 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/send/start", post(distribute::send_start))
         .route("/send/finish", post(distribute::send_finish))
         .route("/machines/pair", post(distribute::pair_code))
+        .route("/machines/pair/ssh", post(distribute::pair_ssh))
         .route("/machines/{id}/remove", post(distribute::unpair))
         .route("/install", get(install::script))
         .route("/install/{name}", get(install::binary))
@@ -332,6 +334,14 @@ struct MachinesPage {
     page: Page,
     machines: Vec<views::Machine>,
     pair_command: Option<String>,
+    ssh_result: Option<SshResult>,
+}
+
+/// What an install over SSH from the Machines page came to.
+pub(crate) struct SshResult {
+    pub ok: bool,
+    pub message: String,
+    pub output: String,
 }
 
 // ---------------------------------------------------------------- handlers
@@ -566,14 +576,16 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
 }
 
 async fn machines(State(s): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
-    machines_page(&s, &headers, None).await
+    machines_page(&s, &headers, None, None).await
 }
 
-/// The Machines page; `pair_command` shows a fresh pairing command once.
+/// The Machines page; `pair_command` shows a fresh pairing command once, `ssh_result`
+/// how an install over SSH went.
 pub(crate) async fn machines_page(
     s: &AppState,
     headers: &HeaderMap,
     pair_command: Option<String>,
+    ssh_result: Option<SshResult>,
 ) -> Result<Response, AppError> {
     let snap = s.snapshot().await?;
     let mut page = s.page(
@@ -599,6 +611,7 @@ pub(crate) async fn machines_page(
             page,
             machines,
             pair_command,
+            ssh_result,
         }
         .render()?,
     )
