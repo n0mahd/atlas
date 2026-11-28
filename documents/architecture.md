@@ -103,8 +103,14 @@ Elsewhere or planned:
 Memory skips steps 3–5 by default: agents write it straight to git (decision 0008).
 
 ## Trust model
-- The hub proposes; the user's passkey authorises (decision 0007). The hub cannot sign
-  releases, so a compromised hub cannot push changes to every machine.
+- The hub proposes; the user's passkey authorises (decision 0007). Nobody can send a
+  change to the machines without a tap from the owner's passkey: not a stolen session,
+  not another device on the Tailscale network, not GitHub.
+- The limit of that promise: the hub serves the page that asks for the tap, so a hub
+  machine or account that has itself been taken over can misuse the owner's next tap.
+  The passkey protects against everyone who cannot get the owner to tap; it does not
+  make a compromised hub harmless. Signing on a device that shows what is being signed
+  (Local Atlas) is the planned answer.
 - GitHub is untrusted storage.
 - atlasd runs as a user service, never as root, and never executes content it receives.
   A local stdio MCP server starts, and a hook is installed, only if it arrived in a
@@ -164,7 +170,7 @@ them and the hub hands them out).
 ## Threats
 | Threat | Mitigation |
 |---|---|
-| Hub compromise | The hub cannot sign updates, so it cannot change machines already paired. It can still withhold updates, and a machine paired while the hub is compromised trusts whatever it is given. Planned: MCP keys stay in a keystore and are never shown. |
+| Hub compromise | Not solved. An update needs a tap from the owner's passkey, which stops an attacker who only reads the hub's files or holds a session; but a hub that is taken over serves the page that asks for the tap and can misuse the next one, can withhold updates, and is trusted by any machine paired afterwards. Planned: signing in Local Atlas, signed atlasd builds, and MCP keys in a keystore that never shows them. |
 | Another tailnet device | Only listed Tailscale logins can read; changes need a passkey session; each machine has its own token. Planned: Tailscale WhoIs instead of the header. |
 | Hub web process starting SSH sessions | Only behind a passkey session and CSRF; the target is checked strictly and passed after `--`, never through a shell (decision 0025). |
 | Poisoned content (skills, memory, hooks) | `Untrusted<Markdown>` and sanitised rendering keep it from running in the hub's pages. Nothing yet checks what the text tells an agent to do. Planned: a scanner that flags it. |
