@@ -392,30 +392,39 @@ pub const EXCLUDE_END: &str = "# atlas:end";
 /// Atlas's block, which is created at the end when missing. Lines outside the block are
 /// never touched; entries already in the block stay, in their order, and new ones follow.
 /// Shared by every Atlas entry in the file.
+///
+/// A block whose closing line is gone (a hand edit) runs to the end of the file and is
+/// closed there, so there is only ever one. With nothing to add and no block, `current`
+/// comes back as it is.
 #[must_use]
 pub fn exclude_with(current: &str, add: &[&str]) -> String {
     let lines: Vec<&str> = current.lines().collect();
-    let begin = lines.iter().position(|l| l.trim_end() == EXCLUDE_BEGIN);
-    let end = begin.and_then(|b| {
-        lines[b..]
-            .iter()
-            .position(|l| l.trim_end() == EXCLUDE_END)
-            .map(|e| b + e)
-    });
-    let (before, mut block, after): (Vec<&str>, Vec<&str>, Vec<&str>) = match (begin, end) {
-        (Some(b), Some(e)) => (
-            lines[..b].to_vec(),
-            lines[b + 1..e].to_vec(),
-            lines[e + 1..].to_vec(),
-        ),
-        _ => (lines.clone(), Vec::new(), Vec::new()),
+    let Some(begin) = lines.iter().position(|l| l.trim_end() == EXCLUDE_BEGIN) else {
+        if add.is_empty() {
+            return current.to_owned();
+        }
+        return render_exclude(&lines, Vec::new(), add, &[]);
     };
+    let end = lines[begin..]
+        .iter()
+        .position(|l| l.trim_end() == EXCLUDE_END)
+        .map_or(lines.len(), |e| begin + e);
+    let after = lines.get(end + 1..).unwrap_or_default();
+    render_exclude(&lines[..begin], lines[begin + 1..end].to_vec(), add, after)
+}
+
+fn render_exclude<'a>(
+    before: &[&'a str],
+    mut block: Vec<&'a str>,
+    add: &[&'a str],
+    after: &[&'a str],
+) -> String {
     for a in add {
         if !block.iter().any(|l| l.trim_end() == *a) {
             block.push(a);
         }
     }
-    let mut out: Vec<&str> = before;
+    let mut out: Vec<&str> = before.to_vec();
     out.push(EXCLUDE_BEGIN);
     out.extend(block);
     out.push(EXCLUDE_END);

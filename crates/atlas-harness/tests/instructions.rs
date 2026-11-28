@@ -274,3 +274,30 @@ fn exclude_block_is_shared_and_leaves_other_lines() {
         "# atlas:begin\n/a\n# atlas:end\n"
     );
 }
+
+#[test]
+fn an_unclosed_exclude_block_ends_at_the_end_of_the_file() {
+    // A hand-edited file lost Atlas's closing line: the block runs to the end and is
+    // closed there, never opened a second time.
+    let unclosed = "*.swp\n# atlas:begin\n/a\nmine\n";
+    let fixed = exclude_with(unclosed, &["/b"]);
+    assert_eq!(fixed, "*.swp\n# atlas:begin\n/a\nmine\n/b\n# atlas:end\n");
+    assert_eq!(fixed.matches("# atlas:begin").count(), 1);
+    // A later edit finds one closed block, so the owner's lines stay where they are.
+    let owner_after = format!("{fixed}*.log\n");
+    assert_eq!(
+        exclude_with(&owner_after, &["/c"]),
+        "*.swp\n# atlas:begin\n/a\nmine\n/b\n/c\n# atlas:end\n*.log\n"
+    );
+    assert_eq!(
+        exclude_with(unclosed, &["/a"]),
+        "*.swp\n# atlas:begin\n/a\nmine\n# atlas:end\n"
+    );
+}
+
+#[test]
+fn nothing_to_exclude_and_no_block_leaves_the_file_alone() {
+    for text in ["", "*.swp\n", "*.swp", "# just a comment"] {
+        assert_eq!(exclude_with(text, &[]), text);
+    }
+}
