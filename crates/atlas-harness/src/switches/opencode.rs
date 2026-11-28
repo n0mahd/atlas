@@ -40,7 +40,11 @@ struct Path<'v> {
     skill: Option<(usize, &'v Object)>,
 }
 
-fn child<'v>(o: &'v Object, key: &str, at: &str) -> Result<Option<(usize, &'v Object)>, FormatError> {
+fn child<'v>(
+    o: &'v Object,
+    key: &str,
+    at: &str,
+) -> Result<Option<(usize, &'v Object)>, FormatError> {
     o.position(key)
         .map(|i| {
             o.members[i]
@@ -89,9 +93,10 @@ fn remove_one(text: &mut String, off: &BTreeSet<String>) -> Result<bool, FormatE
         return Ok(false);
     };
     let mut seen = BTreeSet::new();
-    let stale = skill.members.iter().position(|m| {
-        is_ours(text, m) && (!off.contains(&m.key) || !seen.insert(m.key.as_str()))
-    });
+    let stale = skill
+        .members
+        .iter()
+        .position(|m| is_ours(text, m) && (!off.contains(&m.key) || !seen.insert(m.key.as_str())));
     match stale {
         Some(i) => {
             *text = jsonc::remove_member(text, skill, i);
@@ -161,7 +166,10 @@ fn is_empty_doc(text: &str) -> Result<bool, FormatError> {
     }))
 }
 
-pub(super) fn render(current: Option<&[u8]>, off: &BTreeSet<String>) -> Result<Change, FormatError> {
+pub(super) fn render(
+    current: Option<&[u8]>,
+    off: &BTreeSet<String>,
+) -> Result<Change, FormatError> {
     let original = match current {
         Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
             std::str::from_utf8(bytes)?.to_owned()

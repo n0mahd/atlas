@@ -180,10 +180,7 @@ impl Parser<'_> {
             Some(b'n') => self.literal("null")?,
             _ => return Err(self.error("a value")),
         };
-        Ok(Value {
-            end: self.i,
-            kind,
-        })
+        Ok(Value { end: self.i, kind })
     }
 
     fn enter(&mut self) -> Result<(), FormatError> {
@@ -515,6 +512,9 @@ pub(super) fn append_members(text: &str, object: &Object, items: &[NewMember]) -
         indent_of(text, object.open).to_owned()
     };
 
+    // An owner who ends every member with a comma gets Atlas's last one ended the same way,
+    // so taking it out again leaves their file as it was.
+    let trailing = object.members.last().is_some_and(|m| m.comma.is_some());
     let mut block = String::new();
     for (k, item) in items.iter().enumerate() {
         block.push_str(nl);
@@ -528,7 +528,7 @@ pub(super) fn append_members(text: &str, object: &Object, items: &[NewMember]) -
             block.push_str(&member_indent);
             block.push_str(line);
         }
-        if k + 1 < items.len() {
+        if k + 1 < items.len() || trailing {
             block.push(',');
         }
         if let Some(note) = &item.note {
@@ -660,6 +660,11 @@ mod tests {
         assert_eq!(
             append_members(inline, &root(inline), &[item("\"x\": 2")]),
             "{\"a\": 1,\n  \"x\": 2 // n\n}"
+        );
+        let trailing = "{\n  \"a\": 1,\n}";
+        assert_eq!(
+            append_members(trailing, &root(trailing), &[item("\"x\": 2")]),
+            "{\n  \"a\": 1,\n  \"x\": 2, // n\n}"
         );
         let tabs = "{\r\n\t\"a\": {\r\n\t}\r\n}";
         let inner = root(tabs);

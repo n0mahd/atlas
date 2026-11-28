@@ -64,17 +64,23 @@ Notes behind the table:
 ## Skill switches
 
 What `src/switches/` writes so an agent that reads a skill's folder leaves the skill
-alone (decision 0027). Paths are relative to `$HOME` (home) or the repo root (repo).
-"T3" is the owner's T3 Code (`apps/server/src/skills/*SkillSettings.ts`, branch
+alone (decision 0027). Paths are relative to `$HOME` (home) or the repo root (repo); where
+two files are listed, the first that exists is edited and the last is created. "T3" is
+the owner's T3 Code (`apps/server/src/skills/*SkillSettings.ts`, branch
 `feat/skills-instructions`), which checked these against the CLIs it names.
 
 | Harness | File | Setting | Atlas's entries | Source |
 |---|---|---|---|---|
 | Claude Code | home `.claude/settings.json`; repo `.claude/settings.local.json` | `"skillOverrides": {"<folder name>": "off"}` | names listed under top-level `"atlas:skillOverrides"` | verified: `claude doctor` on 2.1.332 accepts the extra key, reads the repo's local file and rejects a value outside `on`, `name-only`, `user-invocable-only`, `off`; docs (skills, settings); T3 |
-| Codex | home `.codex/config.toml` | `[[skills.config]]` with `path = "<dir>/SKILL.md"` (or `name = "<name>"`) and `enabled = false` | header line ends `# atlas:<name>` | verified: 0.172.0 app-server `skills/list` with a throwaway `CODEX_HOME` |
-| OpenCode | home `.config/opencode/opencode.jsonc`; repo `opencode.jsonc` | `"permission": {"skill": {"<name>": "deny"}}` | entry line ends `// atlas:<name>` | OpenCode source (`config/config.ts`, `config/paths.ts`, `config/parse.ts` at 4ac0d9c3d1); docs (opencode.ai/docs/skills); T3 checked opencode 1.18.31 |
-| Pi | home `.pi/agent/settings.json` | `"skills": ["-skills/<name>/SKILL.md"]` | names listed under top-level `"atlas:skills"` | Pi source (`core/package-manager.ts`, `core/settings-manager.ts` at 43d3763991); docs (pi.dev/docs/latest/settings); T3. Not run: Pi isn't installed here |
+| Codex | home `.codex/config.toml`, for home and project skills alike | `[[skills.config]]` with `path = "<dir>/SKILL.md"` (or, home only, `name = "<name>"`) and `enabled = false` | header line ends `# atlas:<name>` | verified: 0.172.0 app-server `skills/list` with a throwaway `CODEX_HOME` |
+| OpenCode | home `.config/opencode/opencode.jsonc`, else `.config/opencode/opencode.json`; no repo file | `"permission": {"skill": {"<name>": "deny"}}` | entry line ends `// atlas:<name>` | verified: `opencode debug config` on 2.4.2 with a throwaway home reads Atlas's edited `.jsonc` golden file and a `.json` Atlas created, comments and all, with the rules in file order, and leaves both files as they were; OpenCode source (`config/config.ts`, `config/paths.ts`, `config/parse.ts` at 4ac0d9c3d1); docs (opencode.ai/docs/skills); T3 checked opencode 1.18.31 |
+| Pi | home `.pi/agent/settings.json`; no repo file | `"skills": ["-skills/<name>/SKILL.md"]` | names listed under top-level `"atlas:skills"` | Pi source (`core/package-manager.ts`, `core/settings-manager.ts` at 43d3763991); docs (pi.dev/docs/latest/settings); T3. Not run: Pi isn't installed here |
 | Antigravity, Amp, Muse, Grok Build | none | no per-skill setting in their docs (T3 found the same for Antigravity and Grok) | reported as `stuck_on` | docs; T3 |
+
+Every format marks Atlas's entries in the file itself, so atlasd's own record of what it
+switched off (`atlas_before`) isn't needed to tell them apart, and an owner's entry made
+before Atlas wanted the same skill off is never taken for Atlas's. An entry of the owner's
+for a skill, on or off, is left as it is and Atlas adds none beside it.
 
 Notes behind the table:
 
@@ -90,16 +96,21 @@ Notes behind the table:
   switch the skill off; a `path` through a link to the skill's real folder works (Codex
   resolves it); its own `skills/config/write` keeps the `# atlas:` header comments. The
   last entry naming a skill wins (T3). A project's `.codex/config.toml` is not read for
-  skill rules in an untrusted project (T3), so Atlas has no repo switch for Codex.
+  skill rules in an untrusted project (T3), so a project's skills are switched off by
+  their absolute path in the home file. A name entry would switch off every skill of that
+  name, so Atlas writes one only for a home skill whose folder it wasn't given. Home and
+  project switches share the file, so it is rendered once with every name off there.
 - OpenCode reads `opencode.json` and `opencode.jsonc` as JSONC (comments and trailing
   commas allowed), in the global folder `config.json`, `opencode.json`, then
-  `opencode.jsonc`, and in a repo `opencode.json` before `opencode.jsonc`, merging
-  `permission` objects; rules are evaluated last-match-wins (T3, from
-  `permission/index.ts`). Atlas writes `opencode.jsonc`: it is read last, OpenCode
-  creates it for a new global config, and OpenCode edits `.jsonc` in place (keeping
-  comments) but rewrites a global `.json` with `JSON.stringify`. OpenCode adds a
-  `$schema` line to any config file lacking one, so a file Atlas creates already has it.
-  The rule key is the `name` in the skill's header, not its folder (T3).
+  `opencode.jsonc`, merging `permission` objects; rules are evaluated last-match-wins
+  (T3, from `permission/index.ts`), so Atlas adds its entries at the end. OpenCode creates
+  `opencode.jsonc` for a new global config, edits a `.jsonc` in place (keeping comments)
+  but rewrites a global `.json` with `JSON.stringify` when it saves settings itself;
+  that would drop Atlas's `// atlas:` marks, leaving its entries to read as the owner's.
+  It adds a `$schema` line to any config file lacking one, so a file Atlas creates
+  already has it, after a comment saying Atlas made it. The rule key is the `name` in
+  the skill's header, not its folder (T3). A repo's `opencode.json` is usually tracked
+  and shared, so Atlas writes no repo file.
 - Pi applies the global `skills` list to skills found in `~/.pi/agent/skills` and
   `~/.agents/skills`, matching an exact `-`/`+` entry against the skill's `SKILL.md` or
   folder, relative to either base or absolute; `-` beats `+`. It reads the file with

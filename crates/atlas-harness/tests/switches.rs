@@ -146,7 +146,13 @@ fn the_owners_own_switches_are_never_taken_over() {
     for case in CASES {
         let before = read(case.before);
         assert_eq!(
-            render(case.kind, Home, Some(&before), &["deploy", "legacy-context"]).unwrap(),
+            render(
+                case.kind,
+                Home,
+                Some(&before),
+                &["deploy", "legacy-context"]
+            )
+            .unwrap(),
             Change::Unchanged,
             "{}",
             case.before
@@ -214,7 +220,8 @@ fn created_files_look_like_the_agents_own() {
 #[test]
 fn an_entry_the_owner_changed_becomes_theirs() {
     // Claude: the owner turned Atlas's "off" into "name-only" with the /skills menu.
-    let claude = br#"{"skillOverrides": {"pdf-tools": "name-only"}, "atlas:skillOverrides": ["pdf-tools"]}"#;
+    let claude =
+        br#"{"skillOverrides": {"pdf-tools": "name-only"}, "atlas:skillOverrides": ["pdf-tools"]}"#;
     let got = written(render(ClaudeCode, Project, Some(claude), &[]).unwrap());
     assert_eq!(
         text(&got),
@@ -226,7 +233,10 @@ fn an_entry_the_owner_changed_becomes_theirs() {
         render(Codex, Home, Some(codex), &["pdf-tools"]).unwrap(),
         Change::Unchanged
     );
-    assert_eq!(render(Codex, Home, Some(codex), &[]).unwrap(), Change::Unchanged);
+    assert_eq!(
+        render(Codex, Home, Some(codex), &[]).unwrap(),
+        Change::Unchanged
+    );
     // OpenCode: the owner set Atlas's entry to "ask".
     let opencode =
         b"{\"permission\": {\"skill\": {\n  \"pdf-tools\": \"ask\" // atlas:pdf-tools\n}}}";
@@ -248,8 +258,15 @@ fn codex_follows_the_skills_folder() {
     // The folder moved: Atlas's table is updated in place, header comment and all.
     let moved = |_: &str| Some(PathBuf::from("/home/u/.codex/skills/pdf-tools"));
     let got = written(
-        render_switches(Codex, Home, Some(&first), &names(&["pdf-tools"]), &BTreeSet::new(), &moved)
-            .unwrap(),
+        render_switches(
+            Codex,
+            Home,
+            Some(&first),
+            &names(&["pdf-tools"]),
+            &BTreeSet::new(),
+            &moved,
+        )
+        .unwrap(),
     );
     assert_eq!(
         text(&got),
@@ -328,7 +345,10 @@ fn unparseable_files_are_refused() {
         (Pi, b"{\"skills\": [\"a\",]}"),
         (Codex, b"[[skills.config]\npath = 1"),
         (Codex, b"\xff\xfe"),
-        (OpenCode, b"{\"permission\": {\"skill\": {\"a\": \"deny\" \"b\": 1}}}"),
+        (
+            OpenCode,
+            b"{\"permission\": {\"skill\": {\"a\": \"deny\" \"b\": 1}}}",
+        ),
         (OpenCode, b"{\"model\": 'x'}"),
         (OpenCode, b"{ /* never closed"),
         (OpenCode, b"\xff{}"),
@@ -336,23 +356,47 @@ fn unparseable_files_are_refused() {
     ];
     for (kind, bytes) in cases {
         let got = render(kind, Home, Some(bytes), &["pdf"]);
-        assert!(got.is_err(), "{kind}: {:?} gave {got:?}", String::from_utf8_lossy(bytes));
+        assert!(
+            got.is_err(),
+            "{kind}: {:?} gave {got:?}",
+            String::from_utf8_lossy(bytes)
+        );
     }
 }
 
 #[test]
 fn settings_in_a_shape_atlas_doesnt_edit_are_refused() {
     let cases: [(HarnessKind, &[u8], &str); 8] = [
-        (ClaudeCode, b"{\"skillOverrides\": [\"a\"]}", "skillOverrides"),
+        (
+            ClaudeCode,
+            b"{\"skillOverrides\": [\"a\"]}",
+            "skillOverrides",
+        ),
         // One bad value makes Claude Code drop every override in the file.
-        (ClaudeCode, b"{\"skillOverrides\": {\"a\": false}}", "skillOverrides.a"),
-        (ClaudeCode, b"{\"atlas:skillOverrides\": \"a\"}", "atlas:skillOverrides"),
+        (
+            ClaudeCode,
+            b"{\"skillOverrides\": {\"a\": false}}",
+            "skillOverrides.a",
+        ),
+        (
+            ClaudeCode,
+            b"{\"atlas:skillOverrides\": \"a\"}",
+            "atlas:skillOverrides",
+        ),
         // Pi's old shape, which Pi migrates itself.
         (Pi, b"{\"skills\": {\"customDirectories\": []}}", "skills"),
         (Codex, b"skills = 1\n", "skills"),
-        (Codex, b"[skills]\nconfig = [{ name = \"a\", enabled = false }]\n", "skills.config"),
+        (
+            Codex,
+            b"[skills]\nconfig = [{ name = \"a\", enabled = false }]\n",
+            "skills.config",
+        ),
         (OpenCode, b"{\"permission\": \"allow\"}", "permission"),
-        (OpenCode, b"{\"permission\": {\"skill\": \"deny\"}}", "permission.skill"),
+        (
+            OpenCode,
+            b"{\"permission\": {\"skill\": \"deny\"}}",
+            "permission.skill",
+        ),
     ];
     for (kind, bytes, at) in cases {
         match render(kind, Home, Some(bytes), &["pdf"]) {
@@ -367,7 +411,9 @@ fn claudes_two_reaches_share_the_format() {
     let before = read("claude/settings.before.json");
     for reach in [Home, Project] {
         assert_eq!(
-            text(&written(render(ClaudeCode, reach, Some(&before), &OFF).unwrap())),
+            text(&written(
+                render(ClaudeCode, reach, Some(&before), &OFF).unwrap()
+            )),
             text(&read("claude/settings.after.json")),
         );
     }

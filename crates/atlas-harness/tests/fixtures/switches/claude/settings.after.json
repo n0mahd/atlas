@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)"
+    ],
+    "deny": [
+      "Read(./.env)"
+    ]
+  },
+  "skillOverrides": {
+    "legacy-context": "name-only",
+    "deploy": "off",
+    "pdf-tools": "off",
+    "release-notes": "off"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/atlas/store/hooks/reminder/run.sh # atlas:reminder"
+          }
+        ]
+      }
+    ]
+  },
+  "atlas:skillOverrides": [
+    "pdf-tools",
+    "release-notes"
+  ]
+}

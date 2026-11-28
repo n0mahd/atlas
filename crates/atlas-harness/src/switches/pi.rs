@@ -38,7 +38,10 @@ fn names_skill(entry: &str, name: &str) -> bool {
         || path.ends_with(&format!("/{file}"))
 }
 
-pub(super) fn render(current: Option<&[u8]>, off: &BTreeSet<String>) -> Result<Change, FormatError> {
+pub(super) fn render(
+    current: Option<&[u8]>,
+    off: &BTreeSet<String>,
+) -> Result<Change, FormatError> {
     let original = parse_object(current)?;
     let mut doc = original.clone();
     let mut skills: Vec<String> = match doc.get("skills") {
@@ -98,7 +101,12 @@ mod tests {
         ] {
             assert!(names_skill(e, "pdf"), "{e}");
         }
-        for e in ["skills/pdf", "!skills/pdf", "-skills/pdf-tools", "-skills/x/pdf"] {
+        for e in [
+            "skills/pdf",
+            "!skills/pdf",
+            "-skills/pdf-tools",
+            "-skills/x/pdf",
+        ] {
             assert!(!names_skill(e, "pdf"), "{e}");
         }
     }

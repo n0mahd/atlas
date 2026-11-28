@@ -21,7 +21,10 @@ pub(super) const RECORD: &str = "atlas:skillOverrides";
 /// file holding one is refused rather than edited.
 const STATES: [&str; 4] = ["on", "name-only", "user-invocable-only", "off"];
 
-pub(super) fn render(current: Option<&[u8]>, off: &BTreeSet<String>) -> Result<Change, FormatError> {
+pub(super) fn render(
+    current: Option<&[u8]>,
+    off: &BTreeSet<String>,
+) -> Result<Change, FormatError> {
     let original = parse_object(current)?;
     let mut doc = original.clone();
     let mut overrides = match doc.get("skillOverrides") {
