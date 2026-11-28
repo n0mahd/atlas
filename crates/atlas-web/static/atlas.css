@@ -351,6 +351,55 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 
 .client-row { border-top: 1px solid var(--hair); }
 
+/* import */
+
+.head-action { margin: 0 0 0 auto; align-self: center; }
+.section-head .head-action + * { margin-left: 0; }
+.button-small { min-height: 30px; padding: 0 12px; font-size: 11px; }
+.row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.inline-form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; }
+.drawer-note { margin: 0; font-size: 14px; font-style: italic; color: var(--ink-soft); }
+.drawer-note.warn, .choice-note.warn { color: var(--oxblood); }
+.row-flag.quiet { color: var(--muted); }
+.row.static .inline-form { flex: none; }
+.row.static .icon-button { width: 30px; height: 30px; font-size: 16px; line-height: 1; }
+.input-small { height: 30px; width: 14em; max-width: 100%; padding: 0 8px; background: var(--field); color: var(--ink); border: 1px solid var(--hair); border-radius: 0; }
+.field-inline { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.sub-head { margin: 12px 0 2px; font-size: 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.tidy-offer { margin: 0; }
+.tidy-offer .link-cap { margin-left: 8px; font-style: normal; }
+
+.folded > summary { cursor: pointer; list-style: none; }
+.folded > summary::-webkit-details-marker { display: none; }
+.folded > summary .chev { margin-left: auto; }
+.folded[open] > summary .chev { transform: rotate(180deg); }
+
+.choice-row { flex-wrap: wrap; border: 0; margin: 0; min-width: 0; }
+fieldset.choice-row { padding: 5px 8px; }
+fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
+.choices { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-left: auto; }
+.choice { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.choice input { flex: none; width: 16px; height: 16px; accent-color: var(--verdigris); }
+.choice-note { flex-basis: 100%; font-size: 14px; font-style: italic; }
+.tidy-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 18px; }
+
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 8px; }
+.compare-label { margin: 0 0 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.compare .ink-block { max-height: 28em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+#outside .row-flag { white-space: normal; flex: 0 1 auto; min-width: 0; }
+#outside .row-kind { width: auto; }
+
+@media (max-width: 720px) {
+  .compare { grid-template-columns: 1fr; }
+  #outside .row.static { flex-wrap: wrap; row-gap: 4px; }
+  #outside .row.static .row-main { flex: 1 1 100%; }
+  #outside .row > summary .row-flag { flex-basis: 100%; }
+  .head-action { margin-left: auto; }
+  .choices { margin-left: 0; flex-basis: 100%; }
+  fieldset.choice-row > legend { float: none; }
+  .input-small { width: 100%; }
+
 /* placement: per-agent switches and "Use in…" (decision 0027). The switches are submit
    buttons with role="switch", so they work as plain form posts without script. */
 

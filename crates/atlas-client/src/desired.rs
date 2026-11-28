@@ -127,6 +127,7 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
             matcher: manifest.matcher,
             script: script.to_string_lossy().into_owned(),
             timeout: manifest.timeout,
+            replaces: manifest.replaces,
         },
         harnesses: manifest.harnesses,
     })

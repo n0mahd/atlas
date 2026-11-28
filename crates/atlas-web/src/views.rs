@@ -22,6 +22,8 @@ pub struct Snapshot {
     pub projects: Vec<ProjectView>,
     /// Sources, copies and conflicts of skills, worked out once per read.
     pub library: crate::library::Index,
+    /// What sits outside Atlas on this machine (`atlas_fs::outside`).
+    pub outside: atlas_fs::outside::Outside,
 }
 
 /// The agents Atlas shows marks for. T3 Code and Herdr run the others, so they have none
@@ -51,6 +53,13 @@ pub(crate) const fn short(kind: HarnessKind) -> &'static str {
         HarnessKind::T3 => "T3 Code",
         HarnessKind::Herdr => "Herdr",
     }
+}
+
+/// The marks for agents that have something: one sparkles mark when every agent set up
+/// here has it.
+#[must_use]
+pub(crate) fn agent_marks(snap: &Snapshot, have: &[HarnessKind]) -> (Vec<AgentMark>, bool) {
+    marks(have, &present_agents(snap))
 }
 
 pub(crate) fn join_names(kinds: &[HarnessKind]) -> String {
@@ -342,12 +351,16 @@ pub fn overview(snap: &Snapshot) -> Overview {
     let store_memory = c.memory.iter().filter(|m| m.scope == Scope::Global).count();
     let found_hooks: usize = snap.harnesses.iter().map(|h| h.hooks.len()).sum();
     let mut notices = Vec::new();
-    let outside = outside_skills(snap).len();
+    let outside = crate::import::overview_count(snap);
     if outside > 0 {
         notices.push(Notice {
-            text: format!("{outside} skills on this machine aren't in Atlas."),
-            href: "/skills#outside".to_owned(),
-            action: "Show",
+            text: if outside == 1 {
+                "1 skill on this machine isn't in Atlas.".to_owned()
+            } else {
+                format!("{outside} skills on this machine aren't in Atlas.")
+            },
+            href: "/skills/tidy".to_owned(),
+            action: "Tidy up",
         });
     }
     for p in &snap.projects {
@@ -430,25 +443,6 @@ pub struct SkillRow {
 }
 
 impl SkillRow {
-    fn new(name: String, description: String, home: String) -> Self {
-        Self {
-            name,
-            description,
-            href: None,
-            marks: Vec::new(),
-            all: false,
-            flag: String::new(),
-            agents: Vec::new(),
-            path: String::new(),
-            files: 0,
-            also_global: false,
-            home,
-            source: None,
-            conflict: false,
-            reasons: Vec::new(),
-        }
-    }
-
     /// The value a checkbox or hidden field carries: `home/name`.
     #[must_use]
     pub fn key(&self) -> String {
@@ -608,62 +602,6 @@ fn claude_missing(snap: &Snapshot, view: &ProjectView) -> usize {
         .count()
 }
 
-/// A skill an agent on this hub has that doesn't come from the store.
-#[derive(Debug)]
-struct Outside {
-    name: String,
-    kinds: Vec<HarnessKind>,
-    broken: bool,
-    /// Where it comes from, in words.
-    source: String,
-}
-
-fn outside_skills(snap: &Snapshot) -> Vec<Outside> {
-    let known: HashSet<&str> = snap
-        .catalog
-        .skills
-        .iter()
-        .map(|s| s.name.as_str())
-        .collect();
-    let mut found: Vec<Outside> = Vec::new();
-    for h in &snap.harnesses {
-        for dir in &h.skill_dirs {
-            for entry in &dir.entries {
-                let (broken, source) = match entry {
-                    InstalledSkill::FromAtlas { .. } => continue,
-                    InstalledSkill::Broken { target, .. } => {
-                        (true, format!("Broken link to {target}"))
-                    }
-                    InstalledSkill::Outside { detail, .. } => match detail.strip_prefix("link to ")
-                    {
-                        Some(target) => (false, format!("Linked from {target}")),
-                        None => (false, format!("Its own folder in {}", dir.path)),
-                    },
-                };
-                if known.contains(entry.name()) {
-                    continue;
-                }
-                match found.iter_mut().find(|o| o.name == entry.name()) {
-                    Some(o) => {
-                        if !o.kinds.contains(&h.kind) {
-                            o.kinds.push(h.kind);
-                        }
-                        o.broken |= broken;
-                    }
-                    None => found.push(Outside {
-                        name: entry.name().to_owned(),
-                        kinds: vec![h.kind],
-                        broken,
-                        source,
-                    }),
-                }
-            }
-        }
-    }
-    found.sort_by(|a, b| a.name.cmp(&b.name));
-    found
-}
-
 /// The "This project" section: the repo's skills and which agents load them.
 fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind]) -> SkillSection {
     let present = present.to_vec();
@@ -754,36 +692,7 @@ pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
         groups: Vec::new(),
     });
 
-    if scope == &Scope::Global {
-        let outside: Vec<SkillRow> = outside_skills(snap)
-            .into_iter()
-            .map(|o| {
-                let (marks, all) = marks(&o.kinds, &present);
-                let mut row = SkillRow::new(o.name, o.source, String::new());
-                row.flag = if o.broken {
-                    "Broken link".to_owned()
-                } else {
-                    String::new()
-                };
-                row.agents = agent_states(&o.kinds, &present);
-                row.marks = marks;
-                row.all = all;
-                row
-            })
-            .collect();
-        total += outside.len();
-        if !outside.is_empty() {
-            sections.push(SkillSection {
-                id: "outside",
-                num: "II",
-                title: "Outside Atlas".to_owned(),
-                rows: outside,
-                notice: None,
-                groups: Vec::new(),
-            });
-        }
-    }
-
+    // Outside Atlas and Built in come from `crate::import::skills_outside`.
     for s in &mut sections {
         s.rows.retain(|r| matches(q, &[&r.name, &r.description]));
     }
@@ -1624,7 +1533,7 @@ pub struct PairedClient {
 fn hub_machine(snap: &Snapshot, hub: &str) -> Machine {
     let mut lines = Vec::new();
     let mut absent = Vec::new();
-    let outside_total = outside_skills(snap).len();
+    let outside_total = snap.outside.skills.iter().filter(|s| !s.kept).count();
     for &k in &AGENTS {
         let Some(h) = harness(snap, k) else { continue };
         if !h.present {

@@ -10,6 +10,7 @@ pub mod clients;
 mod distribute;
 mod edit;
 mod icons;
+mod import;
 mod install;
 mod instructions_manage;
 mod library;
@@ -19,6 +20,7 @@ pub mod release;
 pub mod remote;
 mod skill_ops;
 mod skills_place;
+mod tidy;
 mod updates;
 pub mod views;
 
@@ -126,11 +128,18 @@ impl AppState {
             let catalog = atlas_fs::load_catalog(&sources);
             let harnesses = atlas_fs::scan_harnesses(&sources);
             let library = library::Index::read(&sources, &lock, &catalog, &harnesses);
+            let outside = atlas_fs::outside::scan(
+                &sources,
+                &catalog,
+                &harnesses,
+                &atlas_fs::outside::Rules::default(),
+            );
             Snapshot {
                 catalog,
                 harnesses,
                 projects: atlas_fs::scan_projects(&sources),
                 library,
+                outside,
             }
         })
         .await
@@ -176,6 +185,7 @@ pub fn router(state: AppState, access: Access) -> Router {
             "/skills/{home}/{name}/files/{*path}",
             get(library_pages::file_view),
         )
+        .route("/skills/tidy", get(tidy::page).post(tidy::run))
         .route("/skills/{home}/{name}", get(skill_detail))
         .route(
             "/skills/{home}/{name}/agents",
@@ -241,6 +251,16 @@ pub fn router(state: AppState, access: Access) -> Router {
             "/instructions/{scope}/{file}/edit",
             get(edit::edit_instructions).post(edit::save_instructions),
         )
+        .route("/import/skill", post(import::bring_skill))
+        .route("/import/skill/theirs", post(import::take_theirs))
+        .route("/import/skills", post(import::bring_all_skills))
+        .route("/import/note", post(import::bring_note))
+        .route("/import/notes", post(import::bring_all_notes))
+        .route("/import/hook", post(import::bring_hook))
+        .route("/import/hooks", post(import::bring_all_hooks))
+        .route("/import/keep", post(import::keep))
+        .route("/import/compare", get(import::compare))
+        .route("/import/compare-copies", get(tidy::compare_copies))
         .route("/static/{*path}", get(static_file))
         .fallback(not_found)
         .with_state(state)
@@ -345,6 +365,7 @@ struct OverviewPage {
 struct SkillsPage {
     page: Page,
     v: views::SkillsList,
+    outside: import::SkillsOutside,
     place: skills_place::ListPlace,
 }
 
@@ -363,6 +384,7 @@ struct SkillPage {
 struct MemoryPage {
     page: Page,
     v: views::MemoryList,
+    outside: import::MemoryOutside,
 }
 
 #[derive(Template)]
@@ -377,6 +399,7 @@ struct MemoryDetailPage {
 struct HooksPage {
     page: Page,
     v: views::Hooks,
+    outside: import::HooksOutside,
 }
 
 #[derive(Template)]
@@ -438,6 +461,9 @@ struct ListQuery {
     sent: Option<String>,
     #[serde(default)]
     notsent: Option<String>,
+    /// After bringing something into Atlas: what to add to the notice (`import::done_text`).
+    #[serde(default)]
+    done: String,
     /// After a skill's switch or "Use in…": what changed (`turned` and `agent`, or `used`).
     #[serde(default)]
     turned: String,
@@ -501,7 +527,14 @@ impl ListQuery {
     }
 
     fn apply(&self, page: &mut Page) {
-        let (text, send) = self.flash();
+        let (mut text, send) = self.flash();
+        if let Some(extra) = import::done_text(&self.done) {
+            text = if text.is_empty() {
+                extra
+            } else {
+                format!("{text} {extra}")
+            };
+        }
         page.flash = text;
         page.flash_action = send.then_some("Send");
     }
@@ -544,8 +577,17 @@ async fn skills(
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page);
+    let outside = import::skills_outside(&snap, &scope, &q.q);
     let place = skills_place::list(&s, &snap, &scope, &page, &q.open).await?;
-    Ok(Html(SkillsPage { page, v, place }.render()?))
+    Ok(Html(
+        SkillsPage {
+            page,
+            v,
+            outside,
+            place,
+        }
+        .render()?,
+    ))
 }
 
 async fn skill_detail(
@@ -586,7 +628,8 @@ async fn memory(
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
     q.apply(&mut page);
-    Ok(Html(MemoryPage { page, v }.render()?))
+    let outside = import::memory_outside(&snap, &scope);
+    Ok(Html(MemoryPage { page, v, outside }.render()?))
 }
 
 async fn memory_detail(
@@ -616,7 +659,8 @@ async fn hooks(
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
     q.apply(&mut page);
-    Ok(Html(HooksPage { page, v }.render()?))
+    let outside = import::hooks_outside(&snap);
+    Ok(Html(HooksPage { page, v, outside }.render()?))
 }
 
 async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {

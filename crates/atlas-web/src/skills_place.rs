@@ -1022,6 +1022,7 @@ mod tests {
                 .collect(),
             projects: Vec::new(),
             library: crate::library::Index::default(),
+            outside: atlas_fs::outside::Outside::default(),
         }
     }
 

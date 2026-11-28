@@ -41,6 +41,10 @@ pub struct HookManifest {
     pub timeout: Option<u32>,
     /// Limit it to these harnesses. None: every harness that has the event.
     pub harnesses: Option<Vec<HarnessKind>>,
+    /// For a hook brought into Atlas from a harness's config: the hand-made command it
+    /// came from. Where Atlas writes this hook, it removes a hand-made entry with exactly
+    /// this command, event, matcher and timeout, so the hook doesn't run twice.
+    pub replaces: Option<String>,
 }
 
 /// A hook folder with its manifest.

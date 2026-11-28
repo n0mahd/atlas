@@ -75,40 +75,107 @@ each checkout:
 
 ## Bringing things in (one click each)
 
-The Skills, Instructions, Memory and Hooks screens each have an **Outside Atlas** part with
-**Bring into Atlas** per row and **Bring all in**, and the Skills page has **Tidy up**. The
-owner's rule: after an import the original is gone and agents read Atlas's copy.
+The Skills, Memory and Hooks screens each have an **Outside Atlas** part with **Bring into
+Atlas** per row, **Bring all in** and **Leave it outside**; Instructions works through **Use
+Global instead** (below). The Skills page also has **Tidy up** (`/skills/tidy`), offered by a
+note at the top of the page and by Home's notice when there is something to do. The owner's
+rule: after an import the original is gone and agents read Atlas's copy.
 
-- The hub copies the item into the store and commits (one change, `atlas-web::change`).
+- **What is outside** comes from `atlas_fs::outside::scan`, run with every snapshot: the
+  login's harness skill folders, the built-in and plugin skills, the hooks the harness scan
+  found and Claude Code's per-repo memory. Its rules are pure functions of paths
+  (`place_of`, `hook_owner`), so they are tested without a disk.
+- **Requests never carry paths.** A row is named by its key (`skill:~/.claude/skills/x`,
+  `memory:<folder>/<file>`, `hook:<config>#<fingerprint>`; the same form `[keep]` stores,
+  built with `Keep::key`, never an absolute home path). Each action re-scans and acts only on
+  an item it finds again, through one `atlas-web::change` (session, CSRF, git lock, clean
+  paths, one commit per repo). Code: `atlas-web/src/import.rs` and `tidy.rs`.
 - On every machine, atlasd replaces a real folder or file at a managed name with Atlas's
-  link **only if it is an exact copy** of what Atlas now holds (`library::Tree::digest`
-  for folders; for instruction files, every line of the file is already in the target).
+  link **only if it is an exact copy** of what Atlas now holds (`library::Tree::exact_digest`
+  for folders, which excludes any folder holding a link, a `.git` or a special file).
   Anything that differs stays and is reported, so nothing is lost.
-- **Skills**: real folders and links to folders outside Atlas. Links into folders a tool
-  installed (`/usr/share/...`, a tool's own home such as `~/.cua-driver`) and agents' own
-  built-in and plugin skills are listed under **Built in and plugins** and never imported.
-- **Instructions**: the page shows, for each file, which agents read it directly,
-  through a link, through Claude's `@` import or through Claude's AGENTS.md option, and
-  why the others don't (`atlas_harness::readers`, sourced in `HARNESSES.md`; computed for
-  the hub's own machine). An agent's own home file offers **Use Global instead**: its text
-  is appended to Global and committed; atlasd then swaps the file for the link (Claude's
-  `CLAUDE.md` for just the import) on each machine only where every non-blank line of it
-  is in Global (`instructions::contained`, re-checked when applied). A project's
-  `CLAUDE.md` can become `AGENTS.md` or merge into it, and the same confirmation offers
-  Claude's option when Claude would still skip `AGENTS.md`; **Move to Global** and **Copy
-  to this project** move text the other ways. Moved text is appended after a blank line
-  and `<!-- atlas: from <where> -->`, and nothing is added that the target already holds.
-  A new `CLAUDE.local.md` goes in Atlas's block of `.git/info/exclude`, so it is never
-  committed (and git can't undo it; the confirmation says so). Claude's choice lives in
-  `atlas/placements.toml` as `[instructions] claude-reads-agents-md = "when-no-claude-md" |
-  "alongside" | "never"`; without it atlasd leaves Claude's setting alone.
-- **Memory**: Claude Code's `~/.claude/projects/<repo>/memory/*.md` become
-  `<knowledge>/memory/projects/<project>/<note>.md` with `metadata.host` and
-  `metadata.project`; then atlasd makes the per-repo folder a link to that store folder, so
-  new notes go straight to git (decision 0008).
-- **Hooks**: a hook in a harness's config becomes `hooks/<name>/hook.toml` plus a script;
-  after the signed update atlasd's own `# atlas:<name>` entry replaces the hand-made one.
-- **Keep**: "Leave it outside" records the item in `[keep]`, so it isn't offered again.
+
+### Skills
+
+| Entry in an agent's skills folder | Shown as | Imported? |
+|---|---|---|
+| A real folder | Its own folder in `~/.claude/skills` | Yes |
+| A link to a folder in the home, outside Atlas | Linked from `~/...` | Yes: the resolved folder is copied |
+| A link into `/usr`, `/opt`, `/nix`, `/snap`, flatpak, a tool's own dot-folder (`~/.cua-driver`, `~/.local/share/<tool>`, `~/.cache`, `~/.t3`, `~/.config/<not an agent>`) or a package store (`node_modules`) | Installed by `<tool>` | Never |
+| A link whose target is gone | Broken link | No; atlasd offers removal |
+| A link into Atlas's store | (not outside) | — |
+| Codex's `~/.codex/skills/.system/<name>`; each Claude Code plugin's `<installPath>/skills/<name>` from `~/.claude/plugins/installed_plugins.json` (user and managed installs, and project installs of registered projects), named `<plugin>:<name>` | **Built in and plugins**, folded | Never |
+
+The agents' own folders (`.claude`, `.codex`, `.agents`, `.pi`, `.gemini`, `.grok`,
+`.cursor`, and `.config/opencode|amp|muse|agents`) come from the harness layouts; T3 Code's
+and Herdr's folders count as tools'. Built-in paths follow T3 Code's `ProvidedSkills`.
+
+A skill goes to Global (private) by default, or to the `.agents/skills` of the registered
+project it was found in. A copy never follows links inside the folder; the row says what it
+leaves out, and since atlasd won't replace such an original, the owner deletes it by hand.
+If Atlas has a skill of that name: an exact copy means nothing to copy (atlasd adopts it
+with the next update); otherwise **Compare** shows both, and the owner keeps Atlas's
+(nothing changes) or takes this machine's (Atlas's folder is replaced, one commit).
+
+### Instructions
+
+The Instructions page shows, for each file, which agents read it directly,
+through a link, through Claude's `@` import or through Claude's AGENTS.md option, and
+why the others don't (`atlas_harness::readers`, sourced in `HARNESSES.md`; computed for
+the hub's own machine). An agent's own home file offers **Use Global instead**: its text
+is appended to Global and committed; atlasd then swaps the file for the link (Claude's
+`CLAUDE.md` for just the import) on each machine only where every non-blank line of it
+is in Global (`instructions::contained`, re-checked when applied). A project's
+`CLAUDE.md` can become `AGENTS.md` or merge into it, and the same confirmation offers
+Claude's option when Claude would still skip `AGENTS.md`; **Move to Global** and **Copy
+to this project** move text the other ways. Moved text is appended after a blank line
+and `<!-- atlas: from <where> -->`, and nothing is added that the target already holds.
+A new `CLAUDE.local.md` goes in Atlas's block of `.git/info/exclude`, so it is never
+committed (and git can't undo it; the confirmation says so). Claude's choice lives in
+`atlas/placements.toml` as `[instructions] claude-reads-agents-md = "when-no-claude-md" |
+"alongside" | "never"`; without it atlasd leaves Claude's setting alone.
+
+### Memory
+
+Claude Code's `~/.claude/projects/<repo>/memory/*.md` for each registered project are
+copied **byte for byte** (`MEMORY.md` included) to `<knowledge>/memory/projects/<project>/`,
+because atlasd links the per-repo folder to that store folder only when every note there
+is in the store unchanged; then new notes go straight to git (decision 0008). The host and
+project are therefore not written into the notes: the project is the folder name, and
+`memory/projects/<project>/index.md` (a map, which the catalog skips) records which machine
+each note came from (`- [note.md](note.md) · from <hub>`). A Claude Code folder with its own
+`index.md` keeps it, and Atlas records nothing. A note the store already has byte for byte
+is skipped; one whose store copy differs needs **Use this copy**. Notes with no or invalid
+frontmatter come in unchanged too; the Memory page names them by file. Memory folders for
+repos Atlas doesn't know are listed by their raw folder name, not imported, until the repo is
+registered.
+
+### Hooks
+
+A hand-made hook becomes `hooks/<name>/hook.toml` (decision 0011) plus `run.sh`
+(`#!/bin/sh` and the command, executable): the event in Atlas's words, matcher and timeout
+carried, `harnesses` limited to its agent, and `replaces` naming the original command. The
+page shows the command with secrets masked first, and refuses a command that looks like it
+holds a secret (it would go in git). Where atlasd writes the hook (Claude Code, Codex), the
+format drops a hand-made handler with exactly that command, event, matcher and timeout
+(`atlas_harness::hooks`, `ManagedHook::replaces`), so it doesn't run twice. Not offered:
+Atlas's own `# atlas:` entries, tools' entries (Herdr's `herdr-agent-*` scripts, scripts in a
+tool's folder: "Added by <tool>"), events Atlas has no name for (Notification, ...), and
+Grok Build's and Muse's hooks (Atlas keeps Grok's in a file of its own, so the hand-made
+one would still run; it doesn't write Muse's yet).
+
+### Tidy up
+
+Adapted from T3 Code's: bring outside skills in or leave them outside; drop a project's copy
+of a skill that is also Global (with **Compare**); move real folders out of a project's
+`.claude/skills` into `.agents/skills` (refused if the folder holds links or a `.git`); turn
+a project skill back on for agents it was switched off for. Nothing changes until **Tidy up**
+is pressed; then Knowledge commits first, then each project, one commit each. A box whose
+item has gone since the page was opened refuses the whole run.
+
+### Leave it outside
+
+Records the item's key in `[keep]` of `atlas/placements.toml`, so it isn't offered again.
 
 ## The skill library
 

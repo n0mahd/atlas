@@ -31,6 +31,7 @@ fn hook(name: &str, event: HookEvent, matcher: Option<&str>, timeout: Option<u32
         matcher: matcher.map(str::to_owned),
         script: format!("/opt/atlas/store/hooks/{name}/run.sh"),
         timeout,
+        replaces: None,
     }
 }
 
@@ -283,4 +284,79 @@ fn antigravity_removes_only_atlas_hooks() {
     let v = json(&written(antigravity_hooks(Some(&out), &[]).unwrap()));
     let keys: Vec<_> = v.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(keys, ["lint-checker", "safety-gate"]);
+}
+
+/// A hook brought into Atlas from a hand-made entry.
+fn imported(command: &str) -> ManagedHook {
+    ManagedHook {
+        replaces: Some(command.to_owned()),
+        ..hook(
+            "no-worktrees",
+            HookEvent::PreToolUse,
+            Some("Bash"),
+            Some(10),
+        )
+    }
+}
+
+#[test]
+fn an_imported_hook_replaces_only_its_identical_hand_made_entry() {
+    let before = br#"{
+  "model": "x",
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "python3 ~/.claude/hooks/no-worktrees.py", "timeout": 10},
+        {"type": "command", "command": "bash ~/.claude/hooks/other.sh"}
+      ]},
+      {"matcher": "Edit", "hooks": [
+        {"type": "command", "command": "python3 ~/.claude/hooks/no-worktrees.py", "timeout": 10}
+      ]},
+      {"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "python3 ~/.claude/hooks/no-worktrees.py", "timeout": 30}
+      ]}
+    ]
+  }
+}"#;
+    let hook = imported("python3 ~/.claude/hooks/no-worktrees.py");
+    for format in [claude_settings as Format, codex_hooks] {
+        let out = written(format(Some(before), std::slice::from_ref(&hook)).unwrap());
+        let v = json(&out);
+        let groups = v["hooks"]["PreToolUse"].as_array().unwrap();
+        // The identical handler goes; its group keeps the owner's other handler.
+        assert_eq!(
+            commands(&groups[0]),
+            ["bash ~/.claude/hooks/other.sh"],
+            "{groups:?}"
+        );
+        // Another matcher or another timeout isn't the same entry, so it stays.
+        assert_eq!(groups[1]["matcher"], "Edit");
+        assert_eq!(groups[2]["hooks"][0]["timeout"], 30);
+        assert!(commands(&groups[3])[0].ends_with("# atlas:no-worktrees"));
+        assert_eq!(groups.len(), 4);
+        assert_eq!(v["model"], "x");
+        assert_eq!(
+            format(Some(&out), std::slice::from_ref(&hook)).unwrap(),
+            Change::Unchanged
+        );
+    }
+}
+
+#[test]
+fn a_group_emptied_by_an_imported_hook_goes() {
+    let before = br#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"python3 ~/.claude/hooks/no-worktrees.py","timeout":10}]}]}}"#;
+    let brought = imported("python3 ~/.claude/hooks/no-worktrees.py");
+    let out = json(&written(claude_settings(Some(before), &[brought]).unwrap()));
+    let groups = out["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert!(commands(&groups[0])[0].ends_with("# atlas:no-worktrees"));
+    // Without `replaces` the hand-made entry stays beside Atlas's.
+    let plain = hook(
+        "no-worktrees",
+        HookEvent::PreToolUse,
+        Some("Bash"),
+        Some(10),
+    );
+    let out = json(&written(claude_settings(Some(before), &[plain]).unwrap()));
+    assert_eq!(out["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
 }

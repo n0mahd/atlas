@@ -10,6 +10,7 @@ pub mod edit;
 mod harness;
 pub mod library;
 pub mod lock;
+pub mod outside;
 mod paths;
 pub mod skill_folder;
 

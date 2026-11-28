@@ -202,6 +202,7 @@ fn claude_setting_composes_with_the_hooks_format() {
         matcher: Some("Bash".into()),
         script: "/srv/knowledge/hooks/guard/run.sh".into(),
         timeout: None,
+        replaces: None,
     };
     let Change::Write(hooks) = claude_settings(None, std::slice::from_ref(&hook)).unwrap() else {
         panic!()
