@@ -84,8 +84,9 @@ Then the standing items:
 - Atlas adds an `@` import to Claude's `CLAUDE.md` but has no way yet to remove it when a
   machine stops being managed.
 - Machines install atlasd with `curl <hub>/install | sh -s -- <code>`; the hub serves
-  builds it was given in `<state>/dist/` (static musl builds via `cargo zigbuild`), checked
-  by SHA-256 in the script. They aren't signed yet: signed release builds from CI are the
+  builds it keeps in `<state>/dist/`, checked by SHA-256 in the script. `deploy/install.sh`
+  makes the one for the hub's own CPU (static when the musl target is installed); other
+  CPUs need `cargo zigbuild` by hand. They aren't signed yet: signed release builds from CI are the
   fix. macOS builds are made on a Mac (the TLS stack links Apple's Security framework) and
   run from a launchd agent instead of a systemd timer (decision 0033).
 - Installing over SSH from the Machines page (decision 0025) runs inside the request, up to
