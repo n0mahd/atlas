@@ -27,7 +27,7 @@ pub(crate) struct Placer<'a> {
     reach: Reach,
     /// The home or the repo: folders are relative to it.
     base: &'a Path,
-    cache: BTreeMap<(BTreeSet<HarnessKind>, &'static [&'static str]), Solved>,
+    cache: BTreeMap<(BTreeSet<HarnessKind>, Vec<&'static str>), Solved>,
     pub placed: Placed,
 }
 
@@ -42,10 +42,10 @@ impl<'a> Placer<'a> {
         }
     }
 
-    fn solved(&mut self, off: &BTreeSet<HarnessKind>, own: &'static [&'static str]) -> Solved {
+    fn solved(&mut self, off: &BTreeSet<HarnessKind>, own: &[&'static str]) -> Solved {
         let (harnesses, reach) = (self.harnesses, self.reach);
         self.cache
-            .entry((off.clone(), own))
+            .entry((off.clone(), own.to_vec()))
             .or_insert_with(|| {
                 let wanted = HarnessKind::ALL
                     .into_iter()
@@ -74,7 +74,7 @@ impl<'a> Placer<'a> {
     /// it reads already has the links (`OpenCode` reads Claude's and Codex's), and never a
     /// harness's other folders, or it would see every skill twice (Codex reads both
     /// `~/.agents/skills` and `~/.codex/skills`).
-    pub(crate) fn seed(&mut self, own: &'static [&'static str]) {
+    pub(crate) fn seed(&mut self, own: &[&'static str]) {
         for f in self.solved(&BTreeSet::new(), own).folders {
             self.folder(f);
         }
@@ -87,7 +87,7 @@ impl<'a> Placer<'a> {
         name: &str,
         source: &Path,
         off: &BTreeSet<HarnessKind>,
-        own: &'static [&'static str],
+        own: &[&'static str],
     ) {
         let s = self.solved(off, own);
         for f in &s.folders {

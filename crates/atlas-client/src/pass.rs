@@ -3,11 +3,11 @@
 use std::path::PathBuf;
 
 use atlas_core::distribution::Report;
-use atlas_core::release::{SignedRelease, SourceId};
+use atlas_core::release::{Manifest, SignedRelease, SourceId};
 
 use crate::config::{Config, Paths, State};
 use crate::sources::Copies;
-use crate::{desired, plan, release, report, sources};
+use crate::{checkout, desired, plan, project, release, report, sources};
 
 /// What asking the hub for its latest release gave.
 #[derive(Clone, Debug)]
@@ -88,6 +88,7 @@ pub fn run(
                             paths,
                             config,
                             &copies,
+                            &checked.manifest,
                             dry_run,
                             &mut lines,
                             &mut problems,
@@ -128,6 +129,7 @@ fn apply_release(
     paths: &Paths,
     config: &Config,
     copies: &Copies,
+    manifest: &Manifest,
     dry_run: bool,
     lines: &mut Vec<String>,
     problems: &mut Vec<String>,
@@ -152,7 +154,9 @@ fn apply_release(
 
     let mut roots = vec![paths.sources.clone()];
     roots.extend(config.adopt_roots(&paths.home));
-    let plan = plan::plan(&paths.home, &desired, &roots);
+    let machine = machine(paths, config, manifest, lines);
+    let plan = plan::plan_machine(&paths.home, &desired, &roots, &machine);
+    lines.extend(plan.notes.iter().cloned());
     problems.extend(plan.conflicts.iter().cloned());
 
     if dry_run {
@@ -171,4 +175,29 @@ fn apply_release(
     let ok = errors.is_empty();
     problems.extend(errors);
     ok
+}
+
+/// This machine's checkouts of the release's projects, and where memory links go.
+fn machine(
+    paths: &Paths,
+    config: &Config,
+    manifest: &Manifest,
+    lines: &mut Vec<String>,
+) -> plan::Machine {
+    let (checkouts, notes) =
+        checkout::find(&config.project_root_paths(&paths.home), &manifest.projects);
+    lines.extend(notes);
+    let memory = if checkouts.is_empty() {
+        plan::MemoryStore::None
+    } else {
+        project::memory_store(
+            config.memory_store_path(&paths.home),
+            &config.adopt_roots(&paths.home),
+            &paths.home,
+            manifest
+                .source(&SourceId::Knowledge)
+                .map(|s| s.remote.as_str()),
+        )
+    };
+    plan::Machine { checkouts, memory }
 }

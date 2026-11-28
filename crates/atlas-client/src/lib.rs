@@ -16,6 +16,7 @@ pub mod http;
 pub mod pass;
 mod place;
 pub mod plan;
+pub mod project;
 pub mod release;
 pub mod report;
 pub mod sources;

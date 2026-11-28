@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Keep the model pinned; the default changes too often.
+  "model": "anthropic/claude-opus-5-5",
+  "permission": {
+    "edit": "ask", /* ask before every edit */
+    "skill": {
+      "*": "allow",
+      // Never in OpenCode.
+      "deploy": "deny",
+      "legacy-context": "allow",
+      "pdf-tools": "deny", // atlas:pdf-tools
+      "release-notes": "deny", // atlas:release-notes
+    },
+  },
+  "mcp": {
+    "docs": { "type": "local", "command": ["docs-mcp", "--stdio"] }
+  }
+}

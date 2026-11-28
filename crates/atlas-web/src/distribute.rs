@@ -495,6 +495,7 @@ pub(crate) async fn pair_ssh(
                 ok: false,
                 message,
                 output: String::new(),
+                target: f.target.trim().to_owned(),
             };
             return crate::machines_page(&s, &headers, None, Some(result)).await;
         }
@@ -509,6 +510,7 @@ pub(crate) async fn pair_ssh(
                     "Installed and paired on {target}. It shows here once atlasd reports, within a minute."
                 ),
                 output: String::new(),
+                target: String::new(),
             },
             None,
         ),
@@ -519,6 +521,7 @@ pub(crate) async fn pair_ssh(
                     ok: false,
                     message: e.message,
                     output: e.output,
+                    target: target.to_string(),
                 },
                 // The code may still be unused, so offer the command to run by hand.
                 Some(remote::install_command(w.origin(), &code)),
@@ -1078,6 +1081,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(page.contains("isn&#39;t an SSH address"), "{page}");
         assert!(page.contains("marginalia warn-note"));
+        assert!(
+            page.contains("value=\"-oProxyCommand=x\""),
+            "keeps what was typed"
+        );
         // Nothing ran, so no pairing command (and no code) was issued.
         assert!(!page.contains("sh -s --"));
 

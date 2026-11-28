@@ -42,12 +42,11 @@ Keep the single quotes, so the whole command runs on the other machine.
 
 ## 3. From the hub, without a terminal
 
-> **Being built.** This section describes work in progress. Names and steps may change
-> before it ships.
-
-- In the hub: **Machines → Pair**, then the "install it from here over SSH" form. Enter
-  `you@laptop` and the hub runs the install for you.
-- Or, on the hub machine: `atlas-hub add-machine you@laptop`.
+- In the hub: **Machines**, then the "Or install it from here over SSH" row. Enter
+  `you@laptop` and press **Install**. The page shows the result, and the output if it
+  failed. It can take up to a few minutes; leave the page open.
+- Or, on the hub machine: `atlas-hub add-machine you@laptop`. To just print a fresh
+  install command to copy yourself: `atlas-hub pair-code`.
 
 Both need the hub to reach the machine over SSH: either Tailscale SSH turned on there
 (run `sudo tailscale set --ssh` on the machine once), or the hub's SSH key in that

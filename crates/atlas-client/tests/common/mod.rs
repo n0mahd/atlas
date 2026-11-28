@@ -168,6 +168,8 @@ impl World {
                 token: "t".into(),
                 machine: "box".into(),
                 adopt: vec![adopt.to_string_lossy().into_owned()],
+                project_roots: atlas_client::config::default_project_roots(),
+                memory_store: None,
             },
             state: State {
                 owner_keys: vec![key.owner()],

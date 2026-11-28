@@ -134,6 +134,8 @@ impl World {
                 ("skills/gamma/SKILL.md", "---\nname: gamma\n---\n"),
                 ("hooks/guard/hook.toml", HOOK),
                 ("hooks/guard/run.sh", "#!/bin/sh\nexit 0\n"),
+                ("agents/reviewer.md", "---\nname: reviewer\n---\nReview.\n"),
+                ("agents/planner.md", "---\nname: planner\n---\nPlan.\n"),
             ],
         );
         let public = repo(
@@ -155,6 +157,8 @@ impl World {
                 token: "t".into(),
                 machine: "box".into(),
                 adopt: vec![adopt.to_string_lossy().into_owned()],
+                project_roots: atlas_client::config::default_project_roots(),
+                memory_store: None,
             },
             state: State {
                 owner_keys: vec![key.owner()],
@@ -645,4 +649,159 @@ fn grok_build_without_claude_gets_atlas_hooks_in_its_own_file() {
     assert!(!again.failed, "{:?}", again.problems);
     assert!(!h.join(".grok/hooks/atlas.json").exists());
     assert!(h.join(".grok/hooks/mine.json").exists());
+}
+
+/// Commits the knowledge remote as it now stands and pins that in the world's release.
+fn recommit_knowledge(w: &mut World) {
+    let dir = PathBuf::from(&w.sources[0].remote);
+    w.sources[0] = repo(&dir, SourceId::Knowledge, &[]);
+}
+
+#[test]
+fn subagents_are_linked_for_claude_and_pruned_when_removed() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    let first = signed(&w.manifest(1, &[&key]), &key);
+    let pass = w.run(&first, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    for name in ["reviewer.md", "planner.md"] {
+        assert_eq!(
+            link(&h.join(".claude/agents").join(name)),
+            w.copy("knowledge/agents").join(name)
+        );
+    }
+    assert!(
+        !h.join(".codex/agents").exists(),
+        "only Claude Code gets them"
+    );
+    let claude = &pass.report.harnesses[0];
+    assert_eq!(claude.kind, HarnessKind::ClaudeCode);
+    assert_eq!(claude.agents_from_atlas, 2);
+    assert_eq!(pass.report.harnesses[1].agents_from_atlas, 0);
+
+    let before = snapshot(w.home());
+    let again = w.run(&first, false);
+    assert!(!again.failed, "{:?}", again.problems);
+    assert_eq!(snapshot(w.home()), before, "the second run is idempotent");
+
+    fs::remove_file(PathBuf::from(&w.sources[0].remote).join("agents/planner.md")).unwrap();
+    recommit_knowledge(&mut w);
+    let next = signed(&w.manifest(2, &[&key]), &key);
+    let pass = w.run(&next, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert!(
+        pass.lines
+            .iter()
+            .any(|l| l.starts_with("remove link ~/.claude/agents/planner.md")),
+        "{:?}",
+        pass.lines
+    );
+    assert!(fs::symlink_metadata(h.join(".claude/agents/planner.md")).is_err());
+    assert!(h.join(".claude/agents/reviewer.md").is_file());
+    assert_eq!(pass.report.harnesses[0].agents_from_atlas, 1);
+    let dry = w.run(&next, true);
+    assert_eq!(dry.lines, vec!["Nothing to change.".to_owned()]);
+}
+
+#[test]
+fn a_dry_run_shows_subagent_links() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    assert!(!w.run(&signed(&w.manifest(1, &[&key]), &key), false).failed);
+    fs::remove_file(w.home().join(".claude/agents/reviewer.md")).unwrap();
+    let before = snapshot(w.home());
+    let pass = w.run(&signed(&w.manifest(2, &[&key]), &key), true);
+    assert_eq!(snapshot(w.home()), before);
+    assert!(
+        pass.lines
+            .iter()
+            .any(|l| l.starts_with("would link ~/.claude/agents/reviewer.md")),
+        "{:?}",
+        pass.lines
+    );
+}
+
+#[test]
+fn own_subagent_files_stay_and_adopted_links_move() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    write(&h.join(".claude/agents/reviewer.md"), "mine\n");
+    write(&w.adopt.join("agents/planner.md"), "old\n");
+    symlink(
+        w.adopt.join("agents/planner.md"),
+        h.join(".claude/agents/planner.md"),
+    )
+    .unwrap();
+    symlink("/elsewhere/helper.md", h.join(".claude/agents/helper.md")).unwrap();
+
+    let pass = w.run(&signed(&w.manifest(1, &[&key]), &key), false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert_eq!(
+        fs::read_to_string(h.join(".claude/agents/reviewer.md")).unwrap(),
+        "mine\n"
+    );
+    assert!(
+        pass.problems.iter().any(|p| p.contains(
+            "~/.claude/agents/reviewer.md is your own folder or file, so Atlas didn't link its subagent reviewer.md"
+        )),
+        "{:?}",
+        pass.problems
+    );
+    assert_eq!(
+        link(&h.join(".claude/agents/planner.md")),
+        w.copy("knowledge/agents/planner.md")
+    );
+    assert_eq!(
+        link(&h.join(".claude/agents/helper.md")),
+        PathBuf::from("/elsewhere/helper.md"),
+        "a link Atlas doesn't manage stays"
+    );
+}
+
+#[test]
+fn no_claude_code_means_no_subagents() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    fs::remove_dir_all(h.join(".claude")).unwrap();
+    let pass = w.run(&signed(&w.manifest(1, &[&key]), &key), false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert!(!h.join(".claude").exists());
+    assert!(
+        pass.report
+            .harnesses
+            .iter()
+            .all(|r| r.agents_from_atlas == 0)
+    );
+}
+
+#[test]
+fn only_plain_top_level_markdown_files_are_subagents() {
+    let tmp = tempfile::tempdir().unwrap();
+    let k = tmp.path();
+    for f in [
+        "good.md",
+        "Bad_Name.md",
+        ".hidden.md",
+        "notes.txt",
+        "sub/deep.md",
+    ] {
+        write(&k.join("agents").join(f), "x\n");
+    }
+    fs::create_dir_all(k.join("agents/folder.md")).unwrap();
+    symlink("/etc/passwd", k.join("agents/link.md")).unwrap();
+    let d = atlas_client::desired::read(Some(k), None);
+    assert_eq!(d.agents.keys().collect::<Vec<_>>(), ["good.md"]);
+    for name in ["Bad_Name.md", "folder.md", "link.md"] {
+        assert!(
+            d.problems
+                .iter()
+                .any(|p| p.contains(&format!("subagent {name} skipped"))),
+            "{name}: {:?}",
+            d.problems
+        );
+    }
+    assert_eq!(d.problems.len(), 3, "{:?}", d.problems);
 }

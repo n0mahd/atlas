@@ -81,13 +81,17 @@ fn parse_config(text: &str) -> BTreeMap<String, String> {
             continue;
         }
         let (key, value) = line.split_once('=').unwrap_or((line, "true"));
-        let mut value = value.trim();
-        if let Some(cut) = value.find([" #", " ;", "\t#", "\t;"]) {
-            if !value.starts_with('"') {
-                value = value[..cut].trim_end();
+        // A comment starts at `#` or `;` outside quotes; quotes themselves go.
+        let mut clean = String::new();
+        let mut quoted = false;
+        for c in value.trim().chars() {
+            match c {
+                '"' => quoted = !quoted,
+                '#' | ';' if !quoted => break,
+                c => clean.push(c),
             }
         }
-        let value = value.trim_matches('"');
+        let value = clean.trim();
         out.insert(
             format!("{section}.{}", key.trim().to_ascii_lowercase()),
             value.to_owned(),
@@ -391,7 +395,10 @@ mod tests {
         assert!(t.covers(".claude/skills"));
         assert!(t.covers("zed.txt"));
         assert!(!t.covers(".claude/skills/new"));
-        assert!(!t.covers(".claude/skill"), "a prefix of a name isn't inside it");
+        assert!(
+            !t.covers(".claude/skill"),
+            "a prefix of a name isn't inside it"
+        );
         assert!(!t.covers("zed"));
         assert_eq!(
             tracked(&tmp.path().join("none/.git/index"), 20),
@@ -446,9 +453,10 @@ mod tests {
     #[test]
     fn the_exclude_block_is_atlas_s_and_nothing_else_is_touched() {
         let mine = "# my own\n*.log\n";
-        let paths: BTreeSet<String> = [".claude/skills/a".to_owned(), ".claude/skills/b".to_owned()]
-            .into_iter()
-            .collect();
+        let paths: BTreeSet<String> =
+            [".claude/skills/a".to_owned(), ".claude/skills/b".to_owned()]
+                .into_iter()
+                .collect();
         let with = render_exclude(mine, &paths).unwrap();
         assert!(with.starts_with(mine), "{with}");
         assert_eq!(listed(&with), paths);
@@ -457,13 +465,19 @@ mod tests {
         let after = format!("{with}build/\n");
         let one: BTreeSet<String> = [".claude/skills/a".to_owned()].into_iter().collect();
         let fewer = render_exclude(&after, &one).unwrap();
-        assert!(fewer.starts_with(mine) && fewer.ends_with("build/\n"), "{fewer}");
+        assert!(
+            fewer.starts_with(mine) && fewer.ends_with("build/\n"),
+            "{fewer}"
+        );
         assert_eq!(listed(&fewer), one);
         assert_eq!(
             render_exclude(&fewer, &BTreeSet::new()).unwrap(),
             format!("{mine}build/\n"),
             "no paths, no block"
         );
-        assert_eq!(render_exclude("no newline", &one).unwrap().lines().nth(1), Some(BEGIN));
+        assert_eq!(
+            render_exclude("no newline", &one).unwrap().lines().nth(1),
+            Some(BEGIN)
+        );
     }
 }
