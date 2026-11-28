@@ -10,7 +10,9 @@ mod skill;
 pub use frontmatter::{Frontmatter, FrontmatterError, split_frontmatter};
 pub use hook::{HookDef, HookEvent, HookManifest};
 pub use memory::{MemoryFrontmatter, MemoryKind, MemoryMetadata, MemoryPage};
-pub use placement::{Keep, PLACEMENTS_FILE, Placement, Placements};
+pub use placement::{
+    ClaudeAgentsMd, InstructionSettings, Keep, PLACEMENTS_FILE, Placement, Placements,
+};
 pub use skill::{Skill, SkillFrontmatter, SkillHome};
 
 use crate::kernel::Scope;

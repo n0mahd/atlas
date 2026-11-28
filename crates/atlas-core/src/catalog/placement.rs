@@ -13,6 +13,9 @@
 //!
 //! [keep]                          # outside items the owner chose to leave (Tidy up)
 //! items = ["skill:~/.claude/skills/omarchy"]
+//!
+//! [instructions]                  # how agents read instruction files
+//! claude-reads-agents-md = "alongside"
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -88,10 +91,62 @@ pub struct Placements {
     pub project: BTreeMap<Slug, BTreeMap<Slug, Placement>>,
     #[serde(default, skip_serializing_if = "keep_is_empty")]
     pub keep: Keep,
+    #[serde(default, skip_serializing_if = "InstructionSettings::is_default")]
+    pub instructions: InstructionSettings,
 }
 
 fn keep_is_empty(k: &Keep) -> bool {
     k.items.is_empty()
+}
+
+/// When Claude Code reads a project's `AGENTS.md`. Claude Code's own setting (its built-in
+/// AGENTS.md plugin's `instructionFiles` option); atlasd writes it into
+/// `~/.claude/settings.json` on every machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClaudeAgentsMd {
+    /// Only in a project with no `CLAUDE.md` (Claude Code's default).
+    #[default]
+    WhenNoClaudeMd,
+    /// Beside `CLAUDE.md`.
+    Alongside,
+    /// Never.
+    Never,
+}
+
+impl ClaudeAgentsMd {
+    pub const ALL: [Self; 3] = [Self::WhenNoClaudeMd, Self::Alongside, Self::Never];
+
+    /// The word in `atlas/placements.toml` and in forms.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::WhenNoClaudeMd => "when-no-claude-md",
+            Self::Alongside => "alongside",
+            Self::Never => "never",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.id() == id)
+    }
+}
+
+/// How agents read instruction files, where the owner chose.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct InstructionSettings {
+    /// `None`: Atlas leaves Claude Code's setting as each machine has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_reads_agents_md: Option<ClaudeAgentsMd>,
+}
+
+impl InstructionSettings {
+    #[must_use]
+    pub const fn is_default(&self) -> bool {
+        self.claude_reads_agents_md.is_none()
+    }
 }
 
 static DEFAULT: Placement = Placement {
@@ -170,6 +225,15 @@ mod tests {
         assert!(!p.of(&home, &slug("x")).wants(HarnessKind::ClaudeCode));
         p.set(&home, &slug("x"), Placement::default());
         assert_eq!(p, Placements::default());
+    }
+
+    #[test]
+    fn claude_choice_ids_round_trip() {
+        for v in ClaudeAgentsMd::ALL {
+            assert_eq!(ClaudeAgentsMd::from_id(v.id()), Some(v));
+        }
+        assert_eq!(ClaudeAgentsMd::from_id("sometimes"), None);
+        assert!(Placements::default().instructions.is_default());
     }
 
     #[test]
