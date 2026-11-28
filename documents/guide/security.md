@@ -62,8 +62,8 @@ it. Keep the knowledge repo private anyway; it holds your memory and instruction
 - If the hub can't be reached, it changes nothing.
 
 Hooks are commands your agents run, on every machine that gets them. They reach a
-machine only inside an update you signed, but read them before you send: showing hook
-changes before you send them is coming.
+machine only inside an update you signed, and you see each new or changed hook, and any
+change to the passkeys your machines trust, before you sign.
 
 An update carries your knowledge repo as it is when you send, not only what you edited
 in Atlas. Anything you or an agent committed to it some other way goes out with the next

@@ -98,6 +98,36 @@ fn agents_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf
     out
 }
 
+#[cfg(unix)]
+fn is_executable(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_: &fs::Metadata) -> bool {
+    true
+}
+
+/// The first symbolic link under `dir` (not following any), relative to it.
+fn first_link(dir: &Path, rel: &Path) -> Option<PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(dir.join(rel)).ok()?.flatten().collect();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = rel.join(entry.file_name());
+        let kind = entry.file_type().ok()?;
+        if kind.is_symlink() {
+            return Some(path);
+        }
+        if kind.is_dir()
+            && let Some(found) = first_link(dir, &path)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
     let slug = Slug::new(name).map_err(|e| e.to_string())?;
     let file = dir.join("hook.toml");
@@ -114,8 +144,27 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
         ));
     }
     let script = dir.join(run);
-    if !fs::symlink_metadata(&script).is_ok_and(|m| m.is_file()) {
+    let Ok(meta) = fs::symlink_metadata(&script) else {
         return Err(format!("its script {run} is missing"));
+    };
+    if meta.file_type().is_symlink() {
+        return Err("its script is a link, so machines will skip this hook".to_owned());
+    }
+    if !meta.is_file() {
+        return Err(format!("its script {run} is missing"));
+    }
+    // What runs must be exactly what the update shows: no file in the folder may point
+    // elsewhere, since a change there wouldn't look like a change to this hook.
+    if let Some(link) = first_link(dir, Path::new("")) {
+        return Err(format!(
+            "its folder holds a link ({}), so machines will skip this hook",
+            link.display()
+        ));
+    }
+    if !is_executable(&meta) {
+        return Err(format!(
+            "its script {run} isn't executable (mark it with chmod +x and commit)"
+        ));
     }
     Ok(HookSpec {
         hook: ManagedHook {
@@ -159,14 +208,27 @@ pub fn read(knowledge: Option<&Path>, public_skills: Option<&Path>) -> Desired {
     }
     d.agents = agents_in(&knowledge.join("agents"), &mut d.problems);
     let hooks_dir = knowledge.join("hooks");
-    let mut entries: Vec<_> = fs::read_dir(&hooks_dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir()))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| !n.starts_with('.'))
-        .collect();
+    if fs::symlink_metadata(&hooks_dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        d.problems
+            .push("the hooks folder is a link, so machines will skip every hook".to_owned());
+        return d;
+    }
+    let mut entries: Vec<_> = Vec::new();
+    for entry in fs::read_dir(&hooks_dir).into_iter().flatten().flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        match fs::symlink_metadata(entry.path()) {
+            Ok(m) if m.file_type().is_symlink() => d.problems.push(format!(
+                "hook {name} skipped: its folder is a link, so machines will skip this hook"
+            )),
+            Ok(m) if m.is_dir() => entries.push(name),
+            _ => {}
+        }
+    }
     entries.sort();
     for name in entries {
         match hook(&hooks_dir.join(&name), &name) {

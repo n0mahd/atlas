@@ -472,3 +472,86 @@ fn a_named_path_that_was_never_written_does_not_fail_the_commit() {
     .unwrap();
     assert_eq!(files_in(p, "HEAD").trim(), "a.md");
 }
+
+#[test]
+fn reads_what_changed_between_two_commits() {
+    let dir = fixture();
+    let p = dir.path();
+    let repo = Repo::open(p).unwrap();
+    let base = sh(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    fs::write(p.join("a.md"), "a v2\n").unwrap();
+    fs::remove_file(p.join("b.md")).unwrap();
+    fs::create_dir_all(p.join("hooks/guard")).unwrap();
+    fs::write(p.join("hooks/guard/run.sh"), "echo hi\n").unwrap();
+    sh(p, &["add", "-A"]);
+    sh(p, &["commit", "--quiet", "-m", "Edit a in Atlas"]);
+    fs::write(p.join("c.md"), "c v2\n").unwrap();
+    sh(p, &["commit", "--quiet", "-am", "by hand"]);
+    let head = sh(p, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    let mut changed = repo.changed_paths(Some(&base), &head).unwrap();
+    changed.sort_by(|a, b| a.path.cmp(&b.path));
+    let got: Vec<_> = changed
+        .iter()
+        .map(|c| (c.change, c.path.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (atlas_git::Change::Modified, "a.md"),
+            (atlas_git::Change::Deleted, "b.md"),
+            (atlas_git::Change::Modified, "c.md"),
+            (atlas_git::Change::Added, "hooks/guard/run.sh"),
+        ]
+    );
+    let all = repo.changed_paths(None, &head).unwrap();
+    assert!(all.iter().all(|c| c.change == atlas_git::Change::Added));
+    assert_eq!(all.len(), 3, "{all:?}");
+
+    assert_eq!(
+        repo.file_at(&head, "hooks/guard/run.sh", 1024)
+            .unwrap()
+            .unwrap(),
+        b"echo hi\n"
+    );
+    assert!(
+        repo.file_at(&base, "hooks/guard/run.sh", 1024)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        repo.file_at(&head, "hooks", 1024).unwrap().is_none(),
+        "a folder"
+    );
+    assert!(matches!(
+        repo.file_at(&head, "hooks/guard/run.sh", 3),
+        Err(GitError::TooLarge(..))
+    ));
+    assert!(repo.file_at(&head, "../x", 1024).is_err());
+    assert_eq!(
+        repo.tree_entries(&head, "hooks/guard").unwrap(),
+        vec![("100644".to_owned(), "hooks/guard/run.sh".to_owned())]
+    );
+    assert_eq!(
+        repo.mode_at(&head, "hooks/guard/run.sh")
+            .unwrap()
+            .as_deref(),
+        Some("100644")
+    );
+    let diff = repo.diff(&base, &head, "a.md").unwrap();
+    assert!(
+        diff.contains("-a.md v1") && diff.contains("+a v2"),
+        "{diff}"
+    );
+
+    let commits = repo.commits_between(&base, &head).unwrap();
+    let subjects: Vec<_> = commits.iter().map(|c| c.1.as_str()).collect();
+    assert_eq!(subjects, vec!["by hand", "Edit a in Atlas"]);
+    assert_eq!(repo.paths_in_commit(&commits[0].0).unwrap(), vec!["c.md"]);
+    assert!(repo.has_commit(&base));
+    assert!(!repo.has_commit(&"0".repeat(40)));
+    assert!(
+        repo.changed_paths(Some("HEAD"), &head).is_err(),
+        "only full ids"
+    );
+}

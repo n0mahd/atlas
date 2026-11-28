@@ -97,7 +97,9 @@ Elsewhere or planned:
    commits and tree hashes. Project repos aren't pinned: the update only names each
    project and its remote, so atlasd can find its checkouts (decision 0027).
 4. The same Save asks for one passkey tap, which signs the update; the hub checks the
-   signature before storing it. The UI calls these "updates", never "releases".
+   signature before storing it. The UI calls these "updates", never "releases". When the
+   update adds or changes a hook, or changes the passkeys machines trust, the owner first
+   sees a check page built from the exact manifest bytes being signed (decision 0040).
 5. atlasd pulls the update and checks the signature, that N is higher than the last
    one it applied, and the tree hash.
 6. atlasd computes a pure plan, viewable as a dry run.
@@ -121,6 +123,9 @@ Memory skips steps 3–5 by default: agents write it straight to git (decision 0
 - atlasd runs as a user service, never as root, and never executes content it receives.
   A local stdio MCP server starts, and a hook is installed, only if it arrived in a
   signed release (decisions 0009, 0010).
+- The owner sees every hook an update adds or changes, and every change to the trusted
+  passkeys, before signing it; the hub signs exactly the bytes that page was built from
+  (decision 0040).
 - A machine trusts the hub once, at pairing: the installer and the atlasd build come
   from the hub, checked only against the hub's own checksum, and the owner keys a
   machine will accept arrive then.

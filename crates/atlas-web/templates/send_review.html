@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="sections">
+  <section class="section" data-passkey data-pending="{{ id }}" data-next="{{ next }}" data-back="{{ back }}">
+    {% if !keys.is_empty() || !trusted.is_empty() %}
+    <div class="section-head"><span class="num">I</span><h2>Passkeys</h2><span class="count">{% if keys.is_empty() %}{{ trusted.len() }}{% else %}{{ keys.len() }}{% endif %}</span></div>
+    <ul class="rows">
+      {% for k in keys %}
+      <li><div class="row static">{% if k.added %}<span class="mark lead" role="img" aria-label="Added" title="Added"><svg class="agent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></span>{% else %}<span class="mark lead warn" role="img" aria-label="Removed" title="Removed"><svg class="agent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></span>{% endif %}<span class="row-main"><span class="row-name plain">{{ k.text() }}</span></span></div></li>
+      {% endfor %}
+      {% if keys.is_empty() %}
+      <li><div class="row static"><span class="row-main"><span class="row-name plain">{{ trusted.join(", ") }}</span><span class="row-desc">Trusted by your machines</span></span></div></li>
+      {% endif %}
+    </ul>
+    {% endif %}
+    {% if !hooks.is_empty() || keys.is_empty() %}
+    <div class="section-head"><span class="num">{% if !keys.is_empty() || !trusted.is_empty() %}II{% else %}I{% endif %}</span><h2>Hooks</h2><span class="count">{{ hooks.len() }}</span></div>
+    {% if hooks.is_empty() %}<p class="empty">No hooks are new or changed.</p>{% endif %}
+    {% endif %}
+    <ul class="rows">
+      {% for h in hooks %}
+      <li class="hook-check">
+        <div class="row static">
+          {% if h.new %}<span class="mark lead" role="img" aria-label="New hook" title="New hook"><svg class="agent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></span>{% else %}<span class="mark lead" role="img" aria-label="Changed hook" title="Changed hook"><svg class="agent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></svg></span>{% endif %}
+          <span class="row-main"><span class="row-name">{% if h.place.is_empty() %}{{ h.name }}{% else %}Hooks {{ h.place }}{% endif %}</span>{% if !h.description.is_empty() %}<span class="row-desc">{{ h.description }}</span>{% endif %}</span>
+          <span class="row-meta">{{ h.when }}{% if !h.matcher.is_empty() %} · {{ h.matcher }}{% endif %}</span>
+        </div>
+        <div class="hook-body">
+          {% if !h.link.is_empty() %}<p class="marginalia warn-note">{{ h.link }}</p>{% endif %}
+          {% if h.not_runnable %}<p class="marginalia warn-note">Its script isn't marked as runnable, so your machines will skip this hook.</p>{% endif %}
+          {% if h.diff.is_empty() %}
+          {% for f in h.files %}
+          <p class="file-name mono">{{ f.name }}</p>
+          {% if f.note.is_empty() %}<pre class="ink-block wrap">{{ f.text }}</pre>{% else %}<p class="marginalia warn-note">{{ f.note }}</p>{% endif %}
+          {% endfor %}
+          {% else %}
+          <pre class="ink-block wrap diff">{% for l in h.diff %}<span class="d-{{ l.class }}">{{ l.text }}</span>{% endfor %}</pre>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if let Some(o) = others %}
+    <details class="row help others">
+      <summary><span class="row-main"><span class="row-name plain">{{ o.line }}</span></span><span class="chev" aria-hidden="true"></span></summary>
+      <div class="drawer"><ul class="list-plain mono">{% for n in o.names %}<li>{{ n }}</li>{% endfor %}</ul></div>
+    </details>
+    {% endif %}
+    <div class="setting-row confirm-bar">
+      <button class="button-ink" type="button" data-action="send"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>Send</button>
+      <a class="link-cap" href="{{ back }}">Not now</a>
+    </div>
+    <p class="marginalia warn-note" data-error hidden role="alert"></p>
+    <noscript><p class="marginalia">Sending asks for your passkey, which needs JavaScript.</p></noscript>
+  </section>
+</div>
+{% endblock %}

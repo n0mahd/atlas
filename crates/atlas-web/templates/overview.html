@@ -15,11 +15,11 @@
 </section>
 
 {% if waiting.is_some() || !v.notices.is_empty() || !v.problems.is_empty() %}
-<section class="section" data-passkey data-next="/?sent=1">
+<section class="section" data-passkey data-next="/?sent=1" data-back="/">
   <div class="section-head"><span class="num">§</span><h2>Needs a look</h2><span class="count">{{ v.notices.len() + v.problems.len() + waiting.iter().count() }}</span></div>
   <ul class="rows">
     {% if let Some(w) = waiting %}
-    <li><div class="row static"><span class="row-main"><span class="row-name plain">{{ w }}</span></span>{% if page.signed_in %}<button class="button-ink" type="button" data-action="send">Send</button>{% else %}<a class="link-cap" href="/signin?next=/">Sign in</a>{% endif %}</div></li>
+    <li>{% if page.signed_in %}<form class="row static" method="post" action="/send/review"><input type="hidden" name="csrf" value="{{ page.csrf }}"><input type="hidden" name="next" value="/?sent=1"><input type="hidden" name="back" value="/"><span class="row-main"><span class="row-name plain">{{ w }}</span></span><button class="button-ink" type="submit" data-action="send">Send</button></form>{% else %}<div class="row static"><span class="row-main"><span class="row-name plain">{{ w }}</span></span><a class="link-cap" href="/signin?next=/">Sign in</a></div>{% endif %}</li>
     {% endif %}
     {% for n in v.notices %}
     <li><a class="row" href="{{ n.href }}"><span class="row-main"><span class="row-name plain">{{ n.text }}</span></span><span class="link-cap">{{ n.action }}</span></a></li>

@@ -71,8 +71,10 @@ pub struct Writer {
     pub tokens: crate::tokens::CliTokens,
     /// Sent updates (signed releases).
     pub releases: crate::release::Store,
-    /// An update built and waiting for the owner's signature.
-    pub pending: Mutex<Option<crate::distribute::Pending>>,
+    /// Updates built and waiting for the owner's signature, by id.
+    pub pending: Mutex<std::collections::HashMap<String, crate::distribute::Pending>>,
+    /// The update this hub last stored and what else it changed, for the notice after.
+    pub(crate) last_sent: Mutex<Option<(u64, crate::review::Others)>>,
     /// A CLI token just created, by session key, waiting to be shown once. Memory only:
     /// it holds the raw token.
     new_tokens: Mutex<std::collections::HashMap<String, NewToken>>,
@@ -124,7 +126,8 @@ impl Writer {
             machines: crate::clients::Machines::open(state_dir),
             tokens: crate::tokens::CliTokens::open(state_dir),
             releases: crate::release::Store::new(state_dir),
-            pending: Mutex::new(None),
+            pending: Mutex::new(std::collections::HashMap::new()),
+            last_sent: Mutex::new(None),
             new_tokens: Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -769,7 +772,8 @@ pub(crate) async fn settings_page(
         "removed" => "Passkey removed.",
         "last" => "That's your only passkey, so it stays.",
         "unconfirmed_key" => "Confirm with your passkey to remove one.",
-        "sent" => "On your machines within 10 minutes",
+        "sent" => SENT,
+        "nothing" => crate::distribute::NOTHING_NEW,
         "token_removed" => "CLI token revoked.",
         _ => "",
     };
@@ -812,6 +816,9 @@ fn a_passkey_row_says_how_it_was_added() {
     assert_eq!(how_added(None), "");
 }
 
+/// The notice after an update was sent from Settings.
+const SENT: &str = "On your machines within 10 minutes";
+
 async fn render_settings(
     s: &AppState,
     headers: &HeaderMap,
@@ -821,7 +828,7 @@ async fn render_settings(
 ) -> Result<Response, AppError> {
     let w = writer(s)?;
     let snap = s.snapshot().await?;
-    let page = s.page(
+    let mut page = s.page(
         headers,
         "/settings",
         "Settings",
@@ -829,6 +836,9 @@ async fn render_settings(
         &Scope::Global,
         false,
     );
+    if flash == SENT {
+        page.flash_more = crate::distribute::sent_others(s);
+    }
     let keys = w
         .signer
         .keys()

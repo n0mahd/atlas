@@ -360,3 +360,28 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .code-row { display: flex; align-items: stretch; gap: 8px; margin-top: 6px; }
 .code-row .ink-block { flex: 1 1 auto; min-width: 0; }
 .copy-btn { flex: none; align-self: center; }
+
+/* ------------------------------------------------------------ the check before sending */
+
+.hook-check .row.static { padding-bottom: 2px; }
+.hook-body { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px 36px; }
+.file-name { margin: 4px 0 0; color: var(--muted); }
+.ink-block.diff { padding: 8px 0; }
+.ink-block.diff span { display: block; padding: 0 12px; min-height: 1.55em; }
+.d-add { background: rgba(95, 163, 146, 0.24); }
+.d-del { background: rgba(201, 99, 111, 0.26); }
+.d-hunk { color: #9C988C; }
+.d-file { color: #C9A35A; font-weight: 500; }
+.mark.warn { color: var(--oxblood); }
+.confirm-bar { padding-inline: 0; }
+.others summary { cursor: pointer; }
+.flash .others { margin-top: 4px; }
+.flash .others summary { font-style: normal; font-size: 15px; color: var(--muted); }
+.flash .others ul { margin-top: 4px; }
+.sending { margin-top: 8px; }
+form.row.static { margin: 0; }
+@media (max-width: 720px) {
+  .hook-body { margin-left: 0; }
+  .hook-check .row.static { flex-wrap: wrap; row-gap: 2px; }
+  .hook-check .row-meta { order: 3; flex-basis: 100%; white-space: normal; }
+}

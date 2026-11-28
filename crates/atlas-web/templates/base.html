@@ -76,7 +76,7 @@
       {% endif %}
     </header>
     {% if !page.notice.is_empty() %}<p class="marginalia flash" role="status">{{ page.notice }}</p>{% endif %}
-    {% if !page.flash.is_empty() %}<p class="marginalia flash" role="status"{% if page.signed_in && page.flash_action.is_some() %} data-passkey{% endif %}>{{ page.flash }}{% if page.signed_in %}{% if let Some(a) = page.flash_action %} <button class="button-plain" type="button" data-action="send">{{ a }}</button> <span class="warn-note" data-error hidden role="alert"></span>{% endif %}{% endif %}</p>{% endif %}
+    {% if !page.flash.is_empty() %}<div class="marginalia flash" role="status"{% if page.signed_in && page.flash_action.is_some() %} data-passkey{% endif %}>{{ page.flash }}{% if page.signed_in %}{% if let Some(a) = page.flash_action %} <button class="button-plain" type="button" data-action="send">{{ a }}</button> <span class="warn-note" data-error hidden role="alert"></span>{% endif %}{% endif %}{% if let Some(o) = page.flash_more %}<details class="others"><summary>{{ o.line }}</summary><ul class="list-plain mono">{% for n in o.names %}<li>{{ n }}</li>{% endfor %}</ul></details>{% endif %}</div>{% endif %}
     {% block content %}{% endblock %}
     </div>
   </main>

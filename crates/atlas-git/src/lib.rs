@@ -43,10 +43,28 @@ pub enum GitError {
     NoUpstream { branch: Option<String> },
     #[error("git {} failed: {stderr}", args.join(" "))]
     Command { args: Vec<String>, stderr: String },
+    #[error("{0:?} is too large to read ({1} bytes)")]
+    TooLarge(PathBuf, u64),
     #[error("git {0} timed out")]
     Timeout(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// How a file changed between two commits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Added,
+    Modified,
+    Deleted,
+}
+
+/// One file that differs between two commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangedPath {
+    pub change: Change,
+    /// From the repo's top, with `/` separators.
+    pub path: String,
 }
 
 /// A git working tree, addressed by its top-level directory.
@@ -557,6 +575,218 @@ impl Repo {
         }
     }
 
+    /// Whether `commit` is a commit this repo has.
+    #[must_use]
+    pub fn has_commit(&self, commit: &str) -> bool {
+        check_oid(commit).is_ok()
+            && self
+                .run(
+                    &["cat-file", "-e", &format!("{commit}^{{commit}}")],
+                    LOCAL_TIMEOUT,
+                )
+                .is_ok_and(|o| o.status.success())
+    }
+
+    /// What differs between `base` and `head`, file by file (renames show as a delete and
+    /// an add). With no `base`, every file in `head` counts as added.
+    ///
+    /// # Errors
+    /// Not full commit ids, or git fails.
+    pub fn changed_paths(
+        &self,
+        base: Option<&str>,
+        head: &str,
+    ) -> Result<Vec<ChangedPath>, GitError> {
+        check_oid(head)?;
+        let Some(base) = base else {
+            let out = self.git(
+                &["ls-tree", "-r", "-z", "--name-only", "--full-tree", head],
+                LOCAL_TIMEOUT,
+            )?;
+            return Ok(nul_split(&out.stdout)
+                .map(|path| ChangedPath {
+                    change: Change::Added,
+                    path,
+                })
+                .collect());
+        };
+        check_oid(base)?;
+        let out = self.git(
+            &[
+                "diff",
+                "--name-status",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                base,
+                head,
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        let mut parts = nul_split(&out.stdout);
+        let mut changed = Vec::new();
+        while let (Some(status), Some(path)) = (parts.next(), parts.next()) {
+            let change = match status.as_bytes().first() {
+                Some(b'A') => Change::Added,
+                Some(b'D') => Change::Deleted,
+                _ => Change::Modified,
+            };
+            changed.push(ChangedPath { change, path });
+        }
+        Ok(changed)
+    }
+
+    /// The bytes of the file at `rel` in `commit`. None when there is no file there.
+    ///
+    /// # Errors
+    /// `InvalidPath`, `TooLarge` past `max` bytes, or git fails.
+    pub fn file_at(&self, commit: &str, rel: &str, max: u64) -> Result<Option<Vec<u8>>, GitError> {
+        check_oid(commit)?;
+        check_rel(Path::new(rel))?;
+        let object = format!("{commit}:{rel}");
+        let kind = self.run(&["cat-file", "-t", &object], LOCAL_TIMEOUT)?;
+        if !kind.status.success() || trimmed(&kind.stdout) != "blob" {
+            return Ok(None);
+        }
+        let size = self.git(&["cat-file", "-s", &object], LOCAL_TIMEOUT)?;
+        let size: u64 = trimmed(&size.stdout).parse().unwrap_or(u64::MAX);
+        if size > max {
+            return Err(GitError::TooLarge(PathBuf::from(rel), size));
+        }
+        let out = self.git(&["cat-file", "blob", &object], LOCAL_TIMEOUT)?;
+        Ok(Some(out.stdout))
+    }
+
+    /// Every file under folder `rel` in `commit` with its tree mode (`100644`, `100755`,
+    /// `120000` for a link), as paths from the repo's top.
+    ///
+    /// # Errors
+    /// `InvalidPath`, or git fails.
+    pub fn tree_entries(&self, commit: &str, rel: &str) -> Result<Vec<(String, String)>, GitError> {
+        check_oid(commit)?;
+        check_rel(Path::new(rel))?;
+        let out = self.git(
+            &[
+                os("ls-tree"),
+                os("-r"),
+                os("-z"),
+                os("--full-tree"),
+                os(commit),
+                os("--"),
+                os(rel),
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        Ok(nul_split(&out.stdout)
+            .filter_map(|entry| {
+                let (meta, path) = entry.split_once('\t')?;
+                Some((meta.split(' ').next()?.to_owned(), path.to_owned()))
+            })
+            .collect())
+    }
+
+    /// The tree mode of the file at `rel` in `commit`, such as `100755` for an executable
+    /// file. None when there is nothing there.
+    ///
+    /// # Errors
+    /// `InvalidPath`, or git fails.
+    pub fn mode_at(&self, commit: &str, rel: &str) -> Result<Option<String>, GitError> {
+        check_oid(commit)?;
+        check_rel(Path::new(rel))?;
+        let out = self.git(
+            &[
+                os("ls-tree"),
+                os("-z"),
+                os("--full-tree"),
+                os(commit),
+                os("--"),
+                os(rel),
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        Ok(nul_split(&out.stdout).find_map(|entry| {
+            let (meta, path) = entry.split_once('\t')?;
+            (path == rel).then(|| meta.split(' ').next().unwrap_or_default().to_owned())
+        }))
+    }
+
+    /// A unified diff of `rel` (a file or folder) from `base` to `head`, without colour,
+    /// external diff tools or text conversion.
+    ///
+    /// # Errors
+    /// `InvalidPath`, or git fails.
+    pub fn diff(&self, base: &str, head: &str, rel: &str) -> Result<String, GitError> {
+        check_oid(base)?;
+        check_oid(head)?;
+        check_rel(Path::new(rel))?;
+        let out = self.git(
+            &[
+                os("diff"),
+                os("--no-color"),
+                os("--no-ext-diff"),
+                os("--no-textconv"),
+                os("--no-renames"),
+                os(base),
+                os(head),
+                os("--"),
+                os(rel),
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// The commits `head` has that `base` doesn't, newest first, as (id, subject).
+    ///
+    /// # Errors
+    /// Not full commit ids, or git fails.
+    pub fn commits_between(
+        &self,
+        base: &str,
+        head: &str,
+    ) -> Result<Vec<(String, String)>, GitError> {
+        check_oid(base)?;
+        check_oid(head)?;
+        let out = self.git(
+            &[
+                "log",
+                "--no-color",
+                "--no-show-signature",
+                "--format=%H%x09%s",
+                &format!("{base}..{head}"),
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| {
+                let (id, subject) = l.split_once('\t')?;
+                Some((id.to_owned(), subject.to_owned()))
+            })
+            .collect())
+    }
+
+    /// The files `commit` changed compared with its first parent.
+    ///
+    /// # Errors
+    /// Not a full commit id, a commit without a parent, or git fails.
+    pub fn paths_in_commit(&self, commit: &str) -> Result<Vec<String>, GitError> {
+        check_oid(commit)?;
+        let out = self.git(
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                &format!("{commit}^1"),
+                commit,
+            ],
+            LOCAL_TIMEOUT,
+        )?;
+        Ok(nul_split(&out.stdout).collect())
+    }
+
     fn status_of(&self, rel: &Path) -> Result<Vec<u8>, GitError> {
         let out = self.git(
             &[
@@ -693,6 +923,14 @@ fn check_rel(rel: &Path) -> Result<(), GitError> {
         return Err(GitError::InvalidPath(rel.to_path_buf()));
     }
     Ok(())
+}
+
+/// The non-empty NUL-separated fields of `-z` output.
+fn nul_split(bytes: &[u8]) -> impl Iterator<Item = String> + '_ {
+    bytes
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
 }
 
 fn os(s: &str) -> &OsStr {

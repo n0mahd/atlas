@@ -401,6 +401,48 @@ Through systemd rather than running `atlasd run` directly: the run gets the same
 as every later one, its output goes to the journal, systemd never runs it twice at once,
 and `--no-block` keeps the install (and an install over SSH) from waiting for it.
 
+## 0040 · 2026-11-28 · The owner sees hook changes before signing
+An update pins whole commits of Knowledge and public skills, so it can carry changes the
+owner never made in Atlas: an agent writing to the knowledge repo, or a sync from another
+machine. Hooks run by themselves on every machine, so before the passkey tap the owner
+sees each hook the update adds or changes: its name, when it runs in plain words ("Before
+a tool runs · Bash"), and its script in full when new or as a diff when changed. A first
+update lists every hook. A removed hook needs no look. The same page lists a change to
+the passkeys machines trust ("This update adds the passkey 'Phone'"); the first update
+lists every passkey as "trusted by your machines" without asking for more, because a
+machine already trusts the keys it got when it paired. A hook whose script isn't marked
+executable in git is flagged on the page, and atlasd reports it as a problem instead of
+installing it.
+
+What runs must be what the page shows, so a hook may not reach outside its folder: atlasd
+skips a hook whose folder, script or any other file in it is a link, and one whose
+`hooks` folder is a link, and reports why ("its script is a link, so machines will skip
+this hook"); the page flags every link (git mode 120000) in a hook folder the same way.
+Hooks a skill (`SKILL.md`) or subagent (`agents/*.md`) declares in its frontmatter run
+while it's in use. A subagent's new or changed `hooks` block is listed with the other
+hooks ("Hooks in the subagent reviewer"). A skill with a `hooks` block at either pinned
+commit can run anything in its folder, so any change in that folder is listed ("Hooks in
+the skill pdf", "While the skill is in use") with the folder's diff and its link flags; a
+skill without one is only counted.
+
+The page shows what will be signed: when it is built, the hub builds the update right
+then, keeps its exact manifest bytes server-side under a random id tied to the session
+(`distribute::Pending`), and reads the hooks from the commits those bytes pin, never from
+HEAD. `/send/start` with that id hands out the digest of those bytes, only after the page
+was served; `/send/finish` signs and stores those same bytes and never rebuilds. Updates
+without such changes keep the single tap, with one line beside it naming what is signed
+in things the owner can check ("Update 4 · 1 note changed", "Update 5 · AGENTS.md and 2
+skills changed"). Without JavaScript, Send posts a form that opens the page; the
+tap itself still needs JavaScript.
+
+Other things agents act on (memory notes, skills, instruction files, subagent files) are
+counted, not confirmed: "3 notes and 1 skill changed outside Atlas", with the names behind
+an expand, on the page and in the notice after sending. "Outside Atlas" leaves out commits
+whose message ends "in Atlas", which is how Atlas's own editor names its commits; when
+that can't be told cheaply it says "changed since the last update". The classifier
+(`atlas-web::review`) sorts paths into "runs by itself" and "agents act on it", so MCP
+server entries can join the first group in phase 4.
+
 ## 0037 · 2026-11-27 · A first run that doesn't assume the owner's machine
 `deploy/install.sh` is the path a newcomer takes, so it now checks its needs (Linux,
 cargo, git, a signed-in Tailscale, systemd user services) before the long build and

@@ -18,14 +18,17 @@ pub struct Skipped {
 /// Builds the next manifest from the sources machines use (Knowledge and public skills),
 /// each pinned at its upstream's commit: that is what a machine can fetch. Project repos
 /// stay out, because atlasd doesn't distribute them.
-#[must_use]
+///
+/// # Errors
+/// A sentence for the owner when a source's remote address holds a password or token:
+/// nothing is sent until it's removed.
 pub fn build(
     sources: &Sources,
     number: u64,
     hub: &str,
     owner_keys: Vec<OwnerKey>,
     now: u64,
-) -> (Manifest, Vec<Skipped>) {
+) -> Result<(Manifest, Vec<Skipped>), String> {
     let mut repos: Vec<(SourceId, PathBuf)> =
         vec![(SourceId::Knowledge, sources.knowledge.clone())];
     if let Some(p) = &sources.public_skills {
@@ -35,12 +38,20 @@ pub fn build(
     let mut skipped = Vec::new();
     for (id, root) in repos {
         match pin(&root) {
-            Ok((remote, commit, tree)) => pinned.push(Source {
-                id,
-                remote,
-                commit,
-                tree,
-            }),
+            Ok((remote, commit, tree)) => {
+                let Some(remote) = without_credentials(&remote) else {
+                    return Err(format!(
+                        "Your {} repo's address contains a password or token. Remove it from the remote URL, then send again.",
+                        label(&id).to_lowercase()
+                    ));
+                };
+                pinned.push(Source {
+                    id,
+                    remote,
+                    commit,
+                    tree,
+                });
+            }
             Err(reason) => skipped.push(Skipped {
                 source: label(&id),
                 reason,
@@ -55,7 +66,34 @@ pub fn build(
         sources: pinned,
         owner_keys,
     };
-    (manifest, skipped)
+    Ok((manifest, skipped))
+}
+
+/// The remote as machines may see it. A user name alone is dropped from `http(s)` addresses
+/// (it may be a token) and kept for SSH, which needs it. None when the address holds a
+/// password or token (`user:secret@`), which must never go into an update.
+fn without_credentials(remote: &str) -> Option<String> {
+    let Some((scheme, rest)) = remote.split_once("://") else {
+        // Paths and scp-style `git@host:path` carry no password.
+        return Some(remote.to_owned());
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(authority_end);
+    let Some((userinfo, host)) = authority.rsplit_once('@') else {
+        return Some(remote.to_owned());
+    };
+    if userinfo.contains(':') {
+        return None;
+    }
+    let ssh = matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "ssh" | "git+ssh" | "ssh+git"
+    );
+    if ssh {
+        Some(remote.to_owned())
+    } else {
+        Some(format!("{scheme}://{host}{path}"))
+    }
 }
 
 /// The name the UI uses for a source.
@@ -180,6 +218,67 @@ mod tests {
     }
 
     #[test]
+    fn remotes_go_out_without_credentials() {
+        assert_eq!(
+            without_credentials("https://user:token@host/repo.git"),
+            None
+        );
+        assert_eq!(without_credentials("ssh://git:secret@host/repo.git"), None);
+        assert_eq!(
+            without_credentials("https://token@host/repo.git").as_deref(),
+            Some("https://host/repo.git")
+        );
+        for kept in [
+            "https://host/repo.git",
+            "ssh://git@host/repo.git",
+            "git@github.com:me/repo.git",
+            "/srv/git/repo.git",
+            "https://host/a@b",
+        ] {
+            assert_eq!(without_credentials(kept).as_deref(), Some(kept));
+        }
+    }
+
+    #[test]
+    fn a_remote_with_a_password_refuses_to_send() {
+        let tmp = tempfile::tempdir().unwrap();
+        let k = tmp.path().join("k");
+        std::fs::create_dir_all(&k).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&k)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.name", "T"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://user:token@host/repo.git",
+        ]);
+        // A remote-tracking ref, as after a push, so the commit counts as pushed.
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&["branch", "-q", "--set-upstream-to=origin/main"]);
+        let sources = Sources {
+            home: tmp.path().into(),
+            knowledge: k.clone(),
+            public_skills: None,
+            projects: Vec::new(),
+        };
+        let refused = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap_err();
+        assert_eq!(
+            refused,
+            "Your knowledge repo's address contains a password or token. Remove it from the remote URL, then send again."
+        );
+    }
+
+    #[test]
     fn only_what_machines_use_is_pinned_at_its_upstream() {
         let tmp = tempfile::tempdir().unwrap();
         let git = |dir: &Path, args: &[&str]| -> String {
@@ -211,7 +310,7 @@ mod tests {
                 root: shop,
             }],
         };
-        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert_eq!(m.sources, Vec::new(), "projects never go in");
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].reason.contains("no git remote"));
@@ -219,13 +318,13 @@ mod tests {
         let bare = tmp.path().join("k.git");
         git(tmp.path(), &["init", "-q", "--bare", "k.git"]);
         git(&k, &["remote", "add", "origin", bare.to_str().unwrap()]);
-        let (_, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        let (_, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert!(skipped[0].reason.contains("isn't pushed"), "{skipped:?}");
 
         git(&k, &["push", "-q", "-u", "origin", "main"]);
         let pushed = git(&k, &["rev-parse", "HEAD"]);
         git(&k, &["commit", "-q", "--allow-empty", "-m", "local only"]);
-        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert_eq!(skipped, Vec::new());
         assert_eq!(m.sources.len(), 1);
         assert_eq!(m.sources[0].id, SourceId::Knowledge);
