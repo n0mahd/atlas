@@ -317,7 +317,8 @@ fn accepts_what_harnesses_accept() {
         &k.join("memory/hosts/box/prefixed.md"),
         "---\nname: box-prefixed\ndescription: d\nmetadata:\n  type: project\n  host: box\n---\n",
     );
-    // A project skill linking to a file elsewhere in the same repo is fine.
+    // A project skill linking to a file elsewhere in the same repo is read, but atlasd
+    // links only what stays inside the skill's own folder, so the hub says so.
     let repo = &sources.projects[0].root;
     write(
         &repo.join("docs/skill.md"),
@@ -343,13 +344,19 @@ fn accepts_what_harnesses_accept() {
         .find(|s| s.name.as_str() == "linked")
         .unwrap();
     assert_eq!(linked.description, "From docs");
+    assert!(
+        linked
+            .skipped
+            .as_deref()
+            .is_some_and(|w| w.starts_with("Atlas won't link this skill")),
+        "{:?}",
+        linked.skipped
+    );
     assert!(catalog.memory.iter().any(|m| m.name == "box-prefixed"));
     let noisy: Vec<_> = catalog
         .problems
         .iter()
-        .filter(|p| {
-            p.path.contains("colons") || p.path.contains("linked") || p.path.contains("prefixed")
-        })
+        .filter(|p| p.path.contains("colons") || p.path.contains("prefixed"))
         .collect();
     assert!(noisy.is_empty(), "{noisy:#?}");
 }
@@ -378,6 +385,45 @@ fn links_to_hidden_files_in_a_repo_are_refused() {
         "{:#?}",
         catalog.problems
     );
+}
+
+#[test]
+fn a_skill_machines_would_skip_is_listed_with_their_reason() {
+    let (_tmp, sources) = fixture();
+    let k = &sources.knowledge;
+    // A SKILL.md linked to a plain file elsewhere in the repo: the hub can read it, but
+    // atlasd installs only what stays inside the skill's own folder.
+    write(
+        &k.join("docs/kept.md"),
+        "---\nname: kept\ndescription: Kept\n---\n",
+    );
+    fs::create_dir_all(k.join("skills/kept")).unwrap();
+    symlink("../../docs/kept.md", k.join("skills/kept/SKILL.md")).unwrap();
+
+    let catalog = load_catalog(&sources);
+    let kept = catalog
+        .skills
+        .iter()
+        .find(|s| s.name.as_str() == "kept")
+        .unwrap();
+    assert_eq!(
+        kept.skipped.as_deref(),
+        Some("Machines skip this skill: its SKILL.md: it is a link to somewhere else.")
+    );
+    assert!(
+        catalog
+            .problems
+            .iter()
+            .any(|p| p.path.ends_with("skills/kept") && p.message.starts_with("Machines skip")),
+        "{:#?}",
+        catalog.problems
+    );
+    let deploy = catalog
+        .skills
+        .iter()
+        .find(|s| s.name.as_str() == "deploy")
+        .unwrap();
+    assert_eq!(deploy.skipped, None, "a plain skill installs");
 }
 
 #[test]

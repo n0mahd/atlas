@@ -605,6 +605,14 @@ fn lacking(
 }
 
 /// The row's flag for agents that lack a skill they should have.
+/// The row's flag for a skill no machine will install (its reason is in the drawer).
+fn skipped_flag(skill: &Skill) -> Option<String> {
+    skill.skipped.as_ref().map(|_| match skill.home {
+        SkillHome::Project(_) => "Not linked for every agent".to_owned(),
+        SkillHome::Private | SkillHome::Public => "Machines skip it".to_owned(),
+    })
+}
+
 fn lack_flag(have: &[HarnessKind], missing: &[HarnessKind]) -> String {
     if missing.is_empty() {
         String::new()
@@ -633,7 +641,7 @@ fn global_row(snap: &Snapshot, skill: &Skill, present: &[HarnessKind]) -> SkillR
         href: Some(format!("/skills/{}/{}", skill.home.key(), skill.name)),
         marks,
         all,
-        flag: lack_flag(&have, &missing),
+        flag: skipped_flag(skill).unwrap_or_else(|| lack_flag(&have, &missing)),
         missing,
         agents: agent_states(&have, present),
         path: skill.path.clone(),
@@ -695,7 +703,7 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
                 href: Some(format!("/skills/{}/{}", s.home.key(), s.name)),
                 marks,
                 all,
-                flag: lack_flag(&have, &missing),
+                flag: skipped_flag(s).unwrap_or_else(|| lack_flag(&have, &missing)),
                 missing,
                 agents: agent_states(&have, &present),
                 path: s.path.clone(),

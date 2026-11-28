@@ -301,6 +301,23 @@ impl Reader<'_> {
                 &mut files,
             );
             files.retain(|f| f != "SKILL.md");
+            // The same rule atlasd applies before installing, so the hub never shows as
+            // fine a skill that no machine will get.
+            // A project's own skill is read in place by agents that read `.agents/skills`;
+            // only the links Atlas makes for the others are skipped.
+            let skipped = crate::library::installable_folder(&shown, "SKILL.md")
+                .err()
+                .map(|why| match home {
+                    SkillHome::Project(_) => format!(
+                        "Atlas won't link this skill for agents that need a link (such as Claude Code): {why}."
+                    ),
+                    SkillHome::Private | SkillHome::Public => {
+                        format!("Machines skip this skill: {why}.")
+                    }
+                });
+            if let Some(why) = &skipped {
+                self.problem(&shown, why.clone());
+            }
             self.catalog.skills.push(Skill {
                 name: slug,
                 home: home.clone(),
@@ -308,6 +325,7 @@ impl Reader<'_> {
                 declared_name,
                 path: self.sources.display(&skill_md),
                 files,
+                skipped,
                 body: Untrusted::new(Markdown(body)),
             });
         }
