@@ -275,7 +275,7 @@ no hooks for Grok".
 ## 0027 · 2026-11-27 · Where each skill goes, and bringing things into Atlas
 Atlas reaches parity with the owner's T3 Code Skills page (skills series parts 1–3),
 adapted to the hub and many machines. See `documents/skills.md`.
-- **Placements** live in the knowledge repo as `atlas/skills.toml`, listing only
+- **Placements** live in the knowledge repo as `atlas/placements.toml`, listing only
   exceptions: agents a skill is off for, and `only-projects` for a global skill used in some
   projects only. In git so they reach every machine in the signed update; not inside skill
   folders, so `npx skills` updates and the public repo stay untouched.

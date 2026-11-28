@@ -1,6 +1,6 @@
 //! Where each skill goes: which agents get it and, for a global skill, whether it is used
 //! everywhere or only in some projects. Stored in the knowledge repo as
-//! `atlas/skills.toml`, which lists only exceptions: a skill that isn't listed is on for
+//! `atlas/placements.toml`, which lists only exceptions: a skill that isn't listed is on for
 //! every agent, everywhere its home implies (decision 0027).
 //!
 //! ```toml
@@ -23,7 +23,7 @@ use super::SkillHome;
 use crate::kernel::{HarnessKind, Slug};
 
 /// The file's path inside the knowledge repo.
-pub const PLACEMENTS_FILE: &str = "atlas/skills.toml";
+pub const PLACEMENTS_FILE: &str = "atlas/placements.toml";
 
 /// One skill's exceptions. The default (nothing set) means on for every agent, everywhere.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +76,7 @@ pub struct Keep {
     pub items: BTreeSet<String>,
 }
 
-/// The whole `atlas/skills.toml`.
+/// The whole `atlas/placements.toml`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Placements {

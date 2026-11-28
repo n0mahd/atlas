@@ -278,7 +278,7 @@ pub fn read_placements(knowledge: &Path) -> Result<(Placements, String), Library
     Ok((placements, crate::edit::content_hash(&text)))
 }
 
-/// Parses `atlas/skills.toml`.
+/// Parses `atlas/placements.toml`.
 ///
 /// # Errors
 /// Not valid TOML, or names an unknown agent or an invalid skill name.

@@ -11,12 +11,12 @@ Every skill has exactly one real folder: `<knowledge>/skills/<name>` (private),
 `<public-skills>/<name>` (public) or `<repo>/.agents/skills/<name>` (a project's). Agents
 reach it through links that atlasd makes in the folders each agent reads, on every machine.
 Which agents get it, and whether a global skill is used everywhere or only in some
-projects, is recorded in `<knowledge>/atlas/skills.toml`, which lists only exceptions. The
+projects, is recorded in `<knowledge>/atlas/placements.toml`, which lists only exceptions. The
 hub writes that file and commits it; Send carries it to the machines in a signed update;
 atlasd applies it. Nothing is ever replaced that Atlas didn't make, except an exact copy of
 something Atlas now holds (see "Bringing things in").
 
-## Where each skill goes (`atlas/skills.toml`)
+## Where each skill goes (`atlas/placements.toml`)
 
 ```toml
 [global.pdf-tools]

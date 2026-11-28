@@ -16,6 +16,11 @@ mod install;
 mod markdown;
 pub mod release;
 pub mod remote;
+// Stubs until the library and placement work lands (decision 0027).
+#[allow(dead_code, clippy::unused_async)]
+mod skill_ops;
+#[allow(dead_code, clippy::unused_async)]
+mod skills_place;
 pub mod views;
 
 use std::sync::Arc;
