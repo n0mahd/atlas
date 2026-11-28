@@ -11,7 +11,7 @@
 //!   keyed by the skill's `SKILL.md` path, so the home file also switches off a project's
 //!   skills without writing into the repo. Atlas's tables end their header line with the
 //!   comment `# atlas:<name>`.
-//! - `OpenCode`: `permission.skill.<name> = "deny"` in `opencode.jsonc` or `opencode.json`
+//! - `OpenCode`: `permission.skill.<name> = "deny"` in `opencode.jsonc` (else `opencode.json`)
 //!   in the home config folder. Home only: a repo's `opencode.json` is usually tracked,
 //!   and a switch is the owner's, not the team's. The owner's comments are kept; Atlas's
 //!   entries end with the comment `// atlas:<name>`.
@@ -60,36 +60,42 @@ pub enum Base {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SwitchFile {
     pub base: Base,
-    /// Candidate files, in preference order: the first that exists is edited, and the
-    /// last is created when none does.
+    /// Candidate files in the agent's precedence order: the first that exists is the one
+    /// Atlas edits.
     pub candidates: &'static [&'static str],
+    /// The file Atlas creates when none of `candidates` exists; one of them.
+    pub create: &'static str,
 }
 
 /// Where `kind` keeps skill switches for skills it loads at `reach`, if anywhere.
 #[must_use]
 pub const fn switch_file(kind: HarnessKind, reach: Reach) -> Option<SwitchFile> {
-    const fn home(candidates: &'static [&'static str]) -> SwitchFile {
+    const fn one(base: Base, file: &'static [&'static str; 1]) -> SwitchFile {
         SwitchFile {
-            base: Base::Home,
-            candidates,
+            base,
+            candidates: file,
+            create: file[0],
         }
     }
     let file = match (kind, reach) {
-        (HarnessKind::ClaudeCode, Reach::Home) => home(&[".claude/settings.json"]),
-        (HarnessKind::ClaudeCode, Reach::Project) => SwitchFile {
-            base: Base::Repo,
-            candidates: &[".claude/settings.local.json"],
+        (HarnessKind::ClaudeCode, Reach::Home) => one(Base::Home, &[".claude/settings.json"]),
+        (HarnessKind::ClaudeCode, Reach::Project) => {
+            one(Base::Repo, &[".claude/settings.local.json"])
+        }
+        (HarnessKind::Codex, _) => one(Base::Home, &[".codex/config.toml"]),
+        // OpenCode merges `opencode.json` then `opencode.jsonc`, so a `.jsonc` has the last
+        // word when both exist. With neither, `.jsonc` is created too: OpenCode rewrites a
+        // `.json` with JSON.stringify when it saves settings, which would drop Atlas's
+        // comment marks and leave its entries looking like the owner's.
+        (HarnessKind::OpenCode, Reach::Home) => SwitchFile {
+            base: Base::Home,
+            candidates: &[
+                ".config/opencode/opencode.jsonc",
+                ".config/opencode/opencode.json",
+            ],
+            create: ".config/opencode/opencode.jsonc",
         },
-        (HarnessKind::Codex, _) => home(&[".codex/config.toml"]),
-        (HarnessKind::OpenCode, Reach::Home) => home(&[
-            // Whichever exists is edited; with neither, `.jsonc` is created, because
-            // OpenCode rewrites a `.json` with JSON.stringify when it saves settings,
-            // which would drop Atlas's comment marks and leave its entries looking like
-            // the owner's.
-            ".config/opencode/opencode.json",
-            ".config/opencode/opencode.jsonc",
-        ]),
-        (HarnessKind::Pi, Reach::Home) => home(&[".pi/agent/settings.json"]),
+        (HarnessKind::Pi, Reach::Home) => one(Base::Home, &[".pi/agent/settings.json"]),
         _ => return None,
     };
     Some(file)
@@ -218,7 +224,7 @@ mod tests {
                 let Some(f) = switch_file(kind, reach) else {
                     continue;
                 };
-                assert_ne!(f.candidates.len(), 0);
+                assert!(f.candidates.contains(&f.create), "{kind}");
                 for p in f.candidates {
                     assert!(!p.starts_with('/') && !p.split('/').any(|s| s == ".."));
                     if f.base == Base::Repo {
@@ -229,6 +235,22 @@ mod tests {
         }
         assert!(can_switch_off(HarnessKind::Codex, Reach::Project));
         assert!(!can_switch_off(HarnessKind::OpenCode, Reach::Project));
+    }
+
+    #[test]
+    fn opencode_edits_the_file_it_reads_last() {
+        // OpenCode merges `opencode.json` then `opencode.jsonc`, so with both present the
+        // `.jsonc` wins, and it rewrites a `.json` without comments: Atlas edits and
+        // creates the `.jsonc`.
+        let f = switch_file(HarnessKind::OpenCode, Reach::Home).unwrap();
+        assert_eq!(
+            f.candidates,
+            [
+                ".config/opencode/opencode.jsonc",
+                ".config/opencode/opencode.json"
+            ]
+        );
+        assert_eq!(f.create, ".config/opencode/opencode.jsonc");
     }
 
     #[test]

@@ -75,7 +75,8 @@ Notes behind the table:
 
 What `src/switches/` writes so an agent that reads a skill's folder leaves the skill
 alone (decision 0027). Paths are relative to `$HOME` (home) or the repo root (repo); where
-two files are listed, the first that exists is edited and the last is created. "T3" is
+two files are listed, they are in the agent's precedence order: the first that exists is
+edited, and the first is created when neither does (`SwitchFile::create`). "T3" is
 the owner's T3 Code (`apps/server/src/skills/*SkillSettings.ts`, branch
 `feat/skills-instructions`), which checked these against the CLIs it names.
 
@@ -117,6 +118,8 @@ Notes behind the table:
   `opencode.jsonc` for a new global config, edits a `.jsonc` in place (keeping comments)
   but rewrites a global `.json` with `JSON.stringify` when it saves settings itself;
   that would drop Atlas's `// atlas:` marks, leaving its entries to read as the owner's.
+  So Atlas edits the `.jsonc` when both exist (it is merged last, so its rules win) and
+  creates a `.jsonc` when neither does.
   It adds a `$schema` line to any config file lacking one, so a file Atlas creates
   already has it, after a comment saying Atlas made it. The rule key is the `name` in
   the skill's header, not its folder (T3). A repo's `opencode.json` is usually tracked

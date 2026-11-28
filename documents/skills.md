@@ -57,7 +57,8 @@ Agents with a setting (`atlas_harness::switches`; formats and sources in
 `crates/atlas-harness/HARNESSES.md`): Claude Code `skillOverrides` (`~/.claude/settings.json`;
 in a repo `.claude/settings.local.json`), Codex `[[skills.config]]` in `~/.codex/config.toml`
 for home and project skills alike (keyed by the skill's path), OpenCode `permission.skill`
-in the home `opencode.json` or `opencode.jsonc` (`.jsonc` is created when neither exists),
+in the home `opencode.jsonc`, else `opencode.json` (`.jsonc` is edited when both exist and
+created when neither does),
 Pi `skills` in `~/.pi/agent/settings.json`. Atlas marks its own entries and never changes
 the owner's. Others have no switch; the UI says so and why.
 
