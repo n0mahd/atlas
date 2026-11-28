@@ -1084,7 +1084,7 @@ fn views(files: &[Prep]) -> Vec<FileView> {
         .enumerate()
         .map(|(n, f)| {
             let (fate, new): (&'static str, Option<&[u8]>) = match &f.fate {
-                Fate::Theirs => ("Takes theirs", f.theirs.as_deref()),
+                Fate::Theirs => ("Uses the new version", f.theirs.as_deref()),
                 Fate::Merged(m, _) => ("Merged with your edits", Some(m)),
                 Fate::Mine => ("Keeps yours", None),
                 Fate::Clash => ("Clash: choose", f.theirs.as_deref()),
@@ -1265,7 +1265,7 @@ fn resolve(prepared: &Prepared, fields: &[(String, String)]) -> Result<(NewFiles
                 let choice = field(fields, &format!("c{n}"));
                 if choice.is_empty() {
                     return Err(format!(
-                        "Choose keep mine or take theirs for {}; nothing changed.",
+                        "Choose Keep my edits or Use the new version for {}; nothing changed.",
                         f.path
                     ));
                 }
@@ -1277,7 +1277,7 @@ fn resolve(prepared: &Prepared, fields: &[(String, String)]) -> Result<(NewFiles
                     "theirs" => true,
                     _ => {
                         return Err(
-                            "That choice isn't keep mine or take theirs; nothing changed."
+                            "That choice isn't Keep my edits or Use the new version; nothing changed."
                                 .to_owned(),
                         );
                     }

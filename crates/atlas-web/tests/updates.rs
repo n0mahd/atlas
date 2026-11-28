@@ -443,7 +443,7 @@ async fn unedited_merged_and_clashing_skills_end_current() {
     // Preview: escaped diffs, nothing written yet.
     let (_, preview) = hub.get("/skills/private/alpha/update").await;
     assert!(
-        preview.contains("Takes theirs") && preview.contains("New file"),
+        preview.contains("Uses the new version") && preview.contains("New file"),
         "{preview}"
     );
     assert!(
@@ -530,7 +530,7 @@ async fn unedited_merged_and_clashing_skills_end_current() {
     let (status, _, body) = hub.update("private", "gamma", &[]).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert!(
-        body.contains("Choose keep mine or take theirs for SKILL.md"),
+        body.contains("Choose Keep my edits or Use the new version for SKILL.md"),
         "{body}"
     );
     assert_eq!(

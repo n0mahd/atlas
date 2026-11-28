@@ -459,7 +459,7 @@ Through systemd rather than running `atlasd run` directly: the run gets the same
 as every later one, its output goes to the journal, systemd never runs it twice at once,
 and `--no-block` keeps the install (and an install over SSH) from waiting for it.
 
-## 0037 · 2026-11-27 · No "missing" flags before an update reaches this machine
+## 00XX · 2026-11-27 · No "missing" flags before an update reaches this machine
 Before anything was sent, every skill row said "Not in Codex and Pi" or "No agent has it"
 and Instructions said "Not read by …": a flag on every row, which is no flag. Agents get
 skills and Global through links atlasd makes, so until it has applied an update a missing
@@ -473,7 +473,7 @@ an agent switched off, or a skill used only in some projects, isn't flagged in t
 folders. The hub can't tell "not applied yet" from "applied, then changed by hand" while a
 newer update is pending; it shows nothing then, as before the first send.
 
-## 0038 · 2026-11-27 · One count for "outside Atlas"
+## 00XX · 2026-11-27 · One count for "outside Atlas"
 Home counted importable outside skills (exact copies included), the Skills page's offer
 counted "things" (outside skills without exact copies, plus project items), the Outside
 Atlas header counted every outside row (tools' and broken links too) and the Tidy page
