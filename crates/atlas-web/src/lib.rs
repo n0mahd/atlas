@@ -21,6 +21,7 @@ pub mod remote;
 mod skill_ops;
 #[allow(dead_code, clippy::unused_async)]
 mod skills_place;
+mod updates;
 pub mod views;
 
 use std::sync::Arc;
@@ -70,6 +71,8 @@ pub struct AppState {
     writer: Option<Arc<Writer>>,
     /// The last read of the store, shared by requests for a few seconds.
     cache: Arc<tokio::sync::Mutex<Option<Cached>>>,
+    /// Check for updates: the GitHub reader and the last check (`updates`).
+    updates: Arc<updates::Updates>,
 }
 
 /// A read of the store and when it was made.
@@ -82,13 +85,32 @@ const SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 impl AppState {
     #[must_use]
     pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
+        let updates = Arc::new(updates::Updates::new(&sources));
         Self {
+            updates,
             sources: Arc::new(sources),
             hub: Arc::from(hub),
             others: others.into(),
             writer: writer.map(Arc::new),
             cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// For tests only: reads skill sources from a stand-in for GitHub's API on
+    /// `http://127.0.0.1:<port>` and the `skills` CLI's global lock from `global_lock`,
+    /// so a test never reaches the network or the machine's own lock.
+    ///
+    /// # Panics
+    /// If `api` isn't a loopback `http://127.0.0.1:` address.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_github_stand_in(mut self, api: &str, global_lock: std::path::PathBuf) -> Self {
+        assert!(
+            api.starts_with("http://127.0.0.1:"),
+            "the GitHub stand-in must be on 127.0.0.1"
+        );
+        self.updates = Arc::new(updates::Updates::with(api, global_lock));
+        self
     }
 
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
@@ -140,6 +162,12 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/", get(overview))
         .route("/skills", get(skills))
         .route("/skills/{home}/{name}", get(skill_detail))
+        .route("/skills/updates", get(updates::list))
+        .route("/skills/updates/check", post(updates::check))
+        .route(
+            "/skills/{home}/{name}/update",
+            get(updates::preview).post(updates::apply),
+        )
         .route("/instructions", get(instructions))
         .route("/instructions/{scope}/{file}", get(instruction_detail))
         .route("/memory", get(memory))

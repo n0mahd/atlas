@@ -7,6 +7,7 @@
   <label class="sr" for="skill-search">Filter skills</label>
   <input id="skill-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Filter skills…" autocomplete="off">
 </form>
+{% if page.signed_in %}{% include "updates_button.html" %}{% endif %}
 
 <div id="results" class="sections">
   {% for s in v.sections %}
