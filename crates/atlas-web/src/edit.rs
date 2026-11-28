@@ -789,6 +789,29 @@ pub(crate) async fn settings_page(
     render_settings(&s, &headers, flash, new_token, token_error.to_owned()).await
 }
 
+/// How a passkey was added, as the end of "added <day> …".
+fn how_added(added_by: Option<&str>) -> String {
+    match added_by {
+        None | Some("") => String::new(),
+        Some("signed in") => "while signed in".to_owned(),
+        Some("setup link") => "from a setup link".to_owned(),
+        // First run records the Tailscale login that enrolled it.
+        Some(login) => format!("at first run, by {login}"),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_passkey_row_says_how_it_was_added() {
+    assert_eq!(how_added(Some("signed in")), "while signed in");
+    assert_eq!(how_added(Some("setup link")), "from a setup link");
+    assert_eq!(
+        how_added(Some("owner@example.com")),
+        "at first run, by owner@example.com"
+    );
+    assert_eq!(how_added(None), "");
+}
+
 async fn render_settings(
     s: &AppState,
     headers: &HeaderMap,
@@ -814,7 +837,7 @@ async fn render_settings(
             id: k.id,
             name: k.name,
             added: day(k.added),
-            added_by: k.added_by.unwrap_or_default(),
+            added_by: how_added(k.added_by.as_deref()),
             last_used: k.last_used.map_or_else(|| "never".to_owned(), day),
         })
         .collect();
