@@ -212,4 +212,4 @@ them and the hub hands them out).
 
 On each machine, atlasd copies anything it replaces that the new content doesn't hold byte
 for byte to `~/.local/state/atlas-client/replaced/<UTC date>/<path in the home>` first, and
-its report names each copy (`atlas-client::keep`, decision 0037).
+its report names each copy (`atlas-client::keep`; decision "atlasd keeps a copy of what it replaces").

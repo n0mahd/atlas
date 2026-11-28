@@ -459,7 +459,7 @@ Through systemd rather than running `atlasd run` directly: the run gets the same
 as every later one, its output goes to the journal, systemd never runs it twice at once,
 and `--no-block` keeps the install (and an install over SSH) from waiting for it.
 
-## 0037 · 2026-11-28 · atlasd keeps a copy of what it replaces
+## 00XX · 2026-11-28 · atlasd keeps a copy of what it replaces
 atlasd may replace a file or folder whose content is all in Atlas without being the same
 bytes: a machine's own `AGENTS.md` whose every line is in Global (but in another order,
 with repeats or other line endings) becomes the link, Claude's `CLAUDE.md` becomes just

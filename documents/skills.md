@@ -138,7 +138,7 @@ rule: after an import the original is gone and agents read Atlas's copy.
   Anything that differs stays and is reported, so nothing is lost. Whatever atlasd
   replaces without the new content holding it byte for byte is first copied to
   `~/.local/state/atlas-client/replaced/<UTC date>/`, named in the pass's report, and
-  restored by copying it back (decision 0037).
+  restored by copying it back (decision "atlasd keeps a copy of what it replaces").
 
 ### Skills
 
