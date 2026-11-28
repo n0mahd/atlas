@@ -862,6 +862,12 @@ pub fn hook_owner(home: &Path, rules: &Rules, command: &str) -> HookOwner {
         let Some(path) = word_path(home, word) else {
             continue;
         };
+        // Outside the home, a path marks a tool's hook only under a known tool root:
+        // `/`, `/dev/null`, `/bin/sh` or `/tmp/x` in a command are just arguments.
+        let in_home = path.starts_with(home);
+        if !in_home && !rules.tool_roots.iter().any(|r| path.starts_with(r)) {
+            continue;
+        }
         match place_of(home, rules, &path) {
             Place::Owner => {}
             Place::Tool(Some(t)) => return HookOwner::Tool(t),
@@ -1262,6 +1268,15 @@ mod tests {
             HookOwner::Owner
         );
         assert_eq!(who("echo done"), HookOwner::Owner);
+        // System paths in a hand-made command are arguments, not a tool's install.
+        assert_eq!(
+            who("grep -q 'rm -rf /' && exit 2 || exit 0"),
+            HookOwner::Owner
+        );
+        assert_eq!(
+            who("/bin/sh -c 'cargo fmt >/dev/null 2>&1; cp x /tmp/y'"),
+            HookOwner::Owner
+        );
         assert_eq!(
             who("/home/u/.claude/hooks/herdr-agent-state.sh"),
             HookOwner::Tool("Herdr".into())

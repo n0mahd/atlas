@@ -160,7 +160,9 @@
     };
     var data = new FormData(form);
     if (submitter && submitter.name) data.append(submitter.name, submitter.value);
-    fetch(form.action, {
+    // getAttribute, not form.action: a control named "action" (the bulk bar's buttons,
+    // the confirm page's field) shadows the property and would post to "[object …]".
+    fetch(form.getAttribute("action") || location.pathname, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Accept": "application/json" },
