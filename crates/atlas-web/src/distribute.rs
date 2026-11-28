@@ -16,7 +16,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::edit::{CsrfForm, Writer};
+use crate::edit::{CsrfForm, Writer, csrf_header};
 use crate::release;
 use crate::remote::{self, PAIRING_TTL};
 use crate::{AppError, AppState, SshResult, auth};
@@ -67,7 +67,7 @@ fn decode_manifest(release: &SignedRelease) -> Option<Manifest> {
     serde_json::from_slice(&decode_b64(&release.manifest)?).ok()
 }
 
-fn decode_b64(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_b64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
     let mut acc = 0u32;
     let mut bits = 0u32;
@@ -213,13 +213,6 @@ fn next_or_settings(next: &str) -> String {
     } else {
         auth::safe_next(next)
     }
-}
-
-fn csrf_header(headers: &HeaderMap) -> &str {
-    headers
-        .get("x-atlas-csrf")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
 }
 
 fn rp_id(w: &Writer) -> String {
@@ -1207,7 +1200,7 @@ mod tests {
             enrol(&state_dir);
             let writer =
                 crate::Writer::open(ORIGIN, &state_dir, std::time::Duration::ZERO).unwrap();
-            let cookie = writer.auth.sign_in();
+            let cookie = writer.auth.sign_in("test-key", None);
             let mut h = HeaderMap::new();
             h.insert(
                 header::COOKIE,
@@ -1608,22 +1601,10 @@ mod tests {
         assert!(!page.contains("workstation"), "{page}");
     }
 
-    async fn mint_cli_token(hub: &SendHub, name: &str) -> String {
-        let (status, page) = call(
-            &hub.app,
-            post_form(
-                hub,
-                "/settings/tokens",
-                format!("csrf={}&name={name}", hub.csrf),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let prefix = format!("atlasd auth {ORIGIN} ");
-        let start = page.find(&prefix).expect("raw token shown once") + prefix.len();
-        let token = page[start..start + 64].to_owned();
-        assert!(token.bytes().all(|b| b.is_ascii_hexdigit()));
-        token
+    /// A CLI token, as Settings makes one after a passkey tap (tested in `edit`).
+    fn mint_cli_token(hub: &SendHub, name: &str) -> String {
+        let writer = hub.state.writer.as_ref().unwrap();
+        writer.tokens.create(name).unwrap().1
     }
 
     fn admin_req(req: axum::http::request::Builder, token: &str) -> axum::http::request::Builder {
@@ -1634,7 +1615,7 @@ mod tests {
     #[tokio::test]
     async fn admin_cli_api_manages_machines_behind_cli_tokens() {
         let hub = SendHub::new();
-        let cli_token = mint_cli_token(&hub, "laptop").await;
+        let cli_token = mint_cli_token(&hub, "laptop");
 
         // Missing token is rejected.
         let no_auth = Request::get("/api/admin/machines")

@@ -23,14 +23,14 @@
     </ul>
     {% endif %}
   </section>
-  <section class="section" data-passkey data-next="/settings">
+  <section class="section" id="passkeys" data-passkey data-confirm="enrol" data-next="/settings">
     <div class="section-head"><span class="num">II</span><h2>Passkeys</h2><span class="count">{{ keys.len() }}</span></div>
     <ul class="rows">
       {% for k in keys %}
       <li><div class="row static">
-        <span class="row-main"><span class="row-name">{{ k.name }}</span><span class="row-desc mono">added {{ k.added }}{% if !k.added_by.is_empty() %} by {{ k.added_by }}{% endif %} · last used {{ k.last_used }}</span></span>
+        <span class="row-main"><span class="row-name wrap">{{ k.name }}</span><span class="row-desc mono wrap">added {{ k.added }}{% if !k.added_by.is_empty() %} by {{ k.added_by }}{% endif %} · last used {{ k.last_used }}</span></span>
         {% if keys.len() > 1 %}
-        <form method="post" action="/settings/keys/{{ k.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Remove {{ k.name }}" aria-label="Remove {{ k.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></form>
+        <form method="post" action="/settings/keys/{{ k.id }}/remove" data-confirm="remove_key:{{ k.id }}"><input type="hidden" name="csrf" value="{{ page.csrf }}"><input type="hidden" name="grant" value=""><button class="icon-button" type="submit" title="Remove {{ k.name }}" aria-label="Remove {{ k.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></form>
         {% endif %}
       </div></li>
       {% endfor %}
@@ -41,6 +41,11 @@
       <button class="button-plain" type="button" data-action="enrol">Add a passkey</button>
     </div>
     <p class="marginalia warn-note" data-error hidden role="alert"></p>
+    <form method="post" action="/settings/signout-everywhere" class="setting-row">
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <span class="row-main"><span class="row-name">Sign out everywhere</span><span class="row-desc">Ends every passkey session, this one too. Each browser signs in again with a passkey.</span></span>
+      <button class="button-plain" type="submit">Sign out all</button>
+    </form>
   </section>
   <section class="section" id="cli-tokens">
     <div class="section-head"><span class="num">III</span><h2>CLI tokens</h2><span class="count">{{ tokens.len() }}</span></div>
@@ -58,17 +63,18 @@
     <ul class="rows">
       {% for t in tokens %}
       <li><div class="row static">
-        <span class="row-main"><span class="row-name">{{ t.name }}</span><span class="row-desc mono">created {{ t.created }} · last used {{ t.last_used }}</span></span>
+        <span class="row-main"><span class="row-name wrap">{{ t.name }}</span><span class="row-desc mono wrap">created {{ t.created }} · last used {{ t.last_used }}</span></span>
         <form method="post" action="/settings/tokens/{{ t.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Revoke {{ t.name }}" aria-label="Revoke {{ t.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></form>
       </div></li>
       {% endfor %}
     </ul>
     {% endif %}
-    <form method="post" action="/settings/tokens" class="setting-row">
-      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+    <form method="post" action="/settings/tokens" class="setting-row" data-confirm="create_token">
+      <input type="hidden" name="csrf" value="{{ page.csrf }}"><input type="hidden" name="grant" value="">
       <span class="row-main"><span class="row-name">Create a CLI token</span><span class="row-desc">Lets <code>atlasd machines</code> on a workstation list, add (over its own SSH), and remove machines.</span></span>
       <label class="field grow"><span class="sr">Name the CLI token</span><input class="search" name="name" placeholder="Name this workstation" required maxlength="60" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <button class="button-plain" type="submit">Create token</button>
+      <p class="marginalia warn-note" data-error hidden role="alert"></p>
     </form>
   </section>
 </div>
