@@ -225,6 +225,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha1",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
@@ -247,6 +248,7 @@ dependencies = [
  "atlas-core",
  "serde_json",
  "thiserror 2.0.21",
+ "toml_edit",
 ]
 
 [[package]]
@@ -301,11 +303,16 @@ dependencies = [
  "atlas-core",
  "atlas-fs",
  "atlas-git",
+ "atlas-harness",
  "atlas-signer",
  "atlas-verify",
+ "atlas-web",
  "axum",
+ "base64 0.23.1",
+ "diffy",
  "p256",
  "pulldown-cmark",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -950,6 +957,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "diffy"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e3dc2f773b6aaa63b1a7684b8589f670a8a0146a510b74d23a401c882364b49"
+dependencies = [
+ "hashbrown 0.17.2",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1285,6 +1301,9 @@ name = "hashbrown"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "735eaa21a6a5ffb2e84362faaeb90c05ba8e19797ca30428478cb6ea3a4921bc"
+dependencies = [
+ "foldhash",
+]
 
 [[package]]
 name = "hex"
@@ -3380,6 +3399,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.21+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88497dab46de5bf343ec66b05c251e48c6213f3e9170c70a70a823f7abe886a4"
+dependencies = [
+ "indexmap 2.14.2",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
 ]
 
 [[package]]

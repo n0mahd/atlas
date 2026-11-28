@@ -9,6 +9,7 @@ pub mod change;
 pub mod hooks;
 pub mod instructions;
 pub mod placement;
+pub mod readers;
 pub mod skills;
 pub mod switches;
 
@@ -29,6 +30,9 @@ pub struct Layout {
     /// The config file that holds its hooks, if it has hooks, or a folder whose `*.json`
     /// files each hold some (Grok Build).
     pub hook_config: Option<&'static str>,
+    /// The folder of subagent definitions (`<name>.md`) Atlas links into. Only Claude
+    /// Code's format is handled so far.
+    pub agent_dir: Option<&'static str>,
     /// A path whose presence means the harness is set up for this login.
     pub marker: &'static str,
     /// Folders inside a repo it loads project skills from.
@@ -43,6 +47,7 @@ const LAYOUTS: [Layout; 10] = [
         skill_dirs: &[".claude/skills"],
         instruction_files: &[".claude/CLAUDE.md"],
         hook_config: Some(".claude/settings.json"),
+        agent_dir: Some(".claude/agents"),
         marker: ".claude",
         project_skill_dirs: &[".claude/skills"],
         // Claude Code reads AGENTS.md only when the repo has no CLAUDE.md.
@@ -53,6 +58,7 @@ const LAYOUTS: [Layout; 10] = [
         skill_dirs: &[".agents/skills", ".codex/skills"],
         instruction_files: &[".codex/AGENTS.md"],
         hook_config: Some(".codex/hooks.json"),
+        agent_dir: None,
         marker: ".codex",
         project_skill_dirs: &[".agents/skills"],
         project_instructions: &["AGENTS.md"],
@@ -66,6 +72,7 @@ const LAYOUTS: [Layout; 10] = [
         ],
         instruction_files: &[".config/opencode/AGENTS.md"],
         hook_config: None,
+        agent_dir: None,
         marker: ".config/opencode",
         project_skill_dirs: &[".opencode/skills", ".claude/skills", ".agents/skills"],
         project_instructions: &["AGENTS.md", "CLAUDE.md"],
@@ -75,6 +82,7 @@ const LAYOUTS: [Layout; 10] = [
         skill_dirs: &[".pi/agent/skills"],
         instruction_files: &[".pi/agent/AGENTS.md"],
         hook_config: None,
+        agent_dir: None,
         marker: ".pi/agent",
         project_skill_dirs: &[".pi/skills", ".agents/skills"],
         project_instructions: &["AGENTS.md", "CLAUDE.md"],
@@ -85,6 +93,7 @@ const LAYOUTS: [Layout; 10] = [
         skill_dirs: &[".gemini/config/skills", ".gemini/antigravity-cli/skills"],
         instruction_files: &[".gemini/config/AGENTS.md"],
         hook_config: Some(".gemini/config/hooks.json"),
+        agent_dir: None,
         marker: ".gemini",
         project_skill_dirs: &[".gemini/skills", ".agents/skills", ".agent/skills"],
         project_instructions: &["AGENTS.md", "GEMINI.md"],
@@ -102,6 +111,7 @@ const LAYOUTS: [Layout; 10] = [
         ],
         instruction_files: &[".config/amp/AGENTS.md", ".config/AGENTS.md"],
         hook_config: None,
+        agent_dir: None,
         marker: ".config/amp",
         project_skill_dirs: &[".agents/skills", ".claude/skills"],
         project_instructions: &["AGENTS.md", "AGENT.md", "CLAUDE.md"],
@@ -118,6 +128,7 @@ const LAYOUTS: [Layout; 10] = [
         ],
         instruction_files: &[".config/muse/AGENTS.md"],
         hook_config: Some(".config/muse/settings.json"),
+        agent_dir: None,
         marker: ".config/muse",
         project_skill_dirs: &[".agents/skills", ".claude/skills", ".codex/skills"],
         project_instructions: &["AGENTS.md", "CLAUDE.md"],
@@ -136,6 +147,7 @@ const LAYOUTS: [Layout; 10] = [
         ],
         instruction_files: &[".grok/AGENTS.md"],
         hook_config: Some(".grok/hooks"),
+        agent_dir: None,
         marker: ".grok",
         project_skill_dirs: &[
             ".grok/skills",
@@ -151,6 +163,7 @@ const LAYOUTS: [Layout; 10] = [
         skill_dirs: &[],
         instruction_files: &[],
         hook_config: None,
+        agent_dir: None,
         marker: ".t3",
         project_skill_dirs: &[],
         project_instructions: &[],
@@ -162,6 +175,7 @@ const LAYOUTS: [Layout; 10] = [
         skill_dirs: &[],
         instruction_files: &[],
         hook_config: None,
+        agent_dir: None,
         marker: ".config/herdr",
         project_skill_dirs: &[],
         project_instructions: &[],
@@ -208,6 +222,7 @@ mod tests {
                 .iter()
                 .chain(l.instruction_files)
                 .chain(l.hook_config.iter())
+                .chain(l.agent_dir.iter())
                 .chain(l.project_skill_dirs)
                 .chain(l.project_instructions);
             for p in all.chain([&l.marker]) {
@@ -228,6 +243,7 @@ mod tests {
                 .iter()
                 .chain(l.instruction_files)
                 .chain(l.hook_config.iter())
+                .chain(l.agent_dir.iter())
             {
                 assert!(doc.contains(&format!("`{p}`")), "HARNESSES.md lacks {p}");
             }

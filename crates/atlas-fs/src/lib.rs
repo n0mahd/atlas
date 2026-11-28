@@ -9,6 +9,7 @@ mod catalog;
 pub mod edit;
 mod harness;
 pub mod library;
+pub mod lock;
 pub mod outside;
 mod paths;
 

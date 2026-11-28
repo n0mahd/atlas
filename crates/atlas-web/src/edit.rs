@@ -168,6 +168,22 @@ impl Writer {
         Ok(())
     }
 
+    /// A fresh signed-in session for the crate's HTTP tests, as `(cookie header, CSRF
+    /// token)`. Only with the `testing` feature, which the hub binary never enables.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn test_session(&self) -> (String, String) {
+        let token = self.auth.sign_in();
+        let cookie = format!("{}={token}", auth::COOKIE);
+        let mut h = HeaderMap::new();
+        if let Ok(v) = cookie.parse() {
+            h.insert(axum::http::header::COOKIE, v);
+        }
+        let csrf = self.auth.session(&h).map_or_else(String::new, |s| s.csrf);
+        (cookie, csrf)
+    }
+
     /// The live session, if this is a same-origin request carrying the session's token.
     pub(crate) fn authorised(&self, headers: &HeaderMap, csrf: &str) -> bool {
         auth::same_origin(headers, &self.origin)
@@ -584,7 +600,7 @@ pub(crate) async fn settings_page(
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
     if w.auth.session(&headers).is_none() {
-        return Ok(Redirect::to("/signin?next=/settings").into_response());
+        return Ok(Redirect::to(&auth::signin_href("/settings")).into_response());
     }
     let snap = s.snapshot().await?;
     let page = s.page(
@@ -783,7 +799,7 @@ fn note_for(kind: &RepoKind, settings: &Settings) -> String {
 async fn show_edit(s: &AppState, headers: &HeaderMap, item: Item) -> Result<Response, AppError> {
     let w = writer(s)?;
     if w.auth.session(headers).is_none() {
-        return Ok(Redirect::to(&format!("/signin?next={}", item.edit)).into_response());
+        return Ok(Redirect::to(&auth::signin_href(&item.edit)).into_response());
     }
     let sources = Arc::clone(&s.sources);
     let target = item.target.clone();

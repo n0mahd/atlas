@@ -1,0 +1,10 @@
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-5-5",
+  "skills": [
+    "~/work/extra-skills",
+    "-skills/deploy/SKILL.md",
+    "+skills/legacy-context"
+  ],
+  "enableSkillCommands": true
+}

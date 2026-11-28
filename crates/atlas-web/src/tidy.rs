@@ -112,69 +112,11 @@ pub(crate) fn view(snap: &Snapshot) -> TidyView {
             )
         })
         .collect();
-    let mut projects = Vec::new();
-    for p in &snap.projects {
-        let name = p.project.as_str();
-        let duplicates: Vec<Choice> = o
-            .duplicates
-            .iter()
-            .filter(|d| d.project == p.project)
-            .map(|d| Choice {
-                id: format!("{name}/{}", d.name),
-                name: d.name.to_string(),
-                note: if d.same {
-                    "The same files as Global's".to_owned()
-                } else {
-                    "Differs from Global's".to_owned()
-                },
-                compare: Some(format!(
-                    "/import/compare-copies?project={name}&name={}",
-                    d.name
-                )),
-                disabled: false,
-            })
-            .collect();
-        let claude_only: Vec<Choice> = o
-            .claude_only
-            .iter()
-            .filter(|c| c.project == p.project)
-            .map(|c| Choice {
-                id: format!("{name}/{}", c.name),
-                name: c.name.clone(),
-                note: if c.taken {
-                    ".agents/skills has one of that name already; sort it out by hand".to_owned()
-                } else {
-                    "In .claude/skills, which only Claude-style agents read".to_owned()
-                },
-                compare: None,
-                disabled: c.taken,
-            })
-            .collect();
-        let switched_off: Vec<Choice> = o
-            .switched_off
-            .iter()
-            .filter(|x| x.project == p.project)
-            .flat_map(|x| {
-                x.agents.iter().map(move |&agent| Choice {
-                    id: format!("{name}/{}/{}", x.name, agent.id()),
-                    name: x.name.to_string(),
-                    note: format!("Off for {}", crate::views::agent_name(agent)),
-                    compare: None,
-                    disabled: false,
-                })
-            })
-            .collect();
-        if duplicates.is_empty() && claude_only.is_empty() && switched_off.is_empty() {
-            continue;
-        }
-        projects.push(ProjectTidy {
-            num: String::new(),
-            name: name.to_owned(),
-            duplicates,
-            claude_only,
-            switched_off,
-        });
-    }
+    let mut projects: Vec<ProjectTidy> = snap
+        .projects
+        .iter()
+        .filter_map(|p| project_tidy(o, &p.project))
+        .collect();
     let first = if outside.is_empty() && differs.is_empty() {
         1
     } else {
@@ -188,6 +130,73 @@ pub(crate) fn view(snap: &Snapshot) -> TidyView {
         differs,
         projects,
     }
+}
+
+/// What Tidy up offers in one project, if anything.
+fn project_tidy(
+    o: &atlas_fs::outside::Outside,
+    project: &atlas_core::kernel::Slug,
+) -> Option<ProjectTidy> {
+    let name = project.as_str();
+    let duplicates: Vec<Choice> = o
+        .duplicates
+        .iter()
+        .filter(|d| d.project == *project)
+        .map(|d| Choice {
+            id: format!("{name}/{}", d.name),
+            name: d.name.to_string(),
+            note: if d.same {
+                "The same files as Global's".to_owned()
+            } else {
+                "Differs from Global's".to_owned()
+            },
+            compare: Some(format!(
+                "/import/compare-copies?project={name}&name={}",
+                d.name
+            )),
+            disabled: false,
+        })
+        .collect();
+    let claude_only: Vec<Choice> = o
+        .claude_only
+        .iter()
+        .filter(|c| c.project == *project)
+        .map(|c| Choice {
+            id: format!("{name}/{}", c.name),
+            name: c.name.clone(),
+            note: if c.taken {
+                ".agents/skills has one of that name already; sort it out by hand".to_owned()
+            } else {
+                "In .claude/skills, which only Claude-style agents read".to_owned()
+            },
+            compare: None,
+            disabled: c.taken,
+        })
+        .collect();
+    let switched_off: Vec<Choice> = o
+        .switched_off
+        .iter()
+        .filter(|x| x.project == *project)
+        .flat_map(|x| {
+            x.agents.iter().map(move |&agent| Choice {
+                id: format!("{name}/{}/{}", x.name, agent.id()),
+                name: x.name.to_string(),
+                note: format!("Off for {}", crate::views::short(agent)),
+                compare: None,
+                disabled: false,
+            })
+        })
+        .collect();
+    if duplicates.is_empty() && claude_only.is_empty() && switched_off.is_empty() {
+        return None;
+    }
+    Some(ProjectTidy {
+        num: String::new(),
+        name: name.to_owned(),
+        duplicates,
+        claude_only,
+        switched_off,
+    })
 }
 
 #[derive(Template)]

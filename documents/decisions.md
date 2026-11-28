@@ -312,3 +312,31 @@ adapted to the hub and many machines. See `documents/skills.md`.
   and Codex formats drop the identical hand-made handler where they write the hook. Hooks
   for Grok Build and Muse, commands that look like they hold a secret, links into tools'
   folders and built-in or plugin skills are not imported. See `documents/skills.md`.
+
+## 0028 · 2026-11-27 · atlasd links Claude Code's subagents
+atlasd links each `<knowledge>/agents/<name>.md` in an update's pinned knowledge copy into
+`~/.claude/agents/<name>.md` when Claude Code is set up for the login (`~/.claude` exists).
+Only regular top-level `*.md` files whose name is lowercase-with-hyphens count; hidden
+files are skipped, links and other names are reported. The links follow the skill-link
+rules of 0020 and 0023: only links into roots Atlas manages are created, repointed or
+removed (so a link into an `adopt` root is taken over and one for a subagent no longer in
+the update is pruned), and an own file or a link elsewhere is reported, never replaced.
+Other harnesses get no subagents until their formats are checked (`HARNESSES.md`). Reports
+carry `agents_from_atlas` per harness (absent from older clients, read as 0). The update
+manifest needs no change: it already pins the whole knowledge tree. This replaces the
+subagent part of `link-agents`, which must stop linking `~/.claude/agents` on machines
+running atlasd.
+
+## 0029 · 2026-11-27 · Instruction files: who reads what, Use Global instead
+Atlas matches the owner's T3 Code instructions work (skills series part 3). One table in
+`atlas_harness::readers` says which project and home files each agent reads and how it
+picks among them; the Instructions page applies it to the hub's machine. "Use Global
+instead" appends an agent's own text to Global; atlasd replaces that agent's file with the
+link or import only when every non-blank line is already in Global, re-checked at apply
+time, so nothing is lost (0027's exact-copy rule for files). Text moved between files is
+appended under an HTML comment `<!-- atlas: from <where> -->` (invisible when rendered,
+says where it came from) and skipped when the target already holds every line. Claude
+Code's AGENTS.md option (`pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`)
+is the owner's choice in `atlas/placements.toml [instructions]`, written by atlasd only
+when set. A new `CLAUDE.local.md` is kept out of git through Atlas's `.git/info/exclude`
+block, the only write Atlas makes inside `.git`.

@@ -89,7 +89,7 @@ fn handler(hook: &ManagedHook, command: String) -> Value {
 }
 
 /// Parses a JSON object file. A missing or blank file is an empty object.
-fn parse_object(current: Option<&[u8]>) -> Result<Map<String, Value>, FormatError> {
+pub(crate) fn parse_object(current: Option<&[u8]>) -> Result<Map<String, Value>, FormatError> {
     match current {
         Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
             match serde_json::from_slice(bytes)? {
@@ -110,7 +110,7 @@ fn shape(at: &str, expected: &'static str) -> FormatError {
 
 /// Compares the edited object with the original and renders the outcome: two-space
 /// JSON with a trailing newline, the layout the harnesses write themselves.
-fn finish(
+pub(crate) fn finish(
     original: &Map<String, Value>,
     edited: &Map<String, Value>,
 ) -> Result<Change, FormatError> {

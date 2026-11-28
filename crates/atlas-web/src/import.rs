@@ -176,7 +176,7 @@ pub(crate) fn skills_outside(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsO
             .filter(|b| wanted(&b.name))
             .map(|b| BuiltInRow {
                 icon: icons::icon(b.agent),
-                agent: views::agent_name(b.agent),
+                agent: views::short(b.agent),
                 name: b.name.clone(),
                 source: b.source.clone(),
                 path: b.path.clone(),
@@ -314,7 +314,7 @@ pub(crate) fn hooks_outside(snap: &Snapshot) -> HooksOutside {
             HookRow {
                 key: h.key.clone(),
                 icon: icons::icon(h.kind),
-                harness: views::agent_name(h.kind),
+                harness: views::short(h.kind),
                 command: views::mask_secrets(&h.command),
                 event: format!(
                     "{} · {}",

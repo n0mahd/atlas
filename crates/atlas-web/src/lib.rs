@@ -5,8 +5,6 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
-// Used by the skills, instructions and import pages as they land (decision 0027).
-#[allow(dead_code)]
 mod change;
 pub mod clients;
 mod distribute;
@@ -14,6 +12,7 @@ mod edit;
 mod icons;
 mod import;
 mod install;
+mod instructions_manage;
 mod markdown;
 pub mod release;
 pub mod remote;
@@ -21,8 +20,8 @@ mod tidy;
 // Stubs until the library and placement work lands (decision 0027).
 #[allow(dead_code, clippy::unused_async)]
 mod skill_ops;
-#[allow(dead_code, clippy::unused_async)]
 mod skills_place;
+mod updates;
 pub mod views;
 
 use std::sync::Arc;
@@ -72,6 +71,8 @@ pub struct AppState {
     writer: Option<Arc<Writer>>,
     /// The last read of the store, shared by requests for a few seconds.
     cache: Arc<tokio::sync::Mutex<Option<Cached>>>,
+    /// Check for updates: the GitHub reader and the last check (`updates`).
+    updates: Arc<updates::Updates>,
 }
 
 /// A read of the store and when it was made.
@@ -84,13 +85,32 @@ const SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 impl AppState {
     #[must_use]
     pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
+        let updates = Arc::new(updates::Updates::new(&sources));
         Self {
+            updates,
             sources: Arc::new(sources),
             hub: Arc::from(hub),
             others: others.into(),
             writer: writer.map(Arc::new),
             cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// For tests only: reads skill sources from a stand-in for GitHub's API on
+    /// `http://127.0.0.1:<port>` and the `skills` CLI's global lock from `global_lock`,
+    /// so a test never reaches the network or the machine's own lock.
+    ///
+    /// # Panics
+    /// If `api` isn't a loopback `http://127.0.0.1:` address.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_github_stand_in(mut self, api: &str, global_lock: std::path::PathBuf) -> Self {
+        assert!(
+            api.starts_with("http://127.0.0.1:"),
+            "the GitHub stand-in must be on 127.0.0.1"
+        );
+        self.updates = Arc::new(updates::Updates::with(api, global_lock));
+        self
     }
 
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
@@ -154,8 +174,30 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/skills", get(skills))
         .route("/skills/tidy", get(tidy::page).post(tidy::run))
         .route("/skills/{home}/{name}", get(skill_detail))
-        .route("/instructions", get(instructions))
-        .route("/instructions/{scope}/{file}", get(instruction_detail))
+        .route(
+            "/skills/{home}/{name}/agents",
+            post(skills_place::post_agents),
+        )
+        .route("/skills/{home}/{name}/use", post(skills_place::post_use))
+        .route("/skills/updates", get(updates::list))
+        .route("/skills/updates/check", post(updates::check))
+        .route(
+            "/skills/{home}/{name}/update",
+            get(updates::preview).post(updates::apply),
+        )
+        .route("/instructions", get(instructions_manage::list))
+        .route(
+            "/instructions/{scope}/{file}",
+            get(instructions_manage::detail),
+        )
+        .route(
+            "/instructions/{scope}/{file}/{action}",
+            get(instructions_manage::confirm).post(instructions_manage::run),
+        )
+        .route(
+            "/instructions/claude-agents-md",
+            post(instructions_manage::claude_option),
+        )
         .route("/memory", get(memory))
         .route("/memory/{name}", get(memory_detail))
         .route("/hooks", get(hooks))
@@ -311,6 +353,7 @@ struct SkillsPage {
     page: Page,
     v: views::SkillsList,
     outside: import::SkillsOutside,
+    place: skills_place::ListPlace,
 }
 
 #[derive(Template)]
@@ -318,20 +361,8 @@ struct SkillsPage {
 struct SkillPage {
     page: Page,
     v: views::SkillDetail,
-}
-
-#[derive(Template)]
-#[template(path = "instructions.html")]
-struct InstructionsPage {
-    page: Page,
-    sections: Vec<views::InstructionSection>,
-}
-
-#[derive(Template)]
-#[template(path = "instruction.html")]
-struct InstructionPage {
-    page: Page,
-    v: views::InstructionDetail,
+    /// Who gets the skill: the switches and "Use in…".
+    p: skills_place::SkillPlace,
 }
 
 #[derive(Template)]
@@ -377,6 +408,8 @@ pub(crate) struct SshResult {
     pub ok: bool,
     pub message: String,
     pub output: String,
+    /// The address typed, offered again after a failure so it needn't be retyped.
+    pub target: String,
 }
 
 // ---------------------------------------------------------------- handlers
@@ -411,6 +444,16 @@ struct ListQuery {
     /// After bringing something into Atlas: what to add to the notice (`import::done_text`).
     #[serde(default)]
     done: String,
+    /// After a skill's switch or "Use in…": what changed (`turned` and `agent`, or `used`).
+    #[serde(default)]
+    turned: String,
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    used: String,
+    /// The Skills list row to open, as `<home>/<name>`.
+    #[serde(default)]
+    open: String,
 }
 
 impl ListQuery {
@@ -421,6 +464,15 @@ impl ListQuery {
                 "Nothing changed, so nothing was committed.".to_owned(),
                 false,
             );
+        }
+        if let Some(did) = skills_place::did_text(&self.turned, &self.agent, &self.used) {
+            if self.sent.is_some() {
+                return (format!("{did} · on your machines within 10 minutes"), false);
+            }
+            if self.notsent.is_some() {
+                return (format!("{did}. Not on your machines yet"), true);
+            }
+            return (did, false);
         }
         let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
         if self.sent.is_some() {
@@ -500,7 +552,16 @@ async fn skills(
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page);
     let outside = import::skills_outside(&snap, &scope, &q.q);
-    Ok(Html(SkillsPage { page, v, outside }.render()?))
+    let place = skills_place::list(&s, &snap, &scope, &page, &q.open).await?;
+    Ok(Html(
+        SkillsPage {
+            page,
+            v,
+            outside,
+            place,
+        }
+        .render()?,
+    ))
 }
 
 async fn skill_detail(
@@ -511,65 +572,22 @@ async fn skill_detail(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &home);
+    let skill = snap
+        .catalog
+        .skills
+        .iter()
+        .find(|s| s.home.key() == home && s.name.as_str() == name)
+        .ok_or(AppError::NotFound)?;
+    // A link from a project's list carries it, so "This project only" means that one.
+    let scope = views::resolve_scope(&snap, if q.scope.is_empty() { &home } else { &q.scope });
     let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
     q.apply(&mut page);
     page.edit_href = s
         .writer
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
-    Ok(Html(SkillPage { page, v }.render()?))
-}
-
-async fn instructions(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let scope = views::resolve_scope(&snap, &q.scope);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        "Instructions",
-        &snap,
-        &scope,
-        true,
-    );
-    page.totals = format!("{} files", snap.catalog.instructions.len());
-    q.apply(&mut page);
-    Ok(Html(
-        InstructionsPage {
-            page,
-            sections: views::instructions(&snap, &scope),
-        }
-        .render()?,
-    ))
-}
-
-async fn instruction_detail(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((scope_key, file)): Path<(String, String)>,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let v = views::instruction_detail(&snap, &scope_key, &file).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &scope_key);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        v.title.clone(),
-        &snap,
-        &scope,
-        false,
-    );
-    q.apply(&mut page);
-    page.edit_href = s
-        .writer
-        .is_some()
-        .then(|| format!("/instructions/{scope_key}/{file}/edit"));
-    Ok(Html(InstructionPage { page, v }.render()?))
+    let p = skills_place::detail(&s, &snap, skill, &scope, &page).await?;
+    Ok(Html(SkillPage { page, v, p }.render()?))
 }
 
 async fn memory(

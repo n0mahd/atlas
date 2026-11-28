@@ -2,8 +2,9 @@
 
 ## Purpose
 One place for your complete agent setup: skills, instruction files, memory, hooks and MCP
-servers, kept once in your own hub and carried to every machine, harness and login. Planned
-next in scope: subagents and slash commands, once Atlas writes harness configs (phase 3).
+servers, kept once in your own hub and carried to every machine, harness and login.
+Subagent definitions are in scope for Claude Code (decision 0028); other harnesses'
+subagents and slash commands are planned next.
 Permissions and harness defaults (allowed tools, model, sandbox) need their own decision
 first, because they are security-sensitive.
 
@@ -69,3 +70,9 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   is rewritten by Atlas, so comments in it are lost.
 - `atlas-web::change` checks each touched path with its own `git status`; a bulk change of
   hundreds of skills would want one batched status call. Fine for tens.
+- Per-agent skill switches rely on marks in each agent's file (`atlas:` keys in Claude
+  Code's and Pi's JSON, comments in Codex's TOML and OpenCode's JSONC). If an agent
+  rewrites its file and drops the mark (Claude Code's `/skills` menu rewriting
+  `settings.local.json`, OpenCode saving an `opencode.json`), Atlas's "off" entries read as
+  the owner's and stay off. Not yet checked against those rewrites; the fix would be
+  atlasd remembering what it wrote.
