@@ -7,7 +7,8 @@ you run agents there.
 ## Before you start
 
 - The machine runs Linux (x86_64 or ARM) with systemd, or macOS (Apple silicon or Intel).
-- It is on your tailnet, signed in to Tailscale as a login the hub allows.
+- It is on your Tailscale network (your tailnet), signed in as a login the hub allows.
+  Devices with a Tailscale tag have no login, so the hub turns them away with a 403.
 - It has `git`, and can fetch your knowledge repo from its remote (for a private GitHub
   repo, an SSH key or credentials that work for `git clone`).
 - The hub has atlasd builds to hand out ([install the hub](install-hub.md)).
@@ -42,7 +43,7 @@ Keep the single quotes, so the whole command runs on the other machine.
 
 ## 3. From the hub, without a terminal
 
-- In the hub: **Machines**, then the "Or install it from here over SSH" row. Enter
+- In the hub: **Machines**, then the "Or install it from the hub over SSH" row. Enter
   `you@laptop` and press **Install**. The page shows the result, and the output if it
   failed. It can take up to a few minutes; leave the page open.
 - Or, on the hub machine: `atlas-hub add-machine you@laptop`. To just print a fresh
@@ -54,15 +55,15 @@ account's `~/.ssh/authorized_keys`.
 
 ## What the installer does
 
-1. Checks the machine is Linux and picks the build for its CPU.
+1. Checks the machine is Linux or macOS and picks the build for its CPU.
 2. Downloads atlasd from the hub and checks its SHA-256, so a damaged or altered download
    is refused.
 3. Installs it as `~/.local/bin/atlasd`.
 4. Pairs it with the hub, using the one-time code. The machine gets its own token.
 5. If `~/Knowledge` or `~/Skills` exist, lets atlasd take over the skill links an older
    setup made into them.
-6. Runs atlasd every 10 minutes. On Linux that's a systemd user timer, with "linger"
-   turned on so it keeps running when you're logged out. On macOS it's a launchd agent,
+6. Runs atlasd once straight away, then every 10 minutes. On Linux that's a systemd user
+   timer, set to keep running after you log out. On macOS it's a launchd agent,
    `~/Library/LaunchAgents/atlasd.plist`, logging to `~/Library/Logs/atlasd.log`.
 
 atlasd runs as your account. It never asks for root.
@@ -77,8 +78,8 @@ atlasd run --dry-run
 
 (On macOS `~/.local/bin` usually isn't on your `PATH`; run `~/.local/bin/atlasd` instead.)
 
-Before you've sent your first update it says the hub has no signed release yet. That's
-fine: send one from **Settings → Updates** ([editing and updates](editing-and-updates.md)).
+Before you've sent your first update it says "The hub has no signed release yet"
+(atlasd's word for an update). That's fine: send one from **Settings → Updates** ([editing and updates](editing-and-updates.md)).
 
 `atlasd status` shows the hub, the machine's name, the last update applied and the plan.
 
@@ -86,16 +87,20 @@ On the hub, **Machines** lists the machine and account, with "seen … ago" once
 reported in. If it says "Update 3, 1 behind", the machine hasn't picked up the latest yet;
 wait for the next 10-minute run.
 
-## Remove a machine
+## Removing Atlas
+
+### Remove a machine
 
 1. On the hub: **Machines**, then the × next to the account. Its token stops working at
    once.
-2. On the machine, stop atlasd and remove its files:
+2. On the machine, stop atlasd and remove its own files. This leaves
+   `~/.config/atlas/hub.toml` alone, so it is safe on the hub machine too:
 
    ```sh
    systemctl --user disable --now atlasd.timer
    rm ~/.config/systemd/user/atlasd.{service,timer} ~/.local/bin/atlasd
-   rm -r ~/.config/atlas ~/.local/state/atlas-client
+   rm -f ~/.config/atlas/client.toml ~/.config/atlas/cli.toml
+   rm -r ~/.local/state/atlas-client
    ```
 
    `~/.local/state/atlas-client/replaced` holds copies of files atlasd replaced, by date;
@@ -108,6 +113,38 @@ wait for the next 10-minute run.
    rm ~/Library/LaunchAgents/atlasd.plist ~/.local/bin/atlasd
    ```
 
-The skill links atlasd made point into `~/.local/share/atlas/sources`. Delete that folder
-only once you've replaced those links, or your agents lose those skills. Atlas can't yet
-remove the line it added to Claude Code's `CLAUDE.md`; delete it by hand if you want.
+What stays behind, because your agents are still using it:
+
+- **Links.** The skills, instruction files and subagents atlasd linked into each agent's
+  folders (such as `~/.claude/skills/<name>` or `~/.codex/AGENTS.md`) point into
+  `~/.local/share/atlas/sources`, atlasd's local copies of your repos. They keep working
+  until you delete that folder. To keep a skill, replace its link with a real copy
+  (`cp -rL ~/.claude/skills/<name> /tmp/<name>`, remove the link, move the copy back),
+  or link it to your own checkout of the knowledge repo instead. Then delete
+  `~/.local/share/atlas`. `find ~ -maxdepth 4 -lname '*/.local/share/atlas/*'` lists
+  the links that are left.
+- **Claude Code's `CLAUDE.md`.** atlasd added one line to `~/.claude/CLAUDE.md`, an
+  `@` import of the instructions in `~/.local/share/atlas/sources`. Atlas can't remove
+  it yet; delete that line by hand.
+- **Hooks.** Hook entries atlasd wrote into an agent's own settings end in
+  `# atlas:<name>` (Claude Code, Codex and others) or are keys named `atlas:<name>`
+  (Antigravity). Delete those entries by hand; your own entries are untouched.
+
+### Removing the hub
+
+On the hub machine:
+
+```sh
+systemctl --user disable --now atlas-hub
+tailscale serve --https=7443 off          # the port you chose
+rm ~/.config/systemd/user/atlas-hub.service ~/.local/bin/atlas-hub
+rm ~/.config/atlas/hub.toml
+rm -r ~/.local/state/atlas-hub            # passkeys, updates, pairings, atlasd builds
+```
+
+Your knowledge repo is yours and stays where it is, with its whole history. Deleting the
+state folder forgets your passkeys and every machine's pairing, so a new hub means
+pairing each machine again. Until you remove atlasd from them, machines keep the setup
+they last applied and report that they can't reach the hub; that is harmless. Turning
+off "keep running after you log out" (`loginctl disable-linger`) is up to you, as other
+services may rely on it.
