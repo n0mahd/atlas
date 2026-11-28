@@ -30,10 +30,10 @@
           {% if h.new %}
           {% for f in h.files %}
           <p class="file-name mono">{{ f.name }}</p>
-          {% if f.note.is_empty() %}<pre class="ink-block">{{ f.text }}</pre>{% else %}<p class="marginalia warn-note">{{ f.note }}</p>{% endif %}
+          {% if f.note.is_empty() %}<pre class="ink-block wrap">{{ f.text }}</pre>{% else %}<p class="marginalia warn-note">{{ f.note }}</p>{% endif %}
           {% endfor %}
           {% else %}
-          <pre class="ink-block diff">{% for l in h.diff %}<span class="d-{{ l.class }}">{{ l.text }}</span>{% endfor %}</pre>
+          <pre class="ink-block wrap diff">{% for l in h.diff %}<span class="d-{{ l.class }}">{{ l.text }}</span>{% endfor %}</pre>
           {% endif %}
         </div>
       </li>

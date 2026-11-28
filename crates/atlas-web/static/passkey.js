@@ -91,7 +91,9 @@
       line.setAttribute("role", "status");
       line.setAttribute("data-sending", "");
       var error = where.querySelector("[data-error]");
+      var bar = where.querySelector(".editor-bar");
       if (error && error.parentNode === where) where.insertBefore(line, error);
+      else if (bar) bar.after(line);
       else where.appendChild(line);
     }
     line.textContent = text;
