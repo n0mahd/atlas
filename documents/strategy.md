@@ -67,7 +67,7 @@ skills work about to land):
    `Secret<T>`, `VerifiedRelease`, Tailscale WhoIs, cargo-deny, signed binaries.
 
 Then the standing items:
-- atlasd runs every minute (decision 00XX). An idle run prints nothing, but a problem it
+- atlasd runs every minute (decision 0042). An idle run prints nothing, but a problem it
   reports (an unreachable hub, a file left alone) repeats every minute: in the journal on
   Linux, and in `~/Library/Logs/atlasd.log` on a Mac, which nothing rotates.
 - Reading trusts the `Tailscale-User-Login` header from `tailscale serve` (decision 0012);

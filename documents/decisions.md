@@ -523,7 +523,7 @@ pair-code and `atlas-hub pair-code` issue no code and say how to add a build, an
 `/install` answers with a script that says the same and exits 1, served with status 200
 because the documented `curl -fsSL` would otherwise show only "error: 400".
 
-## 00XX · 2026-11-28 · atlasd runs every minute because an idle run writes nothing
+## 0042 · 2026-11-28 · atlasd runs every minute because an idle run writes nothing
 A run with nothing new now writes nothing on the machine, so `deploy/atlasd.timer`
 (`OnCalendar=*:*:00`, still `OnBootSec=2min` and `Persistent=true`) and the launchd
 agent (`StartInterval` 60) run atlasd every minute instead of every 10, and the UI,
