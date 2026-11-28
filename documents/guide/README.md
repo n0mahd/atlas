@@ -13,7 +13,7 @@ Atlas is early software by one developer: expect breaking changes.
 
 - **The hub** runs on one Linux machine you pick. You open its web page from any device
   on your Tailscale network (your "tailnet"). Nothing is on the public internet.
-- **atlasd** runs on each machine, as your own account. Every 10 minutes a systemd user
+- **atlasd** runs on each machine, as your own account. Every minute a systemd user
   timer (a launchd agent on macOS) starts it; it fetches the latest update and links
   skills, instructions and hooks into each agent's own folders.
 - **Everything is stored in git.** Every save is a commit, so nothing is lost and any
@@ -21,7 +21,7 @@ Atlas is early software by one developer: expect breaking changes.
 - **Your passkey authorises changes.** Reading needs only your Tailscale login. Saving,
   sending and pairing need a passkey tap.
 - **Save sends.** One passkey tap saves your edit, pushes it and sends an update. Your
-  machines pick it up within 10 minutes.
+  machines pick it up within a minute.
 
 ## Pages
 

@@ -62,7 +62,7 @@ account's `~/.ssh/authorized_keys`.
 4. Pairs it with the hub, using the one-time code. The machine gets its own token.
 5. If `~/Knowledge` or `~/Skills` exist, lets atlasd take over the skill links an older
    setup made into them.
-6. Runs atlasd once straight away, then every 10 minutes. On Linux that's a systemd user
+6. Runs atlasd once straight away, then every minute. On Linux that's a systemd user
    timer, set to keep running after you log out. On macOS it's a launchd agent,
    `~/Library/LaunchAgents/atlasd.plist`, logging to `~/Library/Logs/atlasd.log`.
 

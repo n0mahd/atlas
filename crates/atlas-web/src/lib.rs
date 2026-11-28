@@ -466,9 +466,9 @@ impl ListQuery {
         let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
         if self.sent.is_some() {
             let text = if saved {
-                "Saved · on your machines within 10 minutes"
+                "Saved · on your machines within a minute"
             } else {
-                "On your machines within 10 minutes"
+                "On your machines within a minute"
             };
             return (text.to_owned(), false);
         }

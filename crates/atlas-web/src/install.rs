@@ -115,7 +115,7 @@ done
 "$HOME/.local/bin/atlasd" pair "$hub" "$code" "$@"
 
 if [ "$os" = macos ]; then
-  # A launchd agent for this login runs atlasd every 10 minutes (atlasd.timer on Linux).
+  # A launchd agent for this login runs atlasd every minute (atlasd.timer on Linux).
   agents="$HOME/Library/LaunchAgents"
   mkdir -p "$agents" "$HOME/Library/Logs"
   cat <<'PLIST' | sed "s|__HOME__|$HOME|g" > "$agents/atlasd.plist"
@@ -126,7 +126,7 @@ if [ "$os" = macos ]; then
   launchctl bootstrap "gui/$uid" "$agents/atlasd.plist" 2>/dev/null ||
     launchctl bootstrap "user/$uid" "$agents/atlasd.plist"
   echo
-  echo "Done. atlasd checks for changes every 10 minutes (log: ~/Library/Logs/atlasd.log)."
+  echo "Done. atlasd checks for changes every minute (log: ~/Library/Logs/atlasd.log)."
   echo "To see what it would change now: ~/.local/bin/atlasd run --dry-run"
   exit 0
 fi
@@ -147,7 +147,7 @@ loginctl enable-linger "$USER" 2>/dev/null || true
 systemctl --user start --no-block atlasd.service
 
 echo
-echo "Done. atlasd is making its first run now, then checks for changes every 10 minutes."
+echo "Done. atlasd is making its first run now, then checks for changes every minute."
 echo "To see what it would change now: atlasd run --dry-run"
 "#
     )

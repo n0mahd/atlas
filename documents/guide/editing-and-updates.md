@@ -31,8 +31,8 @@ instruction file or memory page asks for one passkey tap. That tap:
 2. pushes your knowledge repo, so machines can fetch it,
 3. builds an update and signs it with your passkey.
 
-You'll see "Saved · on your machines within 10 minutes". Each machine's atlasd checks
-every 10 minutes and applies it.
+You'll see "Saved · on your machines within a minute". Each machine's atlasd checks
+every minute and applies it.
 
 If you close the passkey prompt, the edit is still saved. The page says "Saved. Not on
 your machines yet" and offers a **Send** button.

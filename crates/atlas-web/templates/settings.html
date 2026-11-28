@@ -6,7 +6,7 @@
     <div class="section-head"><span class="num">I</span><h2>Updates</h2><span class="count">{{ updates.len() }}</span></div>
     <form method="post" action="/settings" class="setting-row">
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
-      <label class="switch"><input type="checkbox" name="send_on_save" value="1"{% if send_on_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Send changes to my machines when I save</span><span class="row-desc">One passkey tap saves and sends. Machines update within 10 minutes.</span></span></label>
+      <label class="switch"><input type="checkbox" name="send_on_save" value="1"{% if send_on_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Send changes to my machines when I save</span><span class="row-desc">One passkey tap saves and sends. Machines update within a minute.</span></span></label>
       <label class="switch"><input type="checkbox" name="push_after_save" value="1"{% if push_after_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Also push project repos after saving</span><span class="row-desc">Pushing main may deploy the project.</span></span></label>
       <button class="button-plain" type="submit">Save</button>
     </form>
