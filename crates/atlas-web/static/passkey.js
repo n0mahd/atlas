@@ -93,11 +93,33 @@
     location.assign(done.next);
   }
 
+  // Shows what the passkey is about to sign, next to the prompt.
+  function say(where, text) {
+    if (!where || !text) return;
+    var line = where.querySelector("[data-sending]");
+    if (!line) {
+      line = document.createElement("p");
+      line.className = "marginalia sending";
+      line.setAttribute("role", "status");
+      line.setAttribute("data-sending", "");
+      var error = where.querySelector("[data-error]");
+      var bar = where.querySelector(".editor-bar");
+      if (error && error.parentNode === where) where.insertBefore(line, error);
+      else if (bar) bar.after(line);
+      else where.appendChild(line);
+    }
+    line.textContent = text;
+  }
+
   // Sends saved changes to the machines: the passkey signs the update's digest
-  // (decisions 0019, 0022). Resolves to where to go next; 'nothing' needs no tap.
-  async function send(next) {
-    var opts = await post("/send/start", { next: next });
-    if (opts.nothing) return { nothing: true, next: opts.next, note: opts.note };
+  // (decisions 0019, 0022). Resolves to where to go next; 'nothing' needs no tap, and
+  // 'review' is the page to look at first (a hook or a trusted passkey changes). With
+  // 'pending' it signs exactly the update that page showed.
+  async function send(next, back, pending, where) {
+    var opts = await post("/send/start", { next: next, back: back, pending: pending || "" });
+    if (opts.nothing) return { nothing: true, next: opts.next, note: opts.note, message: opts.message };
+    if (opts.review) return { review: opts.review };
+    say(where, opts.summary);
     var cred = await navigator.credentials.get({ publicKey: {
       challenge: toBuf(opts.challenge),
       rpId: opts.rpId,
@@ -107,6 +129,7 @@
     } });
     return post("/send/finish", {
       next: next,
+      pending: opts.pending,
       credential: {
         credential_id: toB64(cred.rawId),
         authenticator_data: toB64(cred.response.authenticatorData),
@@ -125,9 +148,11 @@
 
   // A Send button: its box names where to go, else this page marked as sent.
   async function sendButton(box) {
-    var done = await send(box.dataset.next || withParam(location.href, "sent"));
-    if (done.nothing && done.note) throw new Error(done.note);
-    location.assign(done.next);
+    var here = location.pathname + location.search + location.hash;
+    var done = await send(box.dataset.next || withParam(location.href, "sent"), box.dataset.back || here, box.dataset.pending, box);
+    // Nothing new: say so here and send nothing.
+    if (done.nothing) return say(box, [done.message, done.note].filter(Boolean).join(" "));
+    location.assign(done.review || done.next);
   }
 
   // Shows why a change was refused inside its form and lets the owner try again.
@@ -186,8 +211,8 @@
       if (!res.ok || !json) return plain();
       return res.json().then(function (saved) {
         if (!saved.send) return location.assign(saved.next);
-        return send(withParam(saved.next, "sent"))
-          .then(function (done) { location.assign(done.next); })
+        return send(withParam(saved.next, "sent"), withParam(saved.next, "notsent"), "", form)
+          .then(function (done) { location.assign(done.review || done.next); })
           .catch(function () { location.assign(withParam(saved.next, "notsent")); });
       });
     }, plain);
@@ -217,6 +242,7 @@
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-passkey] [data-action]");
     if (!button) return;
+    event.preventDefault();
     var box = button.closest("[data-passkey]");
     var error = box.querySelector("[data-error]");
     if (!window.PublicKeyCredential) {

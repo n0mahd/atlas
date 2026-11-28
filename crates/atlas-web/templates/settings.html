@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-{% if !flash.is_empty() %}<p class="marginalia flash" role="status">{{ flash }}</p>{% endif %}
+{% if !flash.is_empty() %}<div class="marginalia flash" role="status">{{ flash }}{% if let Some(o) = page.flash_more %}<details class="others"><summary>{{ o.line }}</summary><ul class="list-plain mono">{% for n in o.names %}<li>{{ n }}</li>{% endfor %}</ul></details>{% endif %}</div>{% endif %}
 <div class="sections">
-  <section class="section" id="updates" data-passkey data-next="/settings?flash=sent#updates">
+  <section class="section" id="updates" data-passkey data-next="/settings?flash=sent#updates" data-back="/settings#updates">
     <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>Updates</h2><span class="count">{{ updates.len() }}</span></div>
     <form method="post" action="/settings" class="setting-row">
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
@@ -10,10 +10,13 @@
       <label class="switch"><input type="checkbox" name="push_after_save" value="1"{% if push_after_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Also push project repos after saving</span><span class="row-desc">Pushing main may deploy the project.</span></span></label>
       <button class="button-plain" type="submit">Save</button>
     </form>
-    <div class="setting-row">
+    <form method="post" action="/send/review" class="setting-row">
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <input type="hidden" name="next" value="/settings?flash=sent#updates">
+      <input type="hidden" name="back" value="/settings#updates">
       <span class="row-main"><span class="row-name plain">{% if let Some(w) = waiting %}{{ w }}{% else %}Your machines have every saved change{% endif %}</span></span>
-      <button class="button-ink" type="button" data-action="send">Send now</button>
-    </div>
+      <button class="button-ink" type="submit" data-action="send">Send now</button>
+    </form>
     <p class="marginalia warn-note" data-error hidden role="alert"></p>
     {% if !updates.is_empty() %}
     <ul class="rows">

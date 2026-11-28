@@ -119,19 +119,32 @@ pub struct Manifest {
     pub projects: Vec<ProjectRef>,
 }
 
-/// `remote` with any user name and password taken out of a `http(s)://` URL, so a token
-/// kept in a remote never goes out in an update. Other forms are returned as they are.
+/// The remote as machines may see it in an update. A user name alone is dropped from
+/// `http(s)` addresses (it may be a token) and kept for SSH, which needs it. None when the
+/// address holds a password or token (`user:secret@`), which must never go into an update.
+/// Paths and scp-style `git@host:path` carry no password and are returned as they are.
 #[must_use]
-pub fn without_credentials(remote: &str) -> String {
-    for scheme in ["https://", "http://"] {
-        if let Some(rest) = remote.strip_prefix(scheme) {
-            let end = rest.find('/').unwrap_or(rest.len());
-            if let Some(at) = rest[..end].rfind('@') {
-                return format!("{scheme}{}", &rest[at + 1..]);
-            }
-        }
+pub fn without_credentials(remote: &str) -> Option<String> {
+    let Some((scheme, rest)) = remote.split_once("://") else {
+        return Some(remote.to_owned());
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(authority_end);
+    let Some((userinfo, host)) = authority.rsplit_once('@') else {
+        return Some(remote.to_owned());
+    };
+    if userinfo.contains(':') {
+        return None;
     }
-    remote.to_owned()
+    let ssh = matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "ssh" | "git+ssh" | "ssh+git"
+    );
+    if ssh {
+        Some(remote.to_owned())
+    } else {
+        Some(format!("{scheme}://{host}{path}"))
+    }
 }
 
 /// What every way of writing one repo's remote has in common, to tell whether two
@@ -350,14 +363,15 @@ mod tests {
     fn credentials_never_go_out() {
         assert_eq!(
             without_credentials("https://user:ghp_secret@github.com/o/r.git"),
-            "https://github.com/o/r.git"
+            None,
+            "a password never goes out, nor does a stripped copy that would hide it"
         );
         assert_eq!(
-            without_credentials("http://token@host.example/o/r"),
-            "http://host.example/o/r"
+            without_credentials("http://token@host.example/o/r").as_deref(),
+            Some("http://host.example/o/r")
         );
         for kept in ["git@github.com:o/r.git", "https://github.com/o/r", "/srv/r"] {
-            assert_eq!(without_credentials(kept), kept);
+            assert_eq!(without_credentials(kept).as_deref(), Some(kept));
         }
     }
 

@@ -1143,7 +1143,7 @@ pub(crate) async fn preview(
         false,
     );
     // `apply` answers through `change::respond`, as every other change does.
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     let sends = l.kind == RepoKind::Knowledge
         || matches!(
             &l.place,

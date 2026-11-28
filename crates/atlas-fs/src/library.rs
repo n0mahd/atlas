@@ -123,31 +123,49 @@ pub fn installable_folder(folder: &Path, required: &str) -> Result<(), String> {
     }
     installable_file(&folder.join(required), folder)
         .map_err(|why| format!("its {required}: {why}"))?;
-    let mut stack = vec![folder.to_path_buf()];
+    if let Some(rel) = links_in(folder)?
+        .into_iter()
+        .find(|rel| !resolves_inside(&folder.join(rel), folder))
+    {
+        return Err(format!(
+            "{} inside it is a link to somewhere else",
+            rel.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Every link under `folder` (none followed), relative to it, in name order; bounded
+/// like [`read_tree`]. Items whose content must be exactly what an update shows (hooks)
+/// refuse any of them; skills refuse those that lead out ([`installable_folder`]).
+///
+/// # Errors
+/// The folder can't be listed, or holds too many entries.
+pub fn links_in(folder: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![PathBuf::new()];
     let mut seen = 0_usize;
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    while let Some(rel) = stack.pop() {
+        let entries: Vec<_> = std::fs::read_dir(folder.join(&rel))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        for entry in entries {
             seen += 1;
             if seen > MAX_ENTRIES {
                 return Err("it holds too many files".to_owned());
             }
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
+            let path = rel.join(entry.file_name());
             let ft = entry.file_type().map_err(|e| e.to_string())?;
             if ft.is_symlink() {
-                if !resolves_inside(&path, folder) {
-                    let rel = path.strip_prefix(folder).unwrap_or(&path);
-                    return Err(format!(
-                        "{} inside it is a link to somewhere else",
-                        rel.display()
-                    ));
-                }
+                out.push(path);
             } else if ft.is_dir() && entry.file_name() != ".git" {
                 stack.push(path);
             }
         }
     }
-    Ok(())
+    out.sort();
+    Ok(out)
 }
 
 /// One regular file of a folder, relative to it.

@@ -400,7 +400,7 @@ pub(crate) async fn list(
         &scope,
         true,
     );
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     page.totals = format!("{} files", v.files);
     Ok(Html(ListPage { page, v }.render()?))
 }
@@ -424,7 +424,7 @@ pub(crate) async fn detail(
         &scope,
         false,
     );
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     extra_flash(&mut page, &extra);
     page.edit_href = (s.writer.is_some() && v.editable)
         .then(|| format!("/instructions/{scope_key}/{file}/edit"));

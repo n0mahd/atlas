@@ -76,7 +76,7 @@ fn skills_hooks_and_subagents_that_link_out_of_their_folder_are_skipped_and_repo
         "skill leaky skipped: scripts/run.sh inside it is a link to somewhere else"
     ));
     assert!(said(
-        "hook sneaky skipped: its script run.sh: it is a link to somewhere else"
+        "hook sneaky skipped: its script is a link, so machines will skip this hook"
     ));
     assert!(said(
         "subagent spy.md skipped: it is a link to somewhere else"

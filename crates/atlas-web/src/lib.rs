@@ -18,6 +18,7 @@ mod library_pages;
 mod markdown;
 pub mod release;
 pub mod remote;
+mod review;
 mod skill_ops;
 mod skills_place;
 #[cfg(test)]
@@ -306,6 +307,8 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/releases", get(distribute::releases_moved))
         .route("/send/start", post(distribute::send_start))
         .route("/send/finish", post(distribute::send_finish))
+        .route("/send/review", post(distribute::review_build))
+        .route("/send/review/{id}", get(distribute::review_page))
         .route("/machines/pair", post(distribute::pair_code))
         .route("/machines/pair/ssh", post(distribute::pair_ssh))
         .route("/machines/add", post(distribute::add_machine_ui))
@@ -487,6 +490,21 @@ struct HooksPage {
     outside: import::HooksOutside,
 }
 
+/// The check before sending an update that adds or changes hooks.
+#[derive(Template)]
+#[template(path = "send_review.html")]
+pub(crate) struct SendReviewPage {
+    pub page: Page,
+    /// The pending update this page shows.
+    pub id: String,
+    pub next: String,
+    pub back: String,
+    pub hooks: Vec<review::HookChange>,
+    pub keys: Vec<review::KeyChange>,
+    pub trusted: Vec<String>,
+    pub others: Option<views::OthersView>,
+}
+
 #[derive(Template)]
 #[template(path = "mcp.html")]
 struct McpPage {
@@ -620,7 +638,7 @@ impl ListQuery {
         (text, false)
     }
 
-    fn apply(&self, page: &mut Page) {
+    fn apply(&self, page: &mut Page, s: &AppState) {
         let (mut text, send) = self.flash();
         if let Some(extra) = import::done_text(&self.done) {
             text = if text.is_empty() {
@@ -631,6 +649,9 @@ impl ListQuery {
         }
         page.flash = text;
         page.flash_action = send.then_some("Send");
+        if self.sent.is_some() {
+            page.flash_more = distribute::sent_others(s);
+        }
     }
 }
 
@@ -642,7 +663,7 @@ async fn overview(
     let snap = s.snapshot().await?;
     let mut page = s.page(&headers, "/", "Home", &snap, &Scope::Global, false);
     page.totals = format!("Hub · {}", page.hub);
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     let waiting = distribute::waiting(&s).await;
     let can_send = waiting.as_ref().is_some_and(distribute::Waiting::sendable);
     let waiting = waiting.and_then(|w| w.text());
@@ -673,7 +694,7 @@ async fn skills(
     );
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     let outside = import::skills_outside(&snap, &scope, &q.q);
     let place = skills_place::list(&s, &snap, &scope, &page, &q.open);
     Ok(Html(
@@ -704,7 +725,7 @@ async fn skill_detail(
     // A link from a project's list carries it, so "This project only" means that one.
     let scope = views::resolve_scope(&snap, if q.scope.is_empty() { &home } else { &q.scope });
     let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     page.edit_href = s
         .writer
         .is_some()
@@ -742,7 +763,7 @@ async fn memory(
     let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     let outside = import::memory_outside(&snap, &scope, &s.sources.home);
     Ok(Html(MemoryPage { page, v, outside }.render()?))
 }
@@ -757,7 +778,7 @@ async fn memory_detail(
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::memory_detail(&snap, &scope, &name).ok_or(AppError::NotFound)?;
     let mut page = s.page(&headers, "/memory", v.name.clone(), &snap, &scope, false);
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     // Agents' own per-repo notes aren't in git, so only store notes can be edited.
     page.edit_href =
         (s.writer.is_some() && scope == Scope::Global).then(|| format!("/memory/{name}/edit"));
@@ -773,7 +794,7 @@ async fn hooks(
     let v = views::hooks(&snap);
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
-    q.apply(&mut page);
+    q.apply(&mut page, &s);
     let outside = import::hooks_outside(&snap);
     Ok(Html(HooksPage { page, v, outside }.render()?))
 }

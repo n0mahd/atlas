@@ -21,16 +21,20 @@ pub struct Skipped {
 /// Builds the next manifest from the sources machines use (Knowledge and public skills),
 /// each pinned at its upstream's commit: that is what a machine can fetch. Project repos
 /// aren't pinned, because atlasd doesn't distribute them; each is named with its remote
-/// (credentials taken out) so machines can find their own checkouts, sorted by name so
-/// the signed bytes don't depend on the order projects were registered in.
-#[must_use]
+/// (a user name taken out of http(s) addresses) so machines can find their own checkouts,
+/// sorted by name so the signed bytes don't depend on the order projects were registered
+/// in. A project whose remote holds a password or token is left out with a reason.
+///
+/// # Errors
+/// A sentence for the owner when a source's remote address holds a password or token:
+/// nothing is sent until it's removed.
 pub fn build(
     sources: &Sources,
     number: u64,
     hub: &str,
     owner_keys: Vec<OwnerKey>,
     now: u64,
-) -> (Manifest, Vec<Skipped>) {
+) -> Result<(Manifest, Vec<Skipped>), String> {
     let mut repos: Vec<(SourceId, PathBuf)> =
         vec![(SourceId::Knowledge, sources.knowledge.clone())];
     if let Some(p) = &sources.public_skills {
@@ -40,12 +44,20 @@ pub fn build(
     let mut skipped = Vec::new();
     for (id, root) in repos {
         match pin(&root) {
-            Ok((remote, commit, tree)) => pinned.push(Source {
-                id,
-                remote,
-                commit,
-                tree,
-            }),
+            Ok((remote, commit, tree)) => {
+                let Some(remote) = without_credentials(&remote) else {
+                    return Err(format!(
+                        "Your {} repo's address contains a password or token. Remove it from the remote URL, then send again.",
+                        label(&id).to_lowercase()
+                    ));
+                };
+                pinned.push(Source {
+                    id,
+                    remote,
+                    commit,
+                    tree,
+                });
+            }
             Err(reason) => skipped.push(Skipped {
                 source: label(&id),
                 reason,
@@ -76,7 +88,7 @@ pub fn build(
         owner_keys,
         projects,
     };
-    (manifest, skipped)
+    Ok((manifest, skipped))
 }
 
 fn project_remote(root: &Path) -> Result<String, String> {
@@ -85,7 +97,9 @@ fn project_remote(root: &Path) -> Result<String, String> {
         .remote_url()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "has no git remote, so machines can't find their checkouts".to_owned())?;
-    Ok(without_credentials(&remote))
+    without_credentials(&remote).ok_or_else(|| {
+        "its remote address contains a password or token, so it was left out; remove it from the remote URL".to_owned()
+    })
 }
 
 /// The name the UI uses for a source.
@@ -245,7 +259,8 @@ mod tests {
                 public_skills: None,
                 projects,
             };
-            serde_json::to_vec(&build(&sources, 7, "https://hub", Vec::new(), 5).0).unwrap()
+            serde_json::to_vec(&build(&sources, 7, "https://hub", Vec::new(), 5).unwrap().0)
+                .unwrap()
         };
         let one = bytes(projects.clone());
         projects.reverse();
@@ -253,6 +268,67 @@ mod tests {
         let m: Manifest = serde_json::from_slice(&one).unwrap();
         let names: Vec<&str> = m.projects.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["atlas", "shop", "zoo"]);
+    }
+
+    #[test]
+    fn remotes_go_out_without_credentials() {
+        assert_eq!(
+            without_credentials("https://user:token@host/repo.git"),
+            None
+        );
+        assert_eq!(without_credentials("ssh://git:secret@host/repo.git"), None);
+        assert_eq!(
+            without_credentials("https://token@host/repo.git").as_deref(),
+            Some("https://host/repo.git")
+        );
+        for kept in [
+            "https://host/repo.git",
+            "ssh://git@host/repo.git",
+            "git@github.com:me/repo.git",
+            "/srv/git/repo.git",
+            "https://host/a@b",
+        ] {
+            assert_eq!(without_credentials(kept).as_deref(), Some(kept));
+        }
+    }
+
+    #[test]
+    fn a_remote_with_a_password_refuses_to_send() {
+        let tmp = tempfile::tempdir().unwrap();
+        let k = tmp.path().join("k");
+        std::fs::create_dir_all(&k).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&k)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.name", "T"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://user:token@host/repo.git",
+        ]);
+        // A remote-tracking ref, as after a push, so the commit counts as pushed.
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&["branch", "-q", "--set-upstream-to=origin/main"]);
+        let sources = Sources {
+            home: tmp.path().into(),
+            knowledge: k.clone(),
+            public_skills: None,
+            projects: Vec::new(),
+        };
+        let refused = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap_err();
+        assert_eq!(
+            refused,
+            "Your knowledge repo's address contains a password or token. Remove it from the remote URL, then send again."
+        );
     }
 
     #[test]
@@ -287,7 +363,7 @@ mod tests {
                 root: shop.clone(),
             }],
         };
-        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert_eq!(m.sources, Vec::new(), "projects are never pinned");
         assert_eq!(m.projects, Vec::new());
         assert_eq!(skipped.len(), 2);
@@ -301,22 +377,24 @@ mod tests {
         let bare = tmp.path().join("k.git");
         git(tmp.path(), &["init", "-q", "--bare", "k.git"]);
         git(&k, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        // A token alone in an https address is taken out; a user:password pair would
+        // leave the project out instead (see project_remote).
         git(
             &shop,
             &[
                 "remote",
                 "add",
                 "origin",
-                "https://me:tok@git.example/o/shop.git",
+                "https://tok@git.example/o/shop.git",
             ],
         );
-        let (_, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        let (_, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert!(skipped[0].reason.contains("isn't pushed"), "{skipped:?}");
 
         git(&k, &["push", "-q", "-u", "origin", "main"]);
         let pushed = git(&k, &["rev-parse", "HEAD"]);
         git(&k, &["commit", "-q", "--allow-empty", "-m", "local only"]);
-        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0);
+        let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert_eq!(skipped, Vec::new());
         assert_eq!(
             m.projects,
