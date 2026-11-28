@@ -401,7 +401,7 @@ Through systemd rather than running `atlasd run` directly: the run gets the same
 as every later one, its output goes to the journal, systemd never runs it twice at once,
 and `--no-block` keeps the install (and an install over SSH) from waiting for it.
 
-## 00XX · 2026-11-27 · A first run that doesn't assume the owner's machine
+## 0037 · 2026-11-27 · A first run that doesn't assume the owner's machine
 `deploy/install.sh` is the path a newcomer takes, so it now checks its needs (Linux,
 cargo, git, a signed-in Tailscale, systemd user services) before the long build and
 names what's missing in one sentence; reads the login from `tailscale whois` rather than
