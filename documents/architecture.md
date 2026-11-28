@@ -131,6 +131,7 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 | Instructions | `<knowledge>/AGENTS.md`; each project's `AGENTS.md` / `CLAUDE.md` |
 | Memory | `<knowledge>/memory/**.md` (frontmatter: name, description, metadata.type/host) |
 | Hooks | `<knowledge>/hooks/<name>/` and `<repo>/.agents/hooks/<name>/`: a manifest (event, matcher, harnesses) plus its script |
+| Subagents | `<knowledge>/agents/<name>.md`, linked into `~/.claude/agents` (Claude Code only, decision 0028) |
 | MCP servers | `mcp.toml` (phase 4), secrets in the hub keystore |
 | Projects, machines | `atlas.toml` in the hub's data repo |
 

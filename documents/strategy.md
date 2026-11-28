@@ -2,8 +2,9 @@
 
 ## Purpose
 One place for your complete agent setup: skills, instruction files, memory, hooks and MCP
-servers, kept once in your own hub and carried to every machine, harness and login. Planned
-next in scope: subagents and slash commands, once Atlas writes harness configs (phase 3).
+servers, kept once in your own hub and carried to every machine, harness and login.
+Subagent definitions are in scope for Claude Code (decision 0028); other harnesses'
+subagents and slash commands are planned next.
 Permissions and harness defaults (allowed tools, model, sandbox) need their own decision
 first, because they are security-sensitive.
 

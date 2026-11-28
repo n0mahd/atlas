@@ -1072,7 +1072,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(page.contains("isn&#39;t an SSH address"), "{page}");
         assert!(page.contains("marginalia warn-note"));
-        assert!(page.contains("value=\"-oProxyCommand=x\""), "keeps what was typed");
+        assert!(
+            page.contains("value=\"-oProxyCommand=x\""),
+            "keeps what was typed"
+        );
         // Nothing ran, so no pairing command (and no code) was issued.
         assert!(!page.contains("sh -s --"));
 

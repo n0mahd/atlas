@@ -271,3 +271,17 @@ login the file holds only hooks Claude's copy doesn't carry (those limited to `g
 otherwise every hook meant for Grok. When Claude Code appears later the duplicates leave
 `atlas.json`, and the file is removed once it holds nothing. Replaces 0022's "Atlas writes
 no hooks for Grok".
+
+## 0028 · 2026-11-27 · atlasd links Claude Code's subagents
+atlasd links each `<knowledge>/agents/<name>.md` in an update's pinned knowledge copy into
+`~/.claude/agents/<name>.md` when Claude Code is set up for the login (`~/.claude` exists).
+Only regular top-level `*.md` files whose name is lowercase-with-hyphens count; hidden
+files are skipped, links and other names are reported. The links follow the skill-link
+rules of 0020 and 0023: only links into roots Atlas manages are created, repointed or
+removed (so a link into an `adopt` root is taken over and one for a subagent no longer in
+the update is pruned), and an own file or a link elsewhere is reported, never replaced.
+Other harnesses get no subagents until their formats are checked (`HARNESSES.md`). Reports
+carry `agents_from_atlas` per harness (absent from older clients, read as 0). The update
+manifest needs no change: it already pins the whole knowledge tree. This replaces the
+subagent part of `link-agents`, which must stop linking `~/.claude/agents` on machines
+running atlasd.

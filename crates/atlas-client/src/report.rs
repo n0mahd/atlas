@@ -48,6 +48,20 @@ fn managed_hooks(kind: HarnessKind, config: &Path) -> u32 {
     count(handlers)
 }
 
+/// Subagent links in `dir` that point into Atlas's copies and resolve.
+fn linked_agents(dir: &Path, sources_dir: &Path) -> u32 {
+    let links = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| fs::metadata(p).is_ok())
+        .filter_map(|p| fs::read_link(&p).ok().map(|t| dir.join(t)))
+        .filter(|t| t.starts_with(sources_dir))
+        .count();
+    count(links)
+}
+
 /// One report per harness layout, counted from the files as they are now.
 #[must_use]
 pub fn harnesses(home: &Path, sources_dir: &Path) -> Vec<HarnessReport> {
@@ -88,6 +102,9 @@ pub fn harnesses(home: &Path, sources_dir: &Path) -> Vec<HarnessReport> {
                 hooks_managed: layout.hook_config.map_or(0, |c| {
                     managed_hooks(view.kind, &hook_file(view.kind, &home.join(c)))
                 }),
+                agents_from_atlas: layout
+                    .agent_dir
+                    .map_or(0, |d| linked_agents(&home.join(d), sources_dir)),
             }
         })
         .collect()
