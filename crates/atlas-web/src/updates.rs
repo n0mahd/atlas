@@ -37,7 +37,7 @@ use atlas_fs::library::{MAX_BYTES, MAX_FILES, Tree, TreeFile};
 use atlas_fs::lock::{self, Baseline, GitHubSource, LockFile, LockKind, TreeItem};
 use axum::Form;
 use axum::extract::{Path as UrlPath, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
@@ -207,7 +207,12 @@ fn locate_all(
                 let Some(root) = sources.public_skills.clone() else {
                     continue;
                 };
-                (RepoKind::PublicSkills, root, name.to_string(), global.clone())
+                (
+                    RepoKind::PublicSkills,
+                    root,
+                    name.to_string(),
+                    global.clone(),
+                )
             }
             SkillHome::Project(p) => {
                 let Some(project) = sources.projects.iter().find(|x| &x.name == p) else {
@@ -281,10 +286,9 @@ impl Local {
 }
 
 fn read_local(folder: &Path) -> Result<Local, String> {
-    use std::os::unix::fs::PermissionsExt as _;
     let tree = atlas_fs::library::read_tree(folder).map_err(|e| format!("{e}."))?;
     if !tree.skipped.is_empty() {
-        return Err("It has links inside, which Atlas doesn't update.".to_owned());
+        return Err("It has links or a .git folder inside, which Atlas doesn't update.".to_owned());
     }
     let mut files = BTreeMap::new();
     for f in tree.files {
@@ -294,8 +298,7 @@ fn read_local(folder: &Path) -> Result<Local, String> {
             .filter(|r| lock::is_safe_rel(r))
             .ok_or_else(|| "It has a file name Atlas can't read.".to_owned())?
             .to_owned();
-        let executable = std::fs::symlink_metadata(folder.join(&rel))
-            .is_ok_and(|m| m.permissions().mode() & 0o111 != 0);
+        let executable = f.executable;
         files.insert(
             rel,
             LocalFile {
@@ -340,7 +343,9 @@ fn read_local(folder: &Path) -> Result<Local, String> {
 enum Standing {
     Current,
     /// The source moved on. `edited`: the owner changed the local copy too.
-    Update { edited: bool },
+    Update {
+        edited: bool,
+    },
     /// Only the owner changed it; the source has nothing new.
     EditedOnly,
     /// It differs, and the record has no installed version to tell whose change it is.
@@ -371,12 +376,7 @@ impl Standing {
 }
 
 impl Updates {
-    async fn bytes_of(
-        &self,
-        l: &Locked,
-        local: &Local,
-        sha: &str,
-    ) -> Result<Arc<[u8]>, Problem> {
+    async fn bytes_of(&self, l: &Locked, local: &Local, sha: &str) -> Result<Arc<[u8]>, Problem> {
         if let Some(b) = local.by_sha(sha).or_else(|| self.github.cached(sha)) {
             return Ok(b);
         }
@@ -465,13 +465,16 @@ impl Updates {
                 // An install lacks the files the CLI leaves out; with the source's own
                 // copies of them added back an unedited copy hashes to the recorded tree.
                 let mut with_left_out = local.items.clone();
-                with_left_out.extend(up.files.iter().filter(|(p, _)| lock::is_ignored_path(p)).map(
-                    |(p, f)| TreeItem {
-                        path: p.clone(),
-                        mode: if f.executable { "100755" } else { "100644" }.to_owned(),
-                        sha: f.sha.clone(),
-                    },
-                ));
+                with_left_out.extend(
+                    up.files
+                        .iter()
+                        .filter(|(p, _)| lock::is_ignored_path(p))
+                        .map(|(p, f)| TreeItem {
+                            path: p.clone(),
+                            mode: if f.executable { "100755" } else { "100644" }.to_owned(),
+                            sha: f.sha.clone(),
+                        }),
+                );
                 if &local.raw_sha == base || &lock::git_tree_sha(&with_left_out) == base {
                     return Ok((Standing::Update { edited: false }, Some(local.side.clone())));
                 }
@@ -483,11 +486,13 @@ impl Updates {
                     .tree_by_sha(&l.src.owner, &l.src.repo, base)
                     .await?;
                 // GitHub no longer has the installed version: no file can be told apart.
-                Ok(found.map_or((Standing::Update { edited: true }, None), |t| {
-                    let base_side = plan::upstream_of(&t.tree, "", base).side;
-                    let edited = base_side != local.side;
-                    (Standing::Update { edited }, Some(base_side))
-                }))
+                Ok(
+                    found.map_or((Standing::Update { edited: true }, None), |t| {
+                        let base_side = plan::upstream_of(&t.tree, "", base).side;
+                        let edited = base_side != local.side;
+                        (Standing::Update { edited }, Some(base_side))
+                    }),
+                )
             }
             Some(Baseline::Content(hash)) => {
                 if &local.content_hash == hash {
@@ -496,7 +501,9 @@ impl Updates {
                 let budget = (!full).then_some(CHECK_DOWNLOADS);
                 match self.upstream_hashes(l, up, local, budget).await? {
                     None => Ok((Standing::Differs, None)),
-                    Some(h) if h.contains(hash) => Ok((Standing::EditedOnly, Some(up.side.clone()))),
+                    Some(h) if h.contains(hash) => {
+                        Ok((Standing::EditedOnly, Some(up.side.clone())))
+                    }
                     Some(_) => Ok((Standing::Update { edited: true }, None)),
                 }
             }
@@ -586,16 +593,16 @@ impl Updates {
         if up.files.len() > MAX_FILES {
             return Err("Its source is too big to update.".to_owned());
         }
-        let (state, base) = self
-            .compare(l, &local, &up, true)
-            .await
-            .map_err(sentence)?;
+        let (state, base) = self.compare(l, &local, &up, true).await.map_err(sentence)?;
         let mut files = Vec::new();
         if state.updatable() {
             let mut total = 0_u64;
             for p in plan::plan_files(&local.side, &up.side, base.as_ref()) {
                 let mine = local.files.get(&p.path).map(|f| Arc::clone(&f.bytes));
-                let theirs_file = up.files.get(&p.path).filter(|_| up.side.contains_key(&p.path));
+                let theirs_file = up
+                    .files
+                    .get(&p.path)
+                    .filter(|_| up.side.contains_key(&p.path));
                 let theirs = match theirs_file {
                     Some(f) => Some(self.bytes_of(l, &local, &f.sha).await.map_err(sentence)?),
                     None => None,
@@ -686,13 +693,15 @@ struct UpdatePage {
 
 /// Reading these pages fetches from GitHub, so they need a passkey session: its cookie is
 /// `SameSite=Strict`, so another site can't make the hub spend the request limit.
-fn require_session(s: &AppState, headers: &HeaderMap, next: &str) -> Result<(), Response> {
-    let w = s.writer.as_ref().ok_or_else(|| AppError::NotFound.into_response())?;
-    if w.auth.session(headers).is_some() {
-        Ok(())
-    } else {
-        Err(Redirect::to(&format!("/signin?next={next}")).into_response())
-    }
+fn require_session(s: &AppState, headers: &HeaderMap, next: &str) -> Option<Response> {
+    let Some(writer) = s.writer.as_ref() else {
+        return Some(AppError::NotFound.into_response());
+    };
+    writer
+        .auth
+        .session(headers)
+        .is_none()
+        .then(|| Redirect::to(&format!("/signin?next={next}")).into_response())
 }
 
 async fn locate(s: &AppState) -> Result<Vec<Locked>, AppError> {
@@ -739,7 +748,7 @@ pub(crate) async fn list(
     headers: HeaderMap,
     Query(q): Query<UpdatesQuery>,
 ) -> Result<Response, AppError> {
-    if let Err(r) = require_session(&s, &headers, "/skills/updates") {
+    if let Some(r) = require_session(&s, &headers, "/skills/updates") {
         return Ok(r);
     }
     let locked = locate(&s).await?;
@@ -823,7 +832,9 @@ pub(crate) async fn check(
     let locked = locate(&s).await?;
     let mut repos: BTreeMap<String, GitHubSource> = BTreeMap::new();
     for l in &locked {
-        repos.entry(repo_key(&l.src)).or_insert_with(|| l.src.clone());
+        repos
+            .entry(repo_key(&l.src))
+            .or_insert_with(|| l.src.clone());
     }
     let left_out = repos.len().saturating_sub(MAX_REPOS);
     let picked: Vec<(String, GitHubSource)> = repos.into_iter().take(MAX_REPOS).collect();
@@ -837,7 +848,8 @@ pub(crate) async fn check(
                     .repo_tree(&src.owner, &src.repo, src.git_ref.as_deref())
                     .await
                     .map(Arc::new)
-            }) as std::pin::Pin<Box<dyn Future<Output = Result<Arc<RepoTree>, Problem>> + Send>>
+            })
+                as std::pin::Pin<Box<dyn Future<Output = Result<Arc<RepoTree>, Problem>> + Send>>
         })
         .collect();
     let trees = bounded(jobs).await;
@@ -865,7 +877,9 @@ fn lock_note(l: &Locked) -> String {
             l.lock.version
         ),
         LockPlace::Repo { rel, .. } => {
-            format!("The skills CLI's lock ({rel}) is updated in the same change, so `npx skills update` sees it as current.")
+            format!(
+                "The skills CLI's lock ({rel}) is updated in the same change, so `npx skills update` sees it as current."
+            )
         }
         LockPlace::Outside { shown } => format!(
             "The skills CLI's lock ({shown}) isn't in a repo Atlas commits, so Atlas leaves it alone; `npx skills update` may still offer this update."
@@ -942,7 +956,7 @@ pub(crate) async fn preview(
     Query(q): Query<DoneQuery>,
 ) -> Result<Response, AppError> {
     let here = format!("/skills/{home}/{name}/update");
-    if let Err(r) = require_session(&s, &headers, &here) {
+    if let Some(r) = require_session(&s, &headers, &here) {
         return Ok(r);
     }
     let l = find(&s, &home, &name).await?;
@@ -956,9 +970,9 @@ pub(crate) async fn preview(
         false,
     );
     if q.changed.is_some() || q.sent.is_some() {
-        page.flash = "Updated.".to_owned();
+        "Updated.".clone_into(&mut page.flash);
     } else if q.unchanged.is_some() {
-        page.flash = "Nothing changed, so nothing was committed.".to_owned();
+        "Nothing changed, so nothing was committed.".clone_into(&mut page.flash);
     }
     let mut view = UpdatePage {
         page,
@@ -995,8 +1009,8 @@ pub(crate) async fn preview(
     Ok(Html(view.render()?).into_response())
 }
 
-fn refuse(msg: &str) -> Response {
-    (StatusCode::CONFLICT, format!("{msg}\n")).into_response()
+fn refuse(headers: &HeaderMap, msg: &str) -> Response {
+    change::ChangeError::Refused(msg.to_owned()).into_response(headers)
 }
 
 /// ISO 8601 in UTC with milliseconds, as the CLI writes `updatedAt`.
@@ -1021,45 +1035,44 @@ pub(crate) async fn apply(
     UrlPath((home, name)): UrlPath<(String, String)>,
     Form(fields): Form<Vec<(String, String)>>,
 ) -> Result<Response, AppError> {
-    let field = |k: &str| {
-        fields
-            .iter()
-            .find(|(f, _)| f == k)
-            .map_or("", |(_, v)| v.as_str())
-    };
-    let csrf = field("csrf").to_owned();
-    let w = crate::edit::writer(&s)?;
+    let csrf = field(&fields, "csrf").to_owned();
+    let writer = crate::edit::writer(&s)?;
     // Checked here as well as in the change, so a stranger can't spend GitHub's limit.
-    if !w.authorised(&headers, &csrf) {
-        return Ok(crate::edit::forbidden(
-            "Your session ended. Sign in again; nothing changed.\n",
-        ));
+    if !writer.authorised(&headers, &csrf) {
+        return Ok(change::ChangeError::Forbidden.into_response(&headers));
     }
-    let l = find(&s, &home, &name).await?;
-    let Some(Ok(tree)) = s.updates.listing(&l).await else {
-        return Ok(refuse("Check for updates first; nothing changed."));
+    let skill = find(&s, &home, &name).await?;
+    let (repos, write) = match plan_change(&s, &skill, &fields).await {
+        Ok(planned) => planned,
+        Err(why) => return Ok(refuse(&headers, &why)),
     };
-    let p = match s.updates.prepare(&l, &tree).await {
-        Ok(p) => p,
-        Err(why) => return Ok(refuse(&format!("{why} Nothing changed."))),
-    };
-    if !p.state.updatable() {
-        return Ok(refuse("There is nothing to update; nothing changed."));
+    match change::commit_change(&s, &headers, &csrf, repos, write).await {
+        Ok(outcome) => Ok(change::respond(&s, &headers, &outcome, &skill.href())),
+        Err(e) => Ok(e.into_response(&headers)),
     }
-    if p.local.pin != field("local") || p.up.sha != field("upstream") {
-        return Ok(refuse(
-            "The skill or its source changed since the preview. Open it again; nothing changed.",
-        ));
-    }
-    // The new folder: the local copy with each file's fate applied.
-    let mut files: BTreeMap<String, (Arc<[u8]>, bool)> = p
+}
+
+/// The new folder's files: bytes and whether each is executable, by path.
+type NewFiles = BTreeMap<String, (Arc<[u8]>, bool)>;
+
+fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
+    fields
+        .iter()
+        .find(|(k, _)| k == key)
+        .map_or("", |(_, v)| v.as_str())
+}
+
+/// The new folder: the local copy with each file's fate applied, the owner's choice
+/// deciding each clash. Also says whether any file changes.
+fn resolve(prepared: &Prepared, fields: &[(String, String)]) -> Result<(NewFiles, bool), String> {
+    let mut files: NewFiles = prepared
         .local
         .files
         .iter()
         .map(|(k, f)| (k.clone(), (Arc::clone(&f.bytes), f.executable)))
         .collect();
     let mut touched = false;
-    for (n, f) in p.files.iter().enumerate() {
+    for (n, f) in prepared.files.iter().enumerate() {
         let take_theirs = match &f.fate {
             Fate::Mine => false,
             Fate::Theirs => true,
@@ -1070,19 +1083,17 @@ pub(crate) async fn apply(
                 false
             }
             Fate::Clash => {
-                if field(&format!("p{n}")) != f.path {
-                    return Ok(refuse(
-                        "The preview's files don't match the update now. Open it again; nothing changed.",
-                    ));
+                if field(fields, &format!("p{n}")) != f.path {
+                    return Err("The preview's files don't match the update now. Open it again; nothing changed.".to_owned());
                 }
-                match field(&format!("c{n}")) {
+                match field(fields, &format!("c{n}")) {
                     "mine" => false,
                     "theirs" => true,
                     _ => {
-                        return Ok(refuse(&format!(
+                        return Err(format!(
                             "Choose keep mine or take theirs for {}; nothing changed.",
                             f.path
-                        )));
+                        ));
                     }
                 }
             }
@@ -1099,30 +1110,63 @@ pub(crate) async fn apply(
             }
         }
     }
+    Ok((files, touched))
+}
+
+/// Works the update out again (so it is exactly what the preview pinned) and returns the
+/// repos it commits and the write to run inside the change.
+async fn plan_change(
+    s: &AppState,
+    skill: &Locked,
+    fields: &[(String, String)],
+) -> Result<(Vec<RepoChange>, change::Apply), String> {
+    let Some(Ok(tree)) = s.updates.listing(skill).await else {
+        return Err("Check for updates first; nothing changed.".to_owned());
+    };
+    let prepared = s
+        .updates
+        .prepare(skill, &tree)
+        .await
+        .map_err(|why| format!("{why} Nothing changed."))?;
+    if !prepared.state.updatable() {
+        return Err("There is nothing to update; nothing changed.".to_owned());
+    }
+    if prepared.local.pin != field(fields, "local") || prepared.up.sha != field(fields, "upstream")
+    {
+        return Err(
+            "The skill or its source changed since the preview. Open it again; nothing changed."
+                .to_owned(),
+        );
+    }
+    let (files, touched) = resolve(&prepared, fields)?;
     // What the lock records: the version taken, hashed the way its kind of record is. A
     // project record gets the hash `npx skills update` compares, over every file it
     // downloads, so the CLI then sees the skill as current.
-    let baseline = match l.lock.kind {
-        LockKind::Global => Baseline::Tree(p.up.sha.clone()),
-        LockKind::Project => match s.updates.upstream_hashes(&l, &p.up, &p.local, None).await {
+    let baseline = match skill.lock.kind {
+        LockKind::Global => Baseline::Tree(prepared.up.sha.clone()),
+        LockKind::Project => match s
+            .updates
+            .upstream_hashes(skill, &prepared.up, &prepared.local, None)
+            .await
+        {
             Ok(Some([download, _])) => Baseline::Content(download),
-            Ok(None) => return Ok(refuse("Its source is too big to update; nothing changed.")),
-            Err(e) => return Ok(refuse(&format!("{} Nothing changed.", e.sentence()))),
+            Ok(None) => return Err("Its source is too big to update; nothing changed.".to_owned()),
+            Err(e) => return Err(format!("{} Nothing changed.", e.sentence())),
         },
     };
-    let lock_target = match &l.place {
-        LockPlace::Repo { kind, root, rel } if l.lock.writable() => {
+    let lock_target = match &skill.place {
+        LockPlace::Repo { kind, root, rel } if skill.lock.writable() => {
             Some((kind.clone(), root.clone(), rel.clone()))
         }
         _ => None,
     };
-    let message = format!("Update {} from {}", l.name, l.src.slug());
+    let message = format!("Update {} from {}", skill.name, skill.src.slug());
     let mut repos = Vec::new();
     if touched {
         repos.push(RepoChange {
-            kind: l.kind.clone(),
-            root: l.root.clone(),
-            paths: vec![PathBuf::from(&l.rel)],
+            kind: skill.kind.clone(),
+            root: skill.root.clone(),
+            paths: vec![PathBuf::from(&skill.rel)],
             message: message.clone(),
         });
     }
@@ -1134,71 +1178,52 @@ pub(crate) async fn apply(
                 kind: kind.clone(),
                 root: root.clone(),
                 paths: vec![PathBuf::from(rel)],
-                message: message.clone(),
+                message,
             });
         }
     }
     if repos.is_empty() {
-        return Ok(refuse(
-            "Keeping your version changes no file, and the lock isn't in a repo Atlas commits; nothing changed.",
-        ));
+        return Err("Keeping your version changes no file, and the lock isn't in a repo Atlas commits; nothing changed.".to_owned());
     }
-    let tree = Tree {
+    let new_tree = Tree {
         files: files
             .iter()
-            .map(|(rel, (bytes, _))| TreeFile {
+            .map(|(rel, (bytes, executable))| TreeFile {
                 rel: PathBuf::from(rel),
                 bytes: bytes.to_vec(),
+                executable: *executable,
             })
             .collect(),
         skipped: Vec::new(),
     };
-    let executable: Vec<String> = files
-        .iter()
-        .filter(|(_, (_, x))| *x)
-        .map(|(rel, _)| rel.clone())
-        .collect();
-    let (root, rel) = (l.root.clone(), l.rel.clone());
-    let lock_path = l.lock.path.clone();
-    let lock_kind = l.lock.kind;
-    let (skill, source) = (l.name.to_string(), l.source.clone());
+    let (root, rel) = (skill.root.clone(), skill.rel.clone());
+    let (lock_path, lock_kind) = (skill.lock.path.clone(), skill.lock.kind);
+    let (name, source) = (skill.name.to_string(), skill.source.clone());
     let now = iso_now();
-    let apply: change::Apply = Box::new(move || {
+    let write: change::Apply = Box::new(move || {
         if touched {
-            write_folder(&root, &rel, &tree, &executable)?;
+            write_folder(&root, &rel, &new_tree)?;
         }
         if let Some((_, lock_root, lock_rel)) = lock_target {
             // Read again under the git lock, so a change made meanwhile isn't overwritten.
             let fresh = lock::read_lock(&lock_path, lock_kind)
                 .ok()
                 .flatten()
-                .and_then(|f| f.with_baseline(&skill, &source, &baseline, &now))
+                .and_then(|f| f.with_baseline(&name, &source, &baseline, &now))
                 .ok_or_else(|| "The skills CLI's lock changed or can't be written.".to_owned())?;
             atlas_fs::library::write_file(&lock_root, &lock_rel, fresh.as_bytes())
                 .map_err(|e| format!("Writing the lock failed: {e}."))?;
         }
         Ok(())
     });
-    match change::commit_change(&s, &headers, &csrf, repos, apply).await {
-        Ok(outcome) => Ok(change::respond(&s, &headers, &outcome, &l.href())),
-        Err(e) => Ok(e.into_response()),
-    }
+    Ok((repos, write))
 }
 
-/// Replaces the skill's folder with `tree`. Runs inside the change, which puts the folder
-/// back from git if anything here fails.
-fn write_folder(root: &Path, rel: &str, tree: &Tree, executable: &[String]) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt as _;
-    atlas_fs::library::remove_tree(root, rel).map_err(|e| format!("Removing the old copy failed: {e}."))?;
-    atlas_fs::library::write_tree(root, rel, tree).map_err(|e| format!("Writing the update failed: {e}."))?;
-    for f in executable {
-        let path = root.join(rel).join(f);
-        // The folder was just written by Atlas; still never follow a link.
-        let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-        if meta.is_file() {
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
+/// Replaces the skill's folder with `tree` (execute bits kept). Runs inside the change,
+/// which puts the folder back from git if anything here fails.
+fn write_folder(root: &Path, rel: &str, tree: &Tree) -> Result<(), String> {
+    atlas_fs::library::remove_tree(root, rel)
+        .map_err(|e| format!("Removing the old copy failed: {e}."))?;
+    atlas_fs::library::write_tree(root, rel, tree)
+        .map_err(|e| format!("Writing the update failed: {e}."))
 }

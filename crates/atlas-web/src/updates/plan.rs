@@ -33,7 +33,11 @@ pub(crate) struct Upstream {
 
 /// The folder a record's skill is in, with its tree SHA. With no path in the record (older
 /// records), a folder named like the skill holding a `SKILL.md`, shallowest first.
-pub(crate) fn find_folder(tree: &RepoTree, src: &GitHubSource, name: &str) -> Option<(String, String)> {
+pub(crate) fn find_folder(
+    tree: &RepoTree,
+    src: &GitHubSource,
+    name: &str,
+) -> Option<(String, String)> {
     let sha_of = |folder: &str| {
         if folder.is_empty() {
             Some(tree.sha.clone())
@@ -92,7 +96,10 @@ pub(crate) fn upstream_of(entries: &[Entry], folder: &str, sha: &str) -> Upstrea
         );
     }
     // Ignored files are kept for the CLI's hash, which counts some of them.
-    for e in entries.iter().filter(|e| e.kind == "blob" && e.mode != "120000") {
+    for e in entries
+        .iter()
+        .filter(|e| e.kind == "blob" && e.mode != "120000")
+    {
         if let Some(rel) = e.path.strip_prefix(&prefix)
             && is_ignored_path(rel)
             && is_safe_rel(rel)
@@ -206,7 +213,10 @@ pub(crate) fn is_binary(bytes: &[u8]) -> bool {
 /// `None` when they clash (two changes to the same lines) or a side isn't small text.
 pub(crate) fn merge3(base: &[u8], mine: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
     let sides = [base, mine, theirs];
-    if sides.iter().any(|s| s.len() > MAX_MERGE_BYTES || is_binary(s)) {
+    if sides
+        .iter()
+        .any(|s| s.len() > MAX_MERGE_BYTES || is_binary(s))
+    {
         return None;
     }
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
@@ -231,7 +241,11 @@ pub(crate) const MAX_SHOWN_BYTES: usize = 200 * 1024;
 pub(crate) fn unified(old: Option<&[u8]>, new: Option<&[u8]>) -> Option<Vec<DiffLine>> {
     let old = old.unwrap_or_default();
     let new = new.unwrap_or_default();
-    if old.len() > MAX_SHOWN_BYTES || new.len() > MAX_SHOWN_BYTES || is_binary(old) || is_binary(new) {
+    if old.len() > MAX_SHOWN_BYTES
+        || new.len() > MAX_SHOWN_BYTES
+        || is_binary(old)
+        || is_binary(new)
+    {
         return None;
     }
     let (o, n) = (String::from_utf8_lossy(old), String::from_utf8_lossy(new));
@@ -266,9 +280,24 @@ mod tests {
 
     #[test]
     fn plans_follow_who_changed_what() {
-        let base = side(&[("SKILL.md", "b1"), ("a.md", "a1"), ("old.md", "o1"), ("both.md", "x1")]);
-        let mine = side(&[("SKILL.md", "b1"), ("a.md", "a2"), ("old.md", "o1"), ("both.md", "x2")]);
-        let theirs = side(&[("SKILL.md", "b2"), ("a.md", "a1"), ("new.md", "n1"), ("both.md", "x3")]);
+        let base = side(&[
+            ("SKILL.md", "b1"),
+            ("a.md", "a1"),
+            ("old.md", "o1"),
+            ("both.md", "x1"),
+        ]);
+        let mine = side(&[
+            ("SKILL.md", "b1"),
+            ("a.md", "a2"),
+            ("old.md", "o1"),
+            ("both.md", "x2"),
+        ]);
+        let theirs = side(&[
+            ("SKILL.md", "b2"),
+            ("a.md", "a1"),
+            ("new.md", "n1"),
+            ("both.md", "x3"),
+        ]);
         let plan = plan_files(&mine, &theirs, Some(&base));
         let got: Vec<(&str, Change, Outcome)> = plan
             .iter()
@@ -297,7 +326,12 @@ mod tests {
         let base = "one\ntwo\nthree\nfour\nfive\n";
         let cases: [(&str, &str, &str, Option<&str>); 4] = [
             // Unedited: yours is the base, so the merge is theirs.
-            ("unedited", base, "one\ntwo\nTHREE\nfour\nfive\n", Some("one\ntwo\nTHREE\nfour\nfive\n")),
+            (
+                "unedited",
+                base,
+                "one\ntwo\nTHREE\nfour\nfive\n",
+                Some("one\ntwo\nTHREE\nfour\nfive\n"),
+            ),
             // Edited, no overlap: both changes kept.
             (
                 "apart",
@@ -306,15 +340,29 @@ mod tests {
                 Some("ONE\ntwo\nthree\nfour\nFIVE\n"),
             ),
             // Both changed the same line differently: a clash.
-            ("clash", "one\ntwo\nmine\nfour\nfive\n", "one\ntwo\ntheirs\nfour\nfive\n", None),
+            (
+                "clash",
+                "one\ntwo\nmine\nfour\nfive\n",
+                "one\ntwo\ntheirs\nfour\nfive\n",
+                None,
+            ),
             // The same change on both sides isn't a clash.
-            ("same", "one\ntwo\nX\nfour\nfive\n", "one\ntwo\nX\nfour\nfive\n", Some("one\ntwo\nX\nfour\nfive\n")),
+            (
+                "same",
+                "one\ntwo\nX\nfour\nfive\n",
+                "one\ntwo\nX\nfour\nfive\n",
+                Some("one\ntwo\nX\nfour\nfive\n"),
+            ),
         ];
         for (name, mine, theirs, want) in cases {
             let got = merge3(base.as_bytes(), mine.as_bytes(), theirs.as_bytes());
             assert_eq!(got.as_deref(), want.map(str::as_bytes), "{name}");
         }
-        assert_eq!(merge3(b"a\0b", b"a\0c", b"a\0d"), None, "binary never merges");
+        assert_eq!(
+            merge3(b"a\0b", b"a\0c", b"a\0d"),
+            None,
+            "binary never merges"
+        );
     }
 
     #[test]
@@ -324,7 +372,10 @@ mod tests {
         assert_eq!(classes, ["hunk", "ctx", "del", "add"]);
         assert_eq!(lines[3].text, "+c");
         assert!(unified(None, Some(b"\0bin")).is_none());
-        assert_eq!(unified(None, Some(b"x\n")).unwrap().last().unwrap().text, "+x");
+        assert_eq!(
+            unified(None, Some(b"x\n")).unwrap().last().unwrap().text,
+            "+x"
+        );
     }
 
     fn entry(path: &str, kind: &str, mode: &str) -> Entry {
@@ -333,7 +384,6 @@ mod tests {
             mode: mode.to_owned(),
             kind: kind.to_owned(),
             sha: "a".repeat(40),
-            size: None,
         }
     }
 
@@ -374,9 +424,15 @@ mod tests {
             sha: "r".repeat(40),
             truncated: false,
             tree: vec![
-                Entry { sha: "1".repeat(40), ..entry("deep/a/x", "tree", "040000") },
+                Entry {
+                    sha: "1".repeat(40),
+                    ..entry("deep/a/x", "tree", "040000")
+                },
                 entry("deep/a/x/SKILL.md", "blob", "100644"),
-                Entry { sha: "2".repeat(40), ..entry("x", "tree", "040000") },
+                Entry {
+                    sha: "2".repeat(40),
+                    ..entry("x", "tree", "040000")
+                },
                 entry("x/SKILL.md", "blob", "100644"),
             ],
         };
@@ -386,12 +442,18 @@ mod tests {
             folder: folder.map(str::to_owned),
             git_ref: None,
         };
-        assert_eq!(find_folder(&tree, &src(None), "x"), Some(("x".to_owned(), "2".repeat(40))));
+        assert_eq!(
+            find_folder(&tree, &src(None), "x"),
+            Some(("x".to_owned(), "2".repeat(40)))
+        );
         assert_eq!(
             find_folder(&tree, &src(Some("deep/a/x")), "x"),
             Some(("deep/a/x".to_owned(), "1".repeat(40)))
         );
-        assert_eq!(find_folder(&tree, &src(Some("")), "x").unwrap().1, "r".repeat(40));
+        assert_eq!(
+            find_folder(&tree, &src(Some("")), "x").unwrap().1,
+            "r".repeat(40)
+        );
         assert_eq!(find_folder(&tree, &src(Some("gone")), "x"), None);
     }
 }

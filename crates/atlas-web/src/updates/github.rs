@@ -74,8 +74,6 @@ pub(crate) struct Entry {
     #[serde(rename = "type")]
     pub kind: String,
     pub sha: String,
-    #[serde(default)]
-    pub size: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -200,7 +198,12 @@ impl GitHub {
         Ok(Some(body))
     }
 
-    async fn tree(&self, owner: &str, repo: &str, treeish: &str) -> Result<Option<RepoTree>, Problem> {
+    async fn tree(
+        &self,
+        owner: &str,
+        repo: &str,
+        treeish: &str,
+    ) -> Result<Option<RepoTree>, Problem> {
         let endpoint = format!(
             "repos/{owner}/{repo}/git/trees/{}?recursive=1",
             segment(treeish)
@@ -256,7 +259,12 @@ impl GitHub {
     }
 
     /// A file's bytes by its blob SHA, checked against it.
-    pub(crate) async fn blob(&self, owner: &str, repo: &str, sha: &str) -> Result<Arc<[u8]>, Problem> {
+    pub(crate) async fn blob(
+        &self,
+        owner: &str,
+        repo: &str,
+        sha: &str,
+    ) -> Result<Arc<[u8]>, Problem> {
         if !is_sha(sha) {
             return Err(Problem::NotFound);
         }
@@ -270,7 +278,11 @@ impl GitHub {
             .ok_or(Problem::NotFound)?;
         let blob: Blob = serde_json::from_slice(&body).map_err(|_| Problem::Unavailable)?;
         let bytes = if blob.encoding == "base64" {
-            let clean: String = blob.content.chars().filter(|c| !c.is_whitespace()).collect();
+            let clean: String = blob
+                .content
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             base64::engine::general_purpose::STANDARD
                 .decode(clean)
                 .map_err(|_| Problem::Unavailable)?
@@ -324,14 +336,14 @@ fn rate_limited_until(res: &reqwest::Response, now: SystemTime) -> Option<System
             .and_then(|v| v.trim().parse::<u64>().ok())
     };
     if let Some(secs) = header("retry-after").filter(|s| *s > 0) {
-        return Some(now + Duration::from_secs(secs.min(24 * 3600)));
+        return Some(now + Duration::from_secs(secs.min(86_400)));
     }
     if header("x-ratelimit-remaining") != Some(0) {
         return (status == 429).then(|| now + DEFAULT_PAUSE);
     }
     let reset = header("x-ratelimit-reset")
         .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
-        .filter(|t| *t > now && *t < now + Duration::from_secs(24 * 3600));
+        .filter(|t| *t > now && *t < now + Duration::from_hours(24));
     Some(reset.unwrap_or(now + DEFAULT_PAUSE))
 }
 
@@ -347,7 +359,9 @@ mod tests {
 
     #[test]
     fn clock_is_utc() {
-        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_795_737_600 + 14 * 3600 + 5 * 60);
+        let t = SystemTime::UNIX_EPOCH
+            + Duration::from_hours(498_816)
+            + Duration::from_mins(14 * 60 + 5);
         assert_eq!(clock(t), "14:05");
     }
 }
