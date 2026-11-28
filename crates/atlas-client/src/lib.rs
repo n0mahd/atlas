@@ -8,6 +8,7 @@
 //! it receives.
 
 pub mod apply;
+pub mod checkout;
 pub mod config;
 pub mod desired;
 mod fsx;
