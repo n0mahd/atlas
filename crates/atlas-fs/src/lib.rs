@@ -9,7 +9,9 @@ mod catalog;
 pub mod edit;
 mod harness;
 pub mod library;
+pub mod lock;
 mod paths;
+pub mod skill_folder;
 
 pub use catalog::load_catalog;
 pub use harness::{scan_harnesses, scan_projects};
