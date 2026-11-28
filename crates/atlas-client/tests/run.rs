@@ -323,7 +323,11 @@ fn full_run_installs_everything_and_a_second_run_changes_nothing() {
     let before = snapshot(w.home());
     let again = w.run(&release, false);
     assert!(!again.failed, "{:?}", again.problems);
-    assert_eq!(again.lines, vec!["Update 1 is applied.".to_owned()]);
+    assert!(
+        again.lines.is_empty(),
+        "an idle run prints nothing: {:?}",
+        again.lines
+    );
     assert_eq!(snapshot(w.home()), before, "the second run is idempotent");
 }
 

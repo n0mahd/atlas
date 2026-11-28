@@ -107,7 +107,11 @@ pub fn run(
                         out.problems.push(format!("refused update {n}: {e}"));
                     }
                     Ok(copies) => {
+                        let before = out.lines.len();
                         let ok = apply_release(paths, config, &copies, n, dry_run, &mut out);
+                        // An idle run (the same update, nothing to change) prints nothing, so a
+                        // run every minute doesn't fill the log.
+                        let changed = out.lines.len() > before || state.last_applied != Some(n);
                         if !ok {
                             failed = true;
                         } else if !dry_run {
@@ -116,7 +120,9 @@ pub fn run(
                             if checked.newer {
                                 next.owner_keys = checked.manifest.owner_keys;
                             }
-                            out.lines.push(format!("Update {n} is applied."));
+                            if changed {
+                                out.lines.push(format!("Update {n} is applied."));
+                            }
                         }
                     }
                 }
