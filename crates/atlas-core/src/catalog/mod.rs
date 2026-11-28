@@ -46,6 +46,9 @@ pub struct Catalog {
     /// `atlas/placements.toml` as read (defaults when it is missing or invalid; an
     /// invalid file is also a problem, and nothing writes placements until it is fixed).
     pub placements: Placements,
+    /// Why `placements` is the default although the file is there: it is invalid (or
+    /// can't be read). Pages turn the switches off until it is fixed.
+    pub placements_error: Option<String>,
     pub problems: Vec<Problem>,
 }
 

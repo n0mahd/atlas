@@ -123,6 +123,29 @@ fn problems_are_reported_not_hidden() {
 }
 
 #[test]
+fn an_invalid_placements_file_is_a_problem_and_says_why() {
+    let (_tmp, sources) = fixture();
+    let c = load_catalog(&sources);
+    assert_eq!(
+        c.placements_error, None,
+        "no file is the default, not an error"
+    );
+    write(
+        &sources.knowledge.join("atlas/placements.toml"),
+        "[global.deploy]\noff = [\"nobody\"]\n",
+    );
+    let c = load_catalog(&sources);
+    let why = c.placements_error.expect("an invalid file is reported");
+    assert!(why.contains("invalid"), "{why}");
+    assert!(
+        c.problems
+            .iter()
+            .any(|p| p.path.ends_with("atlas/placements.toml"))
+    );
+    assert_eq!(c.placements, atlas_core::catalog::Placements::default());
+}
+
+#[test]
 fn reads_memory_instructions_and_hooks() {
     let (_tmp, sources) = fixture();
     let catalog = load_catalog(&sources);
