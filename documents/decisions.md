@@ -206,7 +206,7 @@ Mark: the one-colour `grok-build.svg` from xAI's Agent Client Protocol registry 
 
 ## 0023 · 2026-11-27 · How atlasd applies a release
 `atlasd` (crate `atlas-client`) runs as each OS account, from a systemd user timer every
-10 minutes (every minute since decision 00XX on idle runs), never as root. Each run: fetch
+10 minutes (every minute since decision 0042), never as root. Each run: fetch
 the latest signed release, check it against the
 keys trusted at pairing (or carried by an applied release), refuse rollbacks and reused
 numbers, fetch every pinned repo into `~/.local/share/atlas/sources/` and check each tree
@@ -368,7 +368,7 @@ when `/proc` and `/etc/hostname` are missing. The hub serves builds named
 `atlasd-<os>-<arch>` (`linux` or `macos`, `x86_64` or `aarch64`) from `<state>/dist/`, and
 one install script covers both: on Darwin it checks the download with `shasum -a 256` and
 loads a launchd agent (`deploy/atlasd.plist`, `~/Library/LaunchAgents/atlasd.plist`) that
-runs `atlasd run` at load and every 600 s (60 s since decision 00XX on idle runs), in
+runs `atlasd run` at load and every 600 s (60 s since decision 0042), in
 the login's GUI domain, or its user domain
 when nobody is logged in at the Mac. macOS builds are made on a Mac, because rustls'
 platform verifier links Apple's Security framework; CI-signed builds stay the target.
