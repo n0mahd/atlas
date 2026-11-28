@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use atlas_core::kernel::HarnessKind::{self, ClaudeCode, Codex, OpenCode, Pi};
 use atlas_harness::placement::Reach::{self, Home, Project};
-use atlas_harness::switches::render_switches;
+use atlas_harness::switches::{SwitchOff, render_switches};
 use atlas_harness::{Change, FormatError};
 
 fn fixture(path: &str) -> PathBuf {
@@ -24,14 +24,16 @@ fn read(path: &str) -> Vec<u8> {
     fs::read(fixture(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-fn names(list: &[&str]) -> BTreeSet<String> {
-    list.iter().map(|s| (*s).to_owned()).collect()
+/// Skills by name, each loaded from the folder it is linked into for Codex (the other
+/// formats go by name alone).
+fn skills(list: &[&str]) -> BTreeSet<SwitchOff> {
+    list.iter()
+        .map(|n| SwitchOff::at(*n, format!("/home/u/.agents/skills/{n}/SKILL.md")))
+        .collect()
 }
 
-/// The folder each skill is linked into for Codex.
-#[allow(clippy::unnecessary_wraps)]
-fn codex_dir(name: &str) -> Option<PathBuf> {
-    Some(PathBuf::from("/home/u/.agents/skills").join(name))
+fn by_name(list: &[&str]) -> BTreeSet<SwitchOff> {
+    list.iter().map(|n| SwitchOff::named(*n)).collect()
 }
 
 fn render(
@@ -40,10 +42,7 @@ fn render(
     current: Option<&[u8]>,
     off: &[&str],
 ) -> Result<Change, FormatError> {
-    // atlasd's record of what Atlas switched off last time, as it would keep it: every
-    // name Atlas wanted off, including ones the owner had already switched off. The
-    // formats go by the marks in the file instead, so this never costs the owner an entry.
-    render_switches(kind, reach, current, &names(off), &names(&OFF), &codex_dir)
+    render_switches(kind, reach, current, &skills(off))
 }
 
 fn written(change: Change) -> Vec<u8> {
@@ -256,39 +255,30 @@ fn an_entry_the_owner_changed_becomes_theirs() {
 fn codex_follows_the_skills_folder() {
     let first = written(render(Codex, Home, None, &["pdf-tools"]).unwrap());
     // The folder moved: Atlas's table is updated in place, header comment and all.
-    let moved = |_: &str| Some(PathBuf::from("/home/u/.codex/skills/pdf-tools"));
-    let got = written(
-        render_switches(
-            Codex,
-            Home,
-            Some(&first),
-            &names(&["pdf-tools"]),
-            &BTreeSet::new(),
-            &moved,
-        )
-        .unwrap(),
-    );
+    let moved = BTreeSet::from([SwitchOff::at(
+        "pdf-tools",
+        "/home/u/.codex/skills/pdf-tools/SKILL.md",
+    )]);
+    let got = written(render_switches(Codex, Home, Some(&first), &moved).unwrap());
     assert_eq!(
         text(&got),
         "[[skills.config]] # atlas:pdf-tools\npath = \"/home/u/.codex/skills/pdf-tools/SKILL.md\"\nenabled = false\n"
     );
     // No folder known: a name entry, which Codex also honours.
-    let none = |_: &str| None;
-    let pdf = names(&["pdf-tools"]);
-    let by_name =
-        written(render_switches(Codex, Home, None, &pdf, &BTreeSet::new(), &none).unwrap());
+    let pdf = by_name(&["pdf-tools"]);
+    let named = written(render_switches(Codex, Home, None, &pdf).unwrap());
     assert_eq!(
-        text(&by_name),
+        text(&named),
         "[[skills.config]] # atlas:pdf-tools\nname = \"pdf-tools\"\nenabled = false\n"
     );
     // For a project's skill a name entry would switch off a global one too: nothing then,
     // and an existing table is kept rather than guessed at.
     assert_eq!(
-        render_switches(Codex, Project, None, &pdf, &BTreeSet::new(), &none).unwrap(),
+        render_switches(Codex, Project, None, &pdf).unwrap(),
         Change::Unchanged
     );
     assert_eq!(
-        render_switches(Codex, Project, Some(&first), &pdf, &BTreeSet::new(), &none).unwrap(),
+        render_switches(Codex, Project, Some(&first), &pdf).unwrap(),
         Change::Unchanged
     );
 }
@@ -429,5 +419,80 @@ fn names_that_arent_skill_names_are_never_written() {
     ] {
         let odd = render(kind, Home, current, &["*", "two\nlines", "Caps", ""]).unwrap();
         assert_eq!(odd, Change::Unchanged, "{kind}");
+    }
+}
+
+#[test]
+fn codex_an_owners_entry_for_one_skill_leaves_a_same_named_one_alone() {
+    // The owner switched off project A's `deploy` by its path; Atlas wants the global
+    // `deploy` off, which that entry doesn't cover.
+    let owner =
+        b"[[skills.config]]\npath = \"/home/u/Projects/a/.agents/skills/deploy/SKILL.md\"\nenabled = false\n";
+    let got = written(render(Codex, Home, Some(owner), &["deploy"]).unwrap());
+    assert!(
+        text(&got).ends_with(
+            "[[skills.config]] # atlas:deploy\npath = \"/home/u/.agents/skills/deploy/SKILL.md\"\nenabled = false\n"
+        ),
+        "{}",
+        text(&got)
+    );
+}
+
+#[test]
+fn codex_switches_same_named_skills_off_one_by_one() {
+    let global = SwitchOff::at("deploy", "/home/u/.agents/skills/deploy/SKILL.md");
+    let a = SwitchOff::at(
+        "deploy",
+        "/home/u/Projects/a/.agents/skills/deploy/SKILL.md",
+    );
+    let b = SwitchOff::at(
+        "deploy",
+        "/home/u/Projects/b/.agents/skills/deploy/SKILL.md",
+    );
+    let table = |s: &SwitchOff| {
+        format!(
+            "[[skills.config]] # atlas:deploy\npath = \"{}\"\nenabled = false\n",
+            s.path.as_ref().unwrap().display()
+        )
+    };
+    let all = BTreeSet::from([global.clone(), a.clone(), b.clone()]);
+    let made = written(render_switches(Codex, Home, None, &all).unwrap());
+    let want = format!("{}\n{}\n{}", table(&global), table(&a), table(&b));
+    assert_eq!(text(&made), want);
+    assert_eq!(
+        render_switches(Codex, Home, Some(&made), &all).unwrap(),
+        Change::Unchanged
+    );
+    // Back on for project A only: its table goes, the other two stay.
+    let without_a = BTreeSet::from([global.clone(), b.clone()]);
+    let got = written(render_switches(Codex, Home, Some(&made), &without_a).unwrap());
+    assert_eq!(text(&got), format!("{}\n{}", table(&global), table(&b)));
+    // A duplicate of one of Atlas's tables (a hand merge) is dropped, not the other skill's.
+    let doubled = format!("{}\n{}", text(&made), table(&b));
+    assert_eq!(
+        text(&written(
+            render_switches(Codex, Home, Some(doubled.as_bytes()), &all).unwrap()
+        )),
+        want
+    );
+    assert_eq!(
+        render_switches(Codex, Home, Some(&made), &BTreeSet::new()).unwrap(),
+        Change::Remove
+    );
+}
+
+#[test]
+fn name_keyed_formats_write_one_entry_per_name_whatever_the_paths() {
+    let two = BTreeSet::from([
+        SwitchOff::at("deploy", "/home/u/.agents/skills/deploy/SKILL.md"),
+        SwitchOff::at(
+            "deploy",
+            "/home/u/Projects/a/.agents/skills/deploy/SKILL.md",
+        ),
+    ]);
+    for kind in [ClaudeCode, OpenCode, Pi] {
+        let got = written(render_switches(kind, Home, None, &two).unwrap());
+        let one = written(render_switches(kind, Home, None, &by_name(&["deploy"])).unwrap());
+        assert_eq!(text(&got), text(&one), "{kind}");
     }
 }

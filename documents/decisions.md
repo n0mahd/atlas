@@ -305,6 +305,12 @@ adapted to the hub and many machines. See `documents/skills.md`.
   switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
   repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
   one change; public skills are committed and never pushed (0016), not refused.
+- **Switch identity** (Gemini review of the integrated branch): a switch target is a
+  skill's name plus the `SKILL.md` path its agent loads (`switches::SwitchOff`), not a name,
+  because Codex's one home file holds every project's switches; Codex tells Atlas's tables
+  apart by that exact path. `render_switches` lost its unused `atlas_before` and
+  `skill_dir` arguments. OpenCode's `opencode.jsonc` is edited before `opencode.json`,
+  matching OpenCode's own precedence.
 - **Bringing things in, details** (import work): Claude Code's notes are copied byte for
   byte (atlasd's memory link compares bytes); host and project are recorded beside them in
   `memory/projects/<project>/index.md` and the folder name, never added to the notes. An

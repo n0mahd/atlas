@@ -5,8 +5,9 @@ use std::collections::HashSet;
 use atlas_core::catalog::HookEvent;
 use serde_json::{Map, Value};
 
-use super::{ManagedHook, command_for, finish, handler, managed_name, parse_object, shape};
-use crate::change::{Change, FormatError};
+use super::{ManagedHook, command_for, handler, managed_name};
+use crate::change::{Change, FormatError, shape};
+use crate::json::{finish, parse_object};
 
 /// Claude Code's name for an Atlas event.
 #[must_use]

@@ -11,7 +11,7 @@
 //!   keyed by the skill's `SKILL.md` path, so the home file also switches off a project's
 //!   skills without writing into the repo. Atlas's tables end their header line with the
 //!   comment `# atlas:<name>`.
-//! - `OpenCode`: `permission.skill.<name> = "deny"` in `opencode.jsonc` or `opencode.json`
+//! - `OpenCode`: `permission.skill.<name> = "deny"` in `opencode.jsonc` (else `opencode.json`)
 //!   in the home config folder. Home only: a repo's `opencode.json` is usually tracked,
 //!   and a switch is the owner's, not the team's. The owner's comments are kept; Atlas's
 //!   entries end with the comment `// atlas:<name>`.
@@ -29,8 +29,10 @@
 //! Several things share some of these files (Claude Code's `settings.json` also holds
 //! Atlas's hooks), so a caller renders every Atlas part onto the same bytes in turn and
 //! writes once. Codex's home and project switches share one file: render it once with
-//! every name that must be off there, as a second call would drop the first one's
-//! entries.
+//! every skill that must be off there, as a second call would drop the first one's
+//! entries. A skill is a [`SwitchOff`]: its name, and for Codex the `SKILL.md` it is
+//! loaded from, so two skills of one name (two projects', or a global one and a
+//! project's) are told apart.
 
 mod claude;
 mod codex;
@@ -44,6 +46,7 @@ use std::path::PathBuf;
 use atlas_core::kernel::{HarnessKind, Slug};
 use serde_json::{Map, Value};
 
+use crate::change::shape;
 use crate::placement::Reach;
 use crate::{Change, FormatError};
 
@@ -60,36 +63,42 @@ pub enum Base {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SwitchFile {
     pub base: Base,
-    /// Candidate files, in preference order: the first that exists is edited, and the
-    /// last is created when none does.
+    /// Candidate files in the agent's precedence order: the first that exists is the one
+    /// Atlas edits.
     pub candidates: &'static [&'static str],
+    /// The file Atlas creates when none of `candidates` exists; one of them.
+    pub create: &'static str,
 }
 
 /// Where `kind` keeps skill switches for skills it loads at `reach`, if anywhere.
 #[must_use]
 pub const fn switch_file(kind: HarnessKind, reach: Reach) -> Option<SwitchFile> {
-    const fn home(candidates: &'static [&'static str]) -> SwitchFile {
+    const fn one(base: Base, file: &'static [&'static str; 1]) -> SwitchFile {
         SwitchFile {
-            base: Base::Home,
-            candidates,
+            base,
+            candidates: file,
+            create: file[0],
         }
     }
     let file = match (kind, reach) {
-        (HarnessKind::ClaudeCode, Reach::Home) => home(&[".claude/settings.json"]),
-        (HarnessKind::ClaudeCode, Reach::Project) => SwitchFile {
-            base: Base::Repo,
-            candidates: &[".claude/settings.local.json"],
+        (HarnessKind::ClaudeCode, Reach::Home) => one(Base::Home, &[".claude/settings.json"]),
+        (HarnessKind::ClaudeCode, Reach::Project) => {
+            one(Base::Repo, &[".claude/settings.local.json"])
+        }
+        (HarnessKind::Codex, _) => one(Base::Home, &[".codex/config.toml"]),
+        // OpenCode merges `opencode.json` then `opencode.jsonc`, so a `.jsonc` has the last
+        // word when both exist. With neither, `.jsonc` is created too: OpenCode rewrites a
+        // `.json` with JSON.stringify when it saves settings, which would drop Atlas's
+        // comment marks and leave its entries looking like the owner's.
+        (HarnessKind::OpenCode, Reach::Home) => SwitchFile {
+            base: Base::Home,
+            candidates: &[
+                ".config/opencode/opencode.jsonc",
+                ".config/opencode/opencode.json",
+            ],
+            create: ".config/opencode/opencode.jsonc",
         },
-        (HarnessKind::Codex, _) => home(&[".codex/config.toml"]),
-        (HarnessKind::OpenCode, Reach::Home) => home(&[
-            // Whichever exists is edited; with neither, `.jsonc` is created, because
-            // OpenCode rewrites a `.json` with JSON.stringify when it saves settings,
-            // which would drop Atlas's comment marks and leave its entries looking like
-            // the owner's.
-            ".config/opencode/opencode.json",
-            ".config/opencode/opencode.jsonc",
-        ]),
-        (HarnessKind::Pi, Reach::Home) => home(&[".pi/agent/settings.json"]),
+        (HarnessKind::Pi, Reach::Home) => one(Base::Home, &[".pi/agent/settings.json"]),
         _ => return None,
     };
     Some(file)
@@ -101,17 +110,49 @@ pub const fn can_switch_off(kind: HarnessKind, reach: Reach) -> bool {
     switch_file(kind, reach).is_some()
 }
 
-/// Rewrites one switch file so exactly `off` (skill names) are switched off by Atlas.
+/// A skill Atlas wants switched off in one switch file.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SwitchOff {
+    /// The skill's name: its folder name, which Atlas's skills keep equal to the `name`
+    /// in their header. The formats keyed by name (Claude Code, `OpenCode`, Pi) go by it
+    /// alone.
+    pub name: String,
+    /// The `SKILL.md` the agent loads, for formats keyed by path (Codex); a path through
+    /// a link into the skill's folder is fine. `None` names the skill by name, which for
+    /// Codex switches off every skill of that name: at `Reach::Project` such a skill is
+    /// skipped, and a project's skill should always carry its path.
+    pub path: Option<PathBuf>,
+}
+
+impl SwitchOff {
+    /// A skill named by name only.
+    #[must_use]
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: None,
+        }
+    }
+
+    /// A skill loaded from `path` (its `SKILL.md`).
+    #[must_use]
+    pub fn at(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.into(),
+            path: Some(path.into()),
+        }
+    }
+}
+
+/// Rewrites one switch file so exactly `off` are switched off by Atlas.
 ///
 /// - Entries the owner wrote are kept, including the owner's own "off" for a skill.
-/// - `atlas_before` is the set of names Atlas switched off in this file last time
-///   (atlasd keeps it in its state). Every format here marks Atlas's entries in the file
-///   itself (a comment, or for strict JSON a list under Atlas's own key), so they don't
-///   need it: the file is the record, and an entry the owner had before Atlas wanted the
-///   same skill off is never taken for Atlas's.
-/// - `skill_dir` maps a name to the folder the agent loads it from, for formats keyed by
-///   path (Codex); a link into the skill's folder is fine. At `Reach::Project` a name it
-///   doesn't map is skipped, since a name entry would also switch off a global skill.
+///   Every format marks Atlas's entries in the file itself (a comment, or for strict JSON
+///   a list under Atlas's own key): the file is the record, and an entry the owner had
+///   before Atlas wanted the same skill off is never taken for Atlas's.
+/// - Formats keyed by name write one entry per name, whatever the paths. Codex writes one
+///   per [`SwitchOff`], by path when it has one, and an owner's entry covers a skill only
+///   when it names that skill's exact path, or its name.
 /// - Only names that are slugs (Atlas's skill names) are written: Atlas's marks hold the
 ///   name, and a slug can't make a wildcard (`OpenCode`) or end a comment early.
 /// - `Change::Remove` only when nothing is left but what Atlas made: an empty object or
@@ -124,46 +165,22 @@ pub fn render_switches(
     kind: HarnessKind,
     reach: Reach,
     current: Option<&[u8]>,
-    off: &BTreeSet<String>,
-    atlas_before: &BTreeSet<String>,
-    skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
+    off: &BTreeSet<SwitchOff>,
 ) -> Result<Change, FormatError> {
-    let _ = atlas_before;
     if !can_switch_off(kind, reach) {
         return Ok(Change::Unchanged);
     }
-    let off: BTreeSet<String> = off
+    let off: BTreeSet<&SwitchOff> = off
         .iter()
-        .filter(|n| Slug::new(n.as_str()).is_ok())
-        .cloned()
+        .filter(|s| Slug::new(s.name.as_str()).is_ok())
         .collect();
-    let off = &off;
+    let names: BTreeSet<String> = off.iter().map(|s| s.name.clone()).collect();
     match kind {
-        HarnessKind::ClaudeCode => claude::render(current, off),
-        HarnessKind::Codex => codex::render(current, off, reach, skill_dir),
-        HarnessKind::OpenCode => opencode::render(current, off),
-        HarnessKind::Pi => pi::render(current, off),
+        HarnessKind::ClaudeCode => claude::render(current, &names),
+        HarnessKind::Codex => codex::render(current, &off, reach),
+        HarnessKind::OpenCode => opencode::render(current, &names),
+        HarnessKind::Pi => pi::render(current, &names),
         _ => Ok(Change::Unchanged),
-    }
-}
-
-/// Parses a strict JSON object file. A missing or blank file is an empty object.
-fn parse_object(current: Option<&[u8]>) -> Result<Map<String, Value>, FormatError> {
-    match current {
-        Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
-            match serde_json::from_slice(bytes)? {
-                Value::Object(map) => Ok(map),
-                _ => Err(shape("the top level", "an object")),
-            }
-        }
-        _ => Ok(Map::new()),
-    }
-}
-
-fn shape(at: &str, expected: &'static str) -> FormatError {
-    FormatError::UnexpectedShape {
-        at: at.to_owned(),
-        expected,
     }
 }
 
@@ -190,23 +207,6 @@ fn record(doc: &mut Map<String, Value>, key: &str, names: &BTreeSet<String>) {
     }
 }
 
-/// Renders an edited JSON object the way the hook formats do: two-space JSON with a
-/// trailing newline; an object left empty means the file goes.
-fn finish(
-    original: &Map<String, Value>,
-    edited: &Map<String, Value>,
-) -> Result<Change, FormatError> {
-    if edited == original {
-        return Ok(Change::Unchanged);
-    }
-    if edited.is_empty() {
-        return Ok(Change::Remove);
-    }
-    let mut bytes = serde_json::to_vec_pretty(edited)?;
-    bytes.push(b'\n');
-    Ok(Change::Write(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,7 +218,7 @@ mod tests {
                 let Some(f) = switch_file(kind, reach) else {
                     continue;
                 };
-                assert_ne!(f.candidates.len(), 0);
+                assert!(f.candidates.contains(&f.create), "{kind}");
                 for p in f.candidates {
                     assert!(!p.starts_with('/') && !p.split('/').any(|s| s == ".."));
                     if f.base == Base::Repo {
@@ -229,6 +229,22 @@ mod tests {
         }
         assert!(can_switch_off(HarnessKind::Codex, Reach::Project));
         assert!(!can_switch_off(HarnessKind::OpenCode, Reach::Project));
+    }
+
+    #[test]
+    fn opencode_edits_the_file_it_reads_last() {
+        // OpenCode merges `opencode.json` then `opencode.jsonc`, so with both present the
+        // `.jsonc` wins, and it rewrites a `.json` without comments: Atlas edits and
+        // creates the `.jsonc`.
+        let f = switch_file(HarnessKind::OpenCode, Reach::Home).unwrap();
+        assert_eq!(
+            f.candidates,
+            [
+                ".config/opencode/opencode.jsonc",
+                ".config/opencode/opencode.json"
+            ]
+        );
+        assert_eq!(f.create, ".config/opencode/opencode.jsonc");
     }
 
     #[test]
@@ -245,7 +261,7 @@ mod tests {
 
     #[test]
     fn agents_without_a_setting_are_left_alone() {
-        let off = BTreeSet::from(["pdf".to_owned()]);
+        let off = BTreeSet::from([SwitchOff::named("pdf")]);
         for (kind, reach) in [
             (HarnessKind::Grok, Reach::Home),
             (HarnessKind::Antigravity, Reach::Home),
@@ -254,7 +270,7 @@ mod tests {
         ] {
             assert!(!can_switch_off(kind, reach));
             assert_eq!(
-                render_switches(kind, reach, Some(b"{}"), &off, &off, &|_| None).unwrap(),
+                render_switches(kind, reach, Some(b"{}"), &off).unwrap(),
                 Change::Unchanged
             );
         }
