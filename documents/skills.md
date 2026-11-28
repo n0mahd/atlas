@@ -87,8 +87,21 @@ owner's rule: after an import the original is gone and agents read Atlas's copy.
 - **Skills**: real folders and links to folders outside Atlas. Links into folders a tool
   installed (`/usr/share/...`, a tool's own home such as `~/.cua-driver`) and agents' own
   built-in and plugin skills are listed under **Built in and plugins** and never imported.
-- **Instructions**: an agent's own home file offers **Use Global instead** (its text is
-  added to Global first); a project's `CLAUDE.md` can move or merge into `AGENTS.md`.
+- **Instructions**: the page shows, for each file, which agents read it directly,
+  through a link, through Claude's `@` import or through Claude's AGENTS.md option, and
+  why the others don't (`atlas_harness::readers`, sourced in `HARNESSES.md`; computed for
+  the hub's own machine). An agent's own home file offers **Use Global instead**: its text
+  is appended to Global and committed; atlasd then swaps the file for the link (Claude's
+  `CLAUDE.md` for just the import) on each machine only where every non-blank line of it
+  is in Global (`instructions::contained`, re-checked when applied). A project's
+  `CLAUDE.md` can become `AGENTS.md` or merge into it, and the same confirmation offers
+  Claude's option when Claude would still skip `AGENTS.md`; **Move to Global** and **Copy
+  to this project** move text the other ways. Moved text is appended after a blank line
+  and `<!-- atlas: from <where> -->`, and nothing is added that the target already holds.
+  A new `CLAUDE.local.md` goes in Atlas's block of `.git/info/exclude`, so it is never
+  committed (and git can't undo it; the confirmation says so). Claude's choice lives in
+  `atlas/placements.toml` as `[instructions] claude-reads-agents-md = "when-no-claude-md" |
+  "alongside" | "never"`; without it atlasd leaves Claude's setting alone.
 - **Memory**: Claude Code's `~/.claude/projects/<repo>/memory/*.md` become
   `<knowledge>/memory/projects/<project>/<note>.md` with `metadata.host` and
   `metadata.project`; then atlasd makes the per-repo folder a link to that store folder, so

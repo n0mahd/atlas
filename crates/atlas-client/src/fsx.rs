@@ -60,7 +60,8 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Points the link at `path` to `target` in one step: a temp link, then a rename over
-/// the old one. The caller has checked that `path` is a link.
+/// the old one. The caller has checked that `path` is a link, or a file it means to
+/// replace with one.
 pub fn replace_link(path: &Path, target: &Path) -> io::Result<()> {
     let tmp = temp_beside(path)?;
     symlink(target, &tmp)?;

@@ -306,6 +306,7 @@ dependencies = [
  "atlas-harness",
  "atlas-signer",
  "atlas-verify",
+ "atlas-web",
  "axum",
  "base64 0.23.1",
  "diffy",

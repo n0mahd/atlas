@@ -388,6 +388,69 @@ pub fn write_placements(
     Ok(PLACEMENTS_FILE)
 }
 
+/// Adds `patterns` (such as `/CLAUDE.local.md`) to Atlas's block in `<root>/.git/info/exclude`
+/// (`atlas_harness::instructions::exclude_with`), keeping every other line. The only write
+/// Atlas makes inside `.git`: it touches nothing else there, and refuses a `.git` that is a
+/// file (a worktree) or a link anywhere on the way. Returns whether the file changed.
+///
+/// # Errors
+/// No `.git` folder, a link on the way, an exclude file over 1 MiB, or the write fails.
+pub fn add_to_git_exclude(root: &Path, patterns: &[&str]) -> Result<bool, LibraryError> {
+    const MAX_EXCLUDE: u64 = 1024 * 1024;
+    let dir = open(root)?;
+    match dir.symlink_metadata(".git") {
+        Ok(m) if m.is_dir() => {}
+        Ok(m) if m.file_type().is_symlink() => return Err(LibraryError::Symlink(".git".into())),
+        _ => {
+            return Err(LibraryError::Io(
+                "this checkout has no .git folder (a worktree keeps it elsewhere)".to_owned(),
+            ));
+        }
+    }
+    let git = dir.open_dir(".git")?;
+    match git.symlink_metadata("info") {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(LibraryError::Symlink(".git/info".into())),
+        Err(_) => git.create_dir("info")?,
+    }
+    let info = git.open_dir("info")?;
+    let current = match info.symlink_metadata("exclude") {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+        Ok(m) if !m.is_file() => return Err(LibraryError::Symlink(".git/info/exclude".into())),
+        Ok(_) => {
+            let mut text = String::new();
+            info.open("exclude")?
+                .take(MAX_EXCLUDE + 1)
+                .read_to_string(&mut text)?;
+            if text.len() as u64 > MAX_EXCLUDE {
+                return Err(LibraryError::TooBig);
+            }
+            text
+        }
+    };
+    let next = atlas_harness::instructions::exclude_with(&current, patterns);
+    if next == current {
+        return Ok(false);
+    }
+    let tmp = Path::new(".exclude.atlas-tmp");
+    remove_stale(&info, tmp)?;
+    let result = (|| -> Result<(), LibraryError> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let mut file = info.open_with(tmp, &options)?;
+        file.write_all(next.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        info.rename(tmp, &info, "exclude")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = info.remove_file(tmp);
+    }
+    result.map(|()| true)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -506,6 +569,26 @@ mod tests {
             fs::read_to_string(repo.path().join("notes.md")).unwrap(),
             "new\n"
         );
+    }
+
+    #[test]
+    fn the_exclude_block_is_the_only_write_inside_git() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(
+            add_to_git_exclude(repo.path(), &["/CLAUDE.local.md"]).is_err(),
+            "no .git"
+        );
+        fs::create_dir_all(repo.path().join(".git/info")).unwrap();
+        fs::write(repo.path().join(".git/info/exclude"), "*.swp\n").unwrap();
+        assert!(add_to_git_exclude(repo.path(), &["/CLAUDE.local.md"]).unwrap());
+        assert!(!add_to_git_exclude(repo.path(), &["/CLAUDE.local.md"]).unwrap());
+        assert_eq!(
+            fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap(),
+            "*.swp\n# atlas:begin\n/CLAUDE.local.md\n# atlas:end\n"
+        );
+        let worktree = tempfile::tempdir().unwrap();
+        fs::write(worktree.path().join(".git"), "gitdir: /elsewhere\n").unwrap();
+        assert!(add_to_git_exclude(worktree.path(), &["/x"]).is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="sections">
-  {% for s in sections %}
+  {% for s in v.sections %}
   <section class="section">
     <div class="section-head"><span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2></div>
     {% if s.rows.is_empty() %}
@@ -23,7 +23,46 @@
       {% endfor %}
     </ul>
     {% endif %}
+    {% if !s.actions.is_empty() %}
+    <p class="instr-actions">{% for a in s.actions %}<a class="link-cap" href="{{ a.href }}">{{ a.label }}</a>{% endfor %}</p>
+    {% endif %}
   </section>
   {% endfor %}
+  {% if !v.own.is_empty() %}
+  <section class="section">
+    <div class="section-head"><span class="num">{{ v.own_num }}</span><h2>Agents' own files</h2><span class="count">{{ v.own.len() }}</span></div>
+    <ul class="rows">
+      {% for o in v.own %}
+      <li>
+        <a class="row" href="{{ o.href }}">
+          <span class="row-main">
+            <span class="row-name">{{ o.agent }} <span class="mono muted">{{ o.shown }}</span></span>
+            <span class="row-desc warn">{{ o.note }}</span>
+          </span>
+          <span class="row-meta">{{ o.lines }} lines</span>
+          <span class="marks"><span class="mark" role="img" aria-label="{{ o.agent }}" title="{{ o.agent }}">{{ o.icon|safe }}</span></span>
+          <span class="instr-go link-cap">Use Global instead</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+  {% if let Some(c) = v.claude %}
+  <section class="section">
+    <div class="section-head"><span class="num">{{ c.num }}</span><h2>Claude reads a project's AGENTS.md</h2></div>
+    <form method="post" action="/instructions/claude-agents-md" class="setting-row"{% if page.signed_in %} data-send-on-save{% endif %}>
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <label class="field grow"><span class="sr">When Claude Code reads a project's AGENTS.md</span>
+        <select class="select instr-select" name="value">
+          {% for ch in c.choices %}<option value="{{ ch.value }}"{% if ch.checked %} selected{% endif %}>{{ ch.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="button-plain" type="submit"{% if !page.signed_in %} disabled title="Sign in to change it"{% endif %}>Save</button>
+      <p class="marginalia warn-note instr-error" data-error hidden role="alert"></p>
+    </form>
+    {% if !c.note.is_empty() %}<p class="marginalia">{{ c.note }}</p>{% endif %}
+  </section>
+  {% endif %}
 </div>
 {% endblock %}
