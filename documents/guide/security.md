@@ -10,9 +10,14 @@ short answer is only you, with your passkey, as long as the hub's own machine is
    devices on your Tailscale network (your tailnet) signed in as a login in
    `allowed_logins`. Other people's logins and tagged devices get a 403. That's enough
    to read.
-2. **Your passkey.** Every change (saving, sending, pairing a machine, adding or
-   removing a passkey) also needs a passkey session. A passkey is held by your device
-   (laptop, phone or security key) and never leaves it.
+2. **Your passkey.** Every change (saving, sending, pairing a machine) also needs a
+   passkey session. Adding or removing a passkey, and creating a CLI token, each ask for
+   a fresh tap from a passkey you already have, even when you're signed in. A passkey is
+   held by your device (laptop, phone or security key) and never leaves it.
+
+   When a passkey is added, your next sign-in with another one says so once ("A passkey
+   was added: Phone, …"). Removing a passkey signs out every browser it signed in, and
+   **Settings → Passkeys → Sign out everywhere** signs out every browser at once.
 
 While a new hub has no passkey, it lets your Tailscale login create the first one for 30
 minutes after it starts. After that, a new passkey needs `atlas-hub setup`, run on the
@@ -66,8 +71,10 @@ update, hooks included.
 
 ## Each machine has its own token
 
-Pairing uses a one-time code that expires after 15 minutes. The machine then gets its
-own token; the hub keeps only a hash of it. Remove a machine on the **Machines** page and
+Pairing uses a one-time code such as `K7QF-9XMR2D` that expires after 15 minutes. The hub
+takes at most five wrong codes a minute, and after twenty wrong codes it cancels every
+code it has handed out, so guessing one doesn't work. The machine then gets its own
+token; the hub keeps only a hash of it. Remove a machine on the **Machines** page and
 its token stops working.
 
 ## What to keep in mind

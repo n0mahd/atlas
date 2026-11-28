@@ -78,7 +78,8 @@ if [ -z "${{1:-}}" ]; then
   echo "Give the pairing code from the hub's Machines page." >&2
   exit 1
 fi
-code="$1"
+# A code may come in groups (K7QF 9XMR2D); the hub ignores spaces and hyphens.
+code="$*"
 hub="{origin}"
 case "$(uname -s)" in
   Linux) os=linux ;;

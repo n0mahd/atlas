@@ -95,9 +95,8 @@ fn public_origin(config: &Config) -> String {
 /// The hub's origin and a fresh pairing code, for `pair-code` and `add-machine`.
 fn pairing(home: &Path, config: &Config) -> (String, String) {
     let origin = public_origin(config);
-    let code = atlas_signer::setup::issue_in(
+    let code = atlas_signer::setup::issue_pairing(
         &state_dir(home, config),
-        atlas_signer::setup::PAIRING_CODES,
         atlas_web::remote::PAIRING_TTL,
     )
     .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));

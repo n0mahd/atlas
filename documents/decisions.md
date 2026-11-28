@@ -458,3 +458,47 @@ hub's own CPU into `<state>/dist/`, static (musl) when that target is installed,
 native with a warning that it suits only similar systems; other CPUs stay a manual
 cross-build. `deploy/test-install.sh` runs the script in throwaway homes with stand-in
 system tools, so it can be checked without touching the machine.
+
+## 0038 · 2026-11-28 · Passkey-confirmed actions, enrolment authority and sessions tied to keys
+Changes that decide who can act on the hub now ask for more than a session.
+- **A fresh tap for sensitive actions.** Once a passkey exists, adding another, removing
+  one and creating a CLI token each take a tap from an enrolled passkey first. The page
+  runs the sign-in ceremony against `/auth/confirm/start` and `/auth/confirm/finish`; the
+  hub answers a grant bound to that one action (`enrol`, `create_token` or
+  `remove_key:<id>`) and to the session that asked, usable once within 2 minutes. The
+  action's request carries the grant beside its CSRF token.
+- **Told about new keys.** A key added after the first is announced once, at the next
+  sign-in with a different key: "A passkey was added: <name>, <when>". The new key's own
+  sign-ins don't use the notice up.
+- **Enrolment keeps its authority.** An enrolment records what let it start: the
+  first-run window, a setup link, or a signed-in session with a grant. Finishing checks
+  that same thing again: first run only while no passkey exists and the window is open; a
+  setup link only if it is still unused (finishing uses it up); a session only if the
+  request carries that same live session.
+- **Sessions name their passkey.** Each session records the credential that opened it.
+  Removing a key ends its sessions. Settings → Passkeys has "Sign out everywhere", which
+  ends every session, this one included, so each browser signs in again; both apply to
+  `sessions.json`. Sessions saved before this change carry no key and are dropped once
+  when the hub starts.
+- **Only keys that can sign.** Enrolment asks authenticators for ES256 only and checks the
+  new key: one clients can't verify (RSA, for one) is refused with "Add a passkey that can
+  sign (ES256 or Ed25519)" instead of failing later at Send.
+- **One-time pages.** A new CLI token is shown on the single Settings view after the
+  form's redirect, kept in memory for that session only, never in a URL; a reload shows
+  it no more. Each token's last use is recorded at most once a minute.
+- **Return paths.** After sign-in the hub returns only to a local path made of plain URL
+  characters that still begins with a single `/` once percent-escapes are decoded.
+
+## 0039 · 2026-11-28 · Short pairing codes with a hub-wide limit
+Pairing codes are typed by hand, so they are now 10 Crockford base32 characters (50
+random bits), shown as `K7QF-9XMR2D`. Redeeming ignores case, hyphens and spaces and reads
+O as 0 and I or L as 1; the state folder keeps only the SHA-256 of that normal form. The
+hub takes at most five wrong codes in a rolling minute; after that every redeem is refused,
+right code or not, with "Too many wrong codes. Wait a minute and try again." (HTTP 429)
+until the minute has passed. Twenty wrong codes since the last code was issued void every
+outstanding code. The limit applies to any input, whatever its length. Issuing, checking
+and using a code (and a setup link) happen under one lock: a mutex inside the hub and an
+exclusive lock on `<file>.lock` in the state folder, since `atlas-hub` commands write the
+same files. Setup links keep their 64-character form and have no rate limit: they are
+made on the hub itself and can't be guessed. The install script joins its arguments, so a
+code pasted with a space still works.
