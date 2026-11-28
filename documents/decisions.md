@@ -319,3 +319,32 @@ carry `agents_from_atlas` per harness (absent from older clients, read as 0). Th
 manifest needs no change: it already pins the whole knowledge tree. This replaces the
 subagent part of `link-agents`, which must stop linking `~/.claude/agents` on machines
 running atlasd.
+
+## 00XX · 2026-11-27 · Managing machines from a workstation CLI and the Machines page
+An always-on hub often cannot SSH into every machine the owner can reach from their daily
+workstation, and the static `machines` list in `hub.toml` couldn't be edited without editing
+config on the hub.
+- **Tracked machines store**: the hub keeps editable machine names in `<state>/machines.json`
+  (mode 0600, seeded once from `hub.toml`'s `machines` list). On `/machines`, signed-out
+  visitors see a sign-in prompt instead of a bare page; signed-in owners can track new names,
+  generate machine-tailored pairing commands with a copy button, install over hub SSH, and
+  remove any non-hub machine (which also unpairs its clients). The top machine picker now
+  reflects paired status from `clients.json` instead of hardcoding `(not paired)`, and the
+  install script starts `atlasd.service --no-block` right after enabling the timer so new
+  machines report immediately.
+- **Passkey-issued CLI tokens**: Settings → CLI tokens (behind a passkey session and CSRF)
+  and `atlas-hub token <name>` mint revocable bearer tokens stored only as SHA-256 hashes in
+  `<state>/cli-tokens.json` (mode 0600), separated from `atlasd`'s sync tokens so an ordinary
+  paired login cannot add or remove other machines. Admin routes (`/api/admin/machines`,
+  `/api/admin/machines/{target}`, `/api/admin/pair-code`) require both `Tailscale-User-Login`
+  and a valid CLI token.
+- **Workstation CLI in `atlasd`**: `atlasd auth <hub> <token>` stores the token in
+  `~/.config/atlas/cli.toml` (mode 0600); `atlasd machines [list]`, `atlasd machines add
+  <you@host>`, `atlasd machines track <name>`, `atlasd machines remove <name-or-id>`, and
+  `atlasd pair-code` manage machines remotely. `atlasd machines add` requests a fresh
+  one-time pairing code from the hub and runs the workstation's own interactive `ssh`
+  (inheriting stdio so its SSH keys, agent, and prompts work natively).
+- **Banner alignment**: `<main>` wraps its children in `.page-inner` (`max-width: 1180px;
+  margin-inline: auto`) and `.marginalia`, `.flash`, `.empty`, and `.frontispiece` use
+  `margin-block` instead of `margin` shorthands so banners align cleanly with the masthead on
+  wide screens.

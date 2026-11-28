@@ -15,6 +15,8 @@ pub struct Paths {
     pub home: PathBuf,
     /// `~/.config/atlas/client.toml`
     pub config: PathBuf,
+    /// `~/.config/atlas/cli.toml`
+    pub cli: PathBuf,
     /// `~/.local/state/atlas-client/state.json`
     pub state: PathBuf,
     /// `~/.local/share/atlas/sources`: one local copy per release source.
@@ -27,9 +29,50 @@ impl Paths {
         Self {
             home: home.to_path_buf(),
             config: home.join(".config/atlas/client.toml"),
+            cli: home.join(".config/atlas/cli.toml"),
             state: home.join(".local/state/atlas-client/state.json"),
             sources: home.join(".local/share/atlas/sources"),
         }
+    }
+}
+
+/// Admin CLI credentials for managing machines on a remote hub (`~/.config/atlas/cli.toml`).
+/// Kept separate from `client.toml` so ordinary sync logins stay unprivileged.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CliConfig {
+    /// The hub's origin, such as `https://hub.example.ts.net:7443`.
+    pub hub: String,
+    pub token: String,
+}
+
+impl fmt::Debug for CliConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CliConfig")
+            .field("hub", &self.hub)
+            .field("token", &"<hidden>")
+            .finish()
+    }
+}
+
+impl CliConfig {
+    /// # Errors
+    /// The file is missing or isn't valid TOML.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            format!(
+                "can't read {}: {e}. Create a CLI token in Settings → CLI tokens, then run `atlasd auth <hub-url> <token>`.",
+                path.display()
+            )
+        })?;
+        toml::from_str(&text).map_err(|e| format!("{} isn't valid: {e}", path.display()))
+    }
+
+    /// # Errors
+    /// The file couldn't be written.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let text = toml::to_string(self).map_err(|e| e.to_string())?;
+        fsx::write_private(path, text.as_bytes())
+            .map_err(|e| format!("can't write {}: {e}", path.display()))
     }
 }
 

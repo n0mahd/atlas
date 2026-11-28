@@ -7,9 +7,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use atlas_client::config::{Config, Paths, State};
+use atlas_client::config::{CliConfig, Config, Paths, State};
 use atlas_client::pass::{self, Fetched};
-use atlas_client::{http, release};
+use atlas_client::{http, release, ssh};
 use atlas_core::distribution::PairRequest;
 
 const USAGE: &str = "\
@@ -19,7 +19,13 @@ usage:
                                                   atlasd take over links an older script made
                                                   into DIR (such as ~/Knowledge)
   atlasd run [--dry-run]                          apply the latest signed release
-  atlasd status                                   show the pairing and the pending plan";
+  atlasd status                                   show the pairing and the pending plan
+  atlasd auth <hub-url> <token>                   save a CLI token from Settings → CLI tokens
+  atlasd pair-code                                get a one-time install command from the hub
+  atlasd machines [list]                          list machines on the hub
+  atlasd machines add <you@host>                  install and pair atlasd over SSH from here
+  atlasd machines track <name>                    add an unpaired machine name to the hub
+  atlasd machines remove <name-or-id>             remove a machine or unpair a client id";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -48,6 +54,16 @@ fn main() -> ExitCode {
             ["run"] => run(&paths, false),
             ["run", "--dry-run"] => run(&paths, true),
             ["status"] => status(&paths),
+            ["auth", hub, token] => auth(&paths, hub, token),
+            ["pair-code"] => pair_code(&paths),
+            ["machines"] | ["machines", "list"] => machines_list(&paths),
+            ["machines", "add", target] => machines_add(&paths, target),
+            ["machines", "track", name] => machines_track(&paths, name),
+            ["machines", "remove", target] => machines_remove(&paths, target),
+            ["-h" | "--help" | "help"] => {
+                println!("{USAGE}");
+                Ok(ExitCode::SUCCESS)
+            }
             _ => Err(USAGE.to_owned()),
         }
     });
@@ -192,6 +208,108 @@ fn status(paths: &Paths) -> Result<ExitCode, String> {
     }
     for p in &pass.problems {
         println!("  problem: {p}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn auth(paths: &Paths, hub: &str, token: &str) -> Result<ExitCode, String> {
+    let (origin, _) = release::origin_and_rp(hub)?;
+    let token = token.trim();
+    let list = http::admin_machines(&origin, token)?;
+    CliConfig {
+        hub: origin.clone(),
+        token: token.to_owned(),
+    }
+    .save(&paths.cli)?;
+    println!(
+        "Saved CLI token for {origin} (hub: {}, {} machines).",
+        list.hub,
+        list.machines.len()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn pair_code(paths: &Paths) -> Result<ExitCode, String> {
+    let cli = CliConfig::load(&paths.cli)?;
+    let resp = http::admin_pair_code(&cli.hub, &cli.token)?;
+    println!(
+        "On the machine, as the account Atlas should manage (works once, for {} minutes):\n\n  {}\n\nOr from here over SSH:\n\n  ssh you@machine '{}'",
+        resp.ttl_seconds / 60,
+        resp.command,
+        resp.command
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn machines_list(paths: &Paths) -> Result<ExitCode, String> {
+    let cli = CliConfig::load(&paths.cli)?;
+    let resp = http::admin_machines(&cli.hub, &cli.token)?;
+    let latest = resp.latest_release;
+    for m in &resp.machines {
+        if m.hub {
+            println!("{}  [hub]", m.name);
+        } else if m.clients.is_empty() {
+            println!("{}  (not paired yet)", m.name);
+        } else {
+            println!("{}  ({} paired)", m.name, m.clients.len());
+        }
+        for c in &m.clients {
+            let status = match (c.release, latest) {
+                (_, None) => "no update yet".to_owned(),
+                (Some(a), Some(l)) if a >= l => format!("update {a}, up to date"),
+                (Some(a), Some(l)) => format!("update {a}, {} behind", l - a),
+                (None, Some(_)) => "hasn't applied an update".to_owned(),
+            };
+            println!("  {}  id={}  {}", c.user, c.id, status);
+            for p in &c.problems {
+                println!("    problem: {p}");
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn machines_add(paths: &Paths, target: &str) -> Result<ExitCode, String> {
+    let cli = CliConfig::load(&paths.cli)?;
+    let target = ssh::Target::parse(target)?;
+    let resp = http::admin_pair_code(&cli.hub, &cli.token)?;
+    let (resp_origin, _) = release::origin_and_rp(&resp.origin)?;
+    if resp_origin != cli.hub {
+        return Err(format!(
+            "the hub answered with origin {resp_origin}, not {}; refusing to run install",
+            cli.hub
+        ));
+    }
+    eprintln!("Installing atlasd on {target} over SSH…");
+    ssh::install_over_ssh(&cli.hub, &resp.code, &target)?;
+    println!(
+        "\nInstalled and paired on {target}. Run `atlasd machines` to check its status once it reports."
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn machines_track(paths: &Paths, name: &str) -> Result<ExitCode, String> {
+    let cli = CliConfig::load(&paths.cli)?;
+    let added = http::admin_add_machine(&cli.hub, &cli.token, name)?;
+    println!("Added {added} to the hub's machine list.");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn machines_remove(paths: &Paths, target: &str) -> Result<ExitCode, String> {
+    let cli = CliConfig::load(&paths.cli)?;
+    let res = http::admin_remove_machine(&cli.hub, &cli.token, target)?;
+    if res.removed_machine && res.removed_clients > 0 {
+        println!(
+            "Removed {target} and unpaired {} client(s). Their tokens no longer work.",
+            res.removed_clients
+        );
+    } else if res.removed_machine {
+        println!("Removed {target} from the hub's machine list.");
+    } else {
+        println!(
+            "Unpaired {} client(s) matching {target}. Their tokens no longer work.",
+            res.removed_clients
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
