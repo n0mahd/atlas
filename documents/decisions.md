@@ -483,3 +483,22 @@ the Skills and Tidy pages; tools' and broken links and copies Atlas already has 
 folded **Built in and others**. Home and the Skills page show the same sentence
 (`tidy::offer`): "N skills on this machine aren't in Atlas", and, when the projects have
 something to tidy, "; M project skills could be tidier".
+
+## 00XX · 2026-11-28 · atlasd keeps a copy of what it replaces
+atlasd may replace a file or folder whose content is all in Atlas without being the same
+bytes: a machine's own `AGENTS.md` whose every line is in Global (but in another order,
+with repeats or other line endings) becomes the link, Claude's `CLAUDE.md` becomes just
+the import, a strict JSON settings file in its own layout is laid out again, a memory
+folder whose notes differ only in an execute bit becomes the link. Before any of these,
+atlasd copies the original to `~/.local/state/atlas-client/replaced/<UTC date>/<path in
+the home>` (`abs/<path>` for a path outside it), in a private folder (0700). The copy is
+written first, atomically, never through a link and within the `atlas_fs::library` limits;
+if it can't be made, the original stays and the pass reports it. An earlier copy with
+other content is never overwritten: the new one gets `.1`, `.2` … The plan decides which
+actions keep a copy (`keep` on the action, so `atlasd run --dry-run` says so) and apply
+copies (`atlas-client::keep`); the report sent to the hub lists each copy (`Report::kept`,
+absent in older clients' reports), and atlasd prints it. Nothing is kept when the result
+holds the original byte for byte: an exact skill copy adopted as a link, the import added
+to a `CLAUDE.md` whose lines stay as written, a rewrite of a JSON file already in Atlas's
+layout, TOML and JSONC edits made in place, links. Restoring is copying the file back.
+Copies are not pruned; the owner deletes them.

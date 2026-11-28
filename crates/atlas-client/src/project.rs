@@ -153,6 +153,8 @@ impl Rel<'_> {
                     path: self.dir.join(&name),
                     target: self.target(target),
                     digest,
+                    // Planned only for an exact copy (same files, bytes and execute bits).
+                    keep: false,
                 };
                 (name, action)
             }
@@ -274,6 +276,8 @@ pub(crate) fn links(
             path: info.join("exclude"),
             bytes: text.into_bytes(),
             why: "keep Atlas's links out of git status",
+            // Lines are only added to the owner's exclude file.
+            keep: false,
         });
     }
     plan.actions.extend(actions);
@@ -376,22 +380,32 @@ fn adopt_notes(plan: &mut Plan, shown: &str, link: PathBuf, target: PathBuf, tar
         ));
         return;
     }
-    let theirs: BTreeMap<PathBuf, Vec<u8>> = target_ok
+    let theirs: BTreeMap<PathBuf, (Vec<u8>, bool)> = target_ok
         .then(|| read_tree(&target).ok())
         .flatten()
         .map_or_else(BTreeMap::new, |t| {
-            t.files.into_iter().map(|f| (f.rel, f.bytes)).collect()
+            t.files
+                .into_iter()
+                .map(|f| (f.rel, (f.bytes, f.executable)))
+                .collect()
         });
     let missing = tree
         .files
         .iter()
-        .filter(|f| theirs.get(&f.rel) != Some(&f.bytes))
+        .filter(|f| theirs.get(&f.rel).is_none_or(|(b, _)| *b != f.bytes))
         .count();
+    // Every note's text is in the store; a different execute bit is all the link
+    // wouldn't show, and then the folder is kept as it was too.
+    let keep = tree
+        .files
+        .iter()
+        .any(|f| theirs.get(&f.rel).is_some_and(|(_, x)| *x != f.executable));
     match missing {
         0 if target_ok => plan.actions.push(Action::AdoptDir {
             path: link,
             target,
             digest,
+            keep,
         }),
         0 => {}
         1 => plan.conflicts.push(format!(

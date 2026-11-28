@@ -22,9 +22,10 @@ All on the hub, under its state folder (default `~/.local/state/atlas-hub`) unle
 | --- | --- | --- | --- | --- | --- |
 | Allowed Tailscale logins | hub config (`hub.toml`) | Only these logins may open the hub | Hub owner | Until edited | Editing the config |
 | Passkey public keys, names, who added them | `passkeys.json` | Passkey sign-in and signing updates | Signed-in owner (Settings) | Until removed | Settings → remove key |
-| Paired machines: machine name, OS user name, paired / last-seen times, last status report (harnesses found, counts, problems) | `clients.json`, `machines.json` | Machines page, sending updates | Signed-in owner | Until unpaired | Machines → remove |
+| Paired machines: machine name, OS user name, paired / last-seen times, last status report (harnesses found, counts, problems, where copies of replaced files were kept, home shown as `~`) | `clients.json`, `machines.json` | Machines page, sending updates | Signed-in owner | Until unpaired | Machines → remove |
 | Client and CLI tokens | `clients.json`, `cli-tokens.json` | Authenticate atlasd and the CLI | Nobody: stored only as SHA-256 hashes (0600) | Until removed | Unpair / remove token |
 | Skills, instructions, memory, projects | The owner's git repos | The product itself | Owner; the repos' own visibility applies | Git history | Git |
+| Copies of files and folders atlasd replaced (instruction files, harness settings, memory notes), which may hold whatever those held | Each machine: `~/.local/state/atlas-client/replaced/<date>/` (folder 0700) | Nothing is lost when atlasd replaces something | That OS account | Until deleted | Deleting the folder |
 | SSH targets (`user@host`) typed for an SSH install | Request only; logged (see Logs) | Install atlasd from the hub | Hub owner | Journal retention | journald |
 
 ## Logs

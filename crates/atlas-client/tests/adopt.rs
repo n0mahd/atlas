@@ -5,6 +5,7 @@ mod common;
 
 use std::fs;
 
+use atlas_client::keep::Keeper;
 use atlas_client::{apply, desired, plan};
 use common::{Key, World, exists, link, write};
 
@@ -77,7 +78,8 @@ fn a_copy_changed_after_planning_is_left_alone() {
     );
     // The owner adds a file between planning and applying.
     write(&h.join(".claude/skills/alpha/later.md"), "new\n");
-    let (_, failed) = apply::apply(&plan, &h);
+    let keeper = Keeper::new(&w.paths.replaced, &h, 1);
+    let failed = apply::apply(&plan, &h, &keeper).failed;
     assert_eq!(failed.len(), 1, "{failed:?}");
     assert!(failed[0].contains("changed since the plan"), "{failed:?}");
     assert!(

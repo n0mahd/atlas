@@ -999,6 +999,22 @@ pub(crate) fn wants_json(headers: &HeaderMap) -> bool {
         .is_some_and(|v| v.contains("application/json"))
 }
 
+/// The owner's sentence when a save's commit failed, saying whether the file is back to
+/// its committed text (`restored`) or still holds the new, uncommitted text.
+fn commit_failed(git_error: &str, restored: Result<(), String>, shown: &str) -> String {
+    let why = if git_error.contains("tell me who you are") || git_error.contains("empty ident") {
+        "This repo has no git name and email set, so git won't commit. Set user.name and user.email in it, then save again.".to_owned()
+    } else {
+        format!("The commit failed: {git_error}")
+    };
+    match restored {
+        Ok(()) => format!("{why} Nothing changed."),
+        Err(e) => format!(
+            "{why} Atlas also couldn't put the old text back ({e}), so {shown} now holds your new text without a commit. Your text is below; commit or discard it by hand."
+        ),
+    }
+}
+
 async fn save(
     s: &AppState,
     headers: &HeaderMap,
@@ -1012,6 +1028,13 @@ async fn save(
             headers.get(header::ORIGIN),
             w.auth.session(headers).is_some()
         );
+        if wants_json(headers) {
+            return Ok(crate::change::ChangeError::Refused(
+                "Your session ended. Sign in again in another tab; your text is still here, not saved."
+                    .to_owned(),
+            )
+            .into_response(headers));
+        }
         return Ok(forbidden(
             "Your session ended. Sign in again; your text wasn't saved.\n",
         ));
@@ -1053,15 +1076,9 @@ async fn save(
             Ok(sha) => sha,
             Err(atlas_git::GitError::NothingToCommit) => return Ok(Saved::Unchanged),
             Err(e) => {
-                // Nothing is lost: put the old text back so the file matches git again.
-                let _ = atlas_fs::edit::write_raw(&located, &before);
-                let text = e.to_string();
-                let msg = if text.contains("tell me who you are") || text.contains("empty ident") {
-                    "This repo has no git name and email set, so git won't commit. Set user.name and user.email in it, then save again. Nothing changed.".to_owned()
-                } else {
-                    format!("The commit failed, so nothing changed: {text}")
-                };
-                return Err(fail(msg));
+                // Put the old text back so the file matches git again.
+                let restored = atlas_fs::edit::write_raw(&located, &before).map_err(|e| e.to_string());
+                return Err(fail(commit_failed(&e.to_string(), restored, &located.shown)));
             }
         };
         let pushed = located.kind.may_push(push_setting).then(|| {
@@ -1096,6 +1113,9 @@ async fn save(
         }
         Ok(Saved::Unchanged) => Ok(done(format!("{}?unchanged=1", item.view), false)),
         Err(failed) => match *failed {
+            // The page script shows the reason in place, with the text still in the editor;
+            // answering it with a page would make it post the form again.
+            (msg, _) if json => Ok(crate::change::ChangeError::Refused(msg).into_response(headers)),
             (msg, Some(located)) => {
                 render_edit(s, headers, &item, &located, &form.text, &form.base, msg).await
             }
@@ -1196,6 +1216,21 @@ mod tests {
 
     const ORIGIN: &str = "https://hub.test";
     const LOGIN: &str = "owner@github";
+
+    #[test]
+    fn a_failed_commit_says_whether_the_old_text_is_back() {
+        let back = super::commit_failed("lock held", Ok(()), "~/k/AGENTS.md");
+        assert!(back.ends_with("Nothing changed."), "{back}");
+        let stuck = super::commit_failed("lock held", Err("disk full".into()), "~/k/AGENTS.md");
+        assert!(
+            stuck.contains("couldn't put the old text back (disk full)")
+                && stuck.contains("~/k/AGENTS.md now holds your new text")
+                && !stuck.contains("Nothing changed"),
+            "{stuck}"
+        );
+        let who = super::commit_failed("Please tell me who you are", Ok(()), "x");
+        assert!(who.contains("no git name and email"), "{who}");
+    }
 
     #[test]
     fn days_are_civil_dates() {
@@ -1587,6 +1622,38 @@ mod tests {
             fs::read_to_string(hub.knowledge.join("AGENTS.md"))
                 .unwrap()
                 .contains("changed elsewhere")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_save_answers_the_page_script_in_json_so_it_never_posts_twice() {
+        let hub = hub();
+        let (_, _, page) = send(&hub, get(&hub, "/instructions/global/AGENTS.md/edit", true)).await;
+        let base = base_of(&page);
+        fs::write(hub.knowledge.join("AGENTS.md"), "# Rules\nelsewhere\n").unwrap();
+        git(&hub.knowledge, &["commit", "-qam", "elsewhere"]);
+        let mut req = post(
+            &hub,
+            "/instructions/global/AGENTS.md/edit",
+            &[("csrf", &hub.csrf), ("base", &base), ("text", "# Mine\n")],
+            ORIGIN,
+            true,
+        );
+        req.headers_mut()
+            .insert(header::ACCEPT, "application/json".parse().unwrap());
+        let (status, _, body) = send(&hub, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v: serde_json::Value = serde_json::from_str(&body).expect("JSON, not a page");
+        assert!(
+            v["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("changed since you opened it")),
+            "{body}"
+        );
+        assert!(
+            fs::read_to_string(hub.knowledge.join("AGENTS.md"))
+                .unwrap()
+                .contains("elsewhere")
         );
     }
 

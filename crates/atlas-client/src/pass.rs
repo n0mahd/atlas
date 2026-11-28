@@ -2,10 +2,11 @@
 
 use std::path::PathBuf;
 
-use atlas_core::distribution::Report;
+use atlas_core::distribution::{KeptCopy, Report};
 use atlas_core::release::{Manifest, SignedRelease, SourceId};
 
 use crate::config::{Config, Paths, State};
+use crate::keep::Keeper;
 use crate::sources::Copies;
 use crate::{checkout, desired, plan, project, release, report, sources};
 
@@ -50,6 +51,7 @@ pub fn run(
 ) -> Pass {
     let mut lines = Vec::new();
     let mut problems = Vec::new();
+    let mut kept = Vec::new();
     let mut failed = false;
     let mut next = state.clone();
 
@@ -89,9 +91,10 @@ pub fn run(
                             config,
                             &copies,
                             &checked.manifest,
-                            dry_run,
+                            (dry_run, now),
                             &mut lines,
                             &mut problems,
+                            &mut kept,
                         );
                         if !ok {
                             failed = true;
@@ -117,6 +120,7 @@ pub fn run(
         harnesses: report::harnesses(&paths.home, &paths.sources),
         problems: problems.clone(),
         outside: report::outside(&paths.home, &managed),
+        kept,
     };
     Pass {
         lines,
@@ -128,14 +132,16 @@ pub fn run(
 }
 
 /// Plans from the copies and, unless a dry run, applies. False when a change failed.
+#[allow(clippy::too_many_arguments)]
 fn apply_release(
     paths: &Paths,
     config: &Config,
     copies: &Copies,
     manifest: &Manifest,
-    dry_run: bool,
+    (dry_run, now): (bool, u64),
     lines: &mut Vec<String>,
     problems: &mut Vec<String>,
+    kept: &mut Vec<KeptCopy>,
 ) -> bool {
     problems.extend(copies.problems.iter().cloned());
     let knowledge = copies.dirs.get(&SourceId::Knowledge);
@@ -169,14 +175,26 @@ fn apply_release(
         lines.extend(
             plan.actions
                 .iter()
-                .map(|a| format!("would {}", a.describe(&paths.home))),
+                .map(|a| format!("would {}", a.describe(&paths.home, &paths.replaced))),
         );
         return true;
     }
-    let (done, errors) = crate::apply::apply(&plan, &paths.home);
-    lines.extend(done);
-    let ok = errors.is_empty();
-    problems.extend(errors);
+    let keeper = Keeper::new(&paths.replaced, &paths.home, now);
+    let applied = crate::apply::apply(&plan, &paths.home, &keeper);
+    lines.extend(applied.done);
+    for (original, copy) in applied.kept {
+        let copy = KeptCopy {
+            original: crate::display(&paths.home, &original),
+            copy: crate::display(&paths.home, &copy),
+        };
+        lines.push(format!(
+            "Kept a copy of {} as {}; copy it back to restore it.",
+            copy.original, copy.copy
+        ));
+        kept.push(copy);
+    }
+    let ok = applied.failed.is_empty();
+    problems.extend(applied.failed);
     ok
 }
 
