@@ -618,7 +618,7 @@ async fn skills(
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page);
     let outside = import::skills_outside(&snap, &scope, &q.q);
-    let place = skills_place::list(&s, &snap, &scope, &page, &q.open).await?;
+    let place = skills_place::list(&s, &snap, &scope, &page, &q.open);
     Ok(Html(
         SkillsPage {
             page,
@@ -653,7 +653,7 @@ async fn skill_detail(
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
     let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
-    let p = skills_place::detail(&s, &snap, skill, &scope, &page).await?;
+    let p = skills_place::detail(&s, &snap, skill, &scope, &page);
     Ok(Html(SkillPage { page, v, files, p }.render()?))
 }
 

@@ -53,10 +53,13 @@ pub fn load_catalog(sources: &Sources) -> Catalog {
         r.load_hooks(&knowledge, &sources.knowledge, "hooks", &Scope::Global);
         match crate::library::read_placements(&sources.knowledge) {
             Ok((placements, _)) => r.catalog.placements = placements,
-            Err(e) => r.problem(
-                &sources.knowledge.join(atlas_core::catalog::PLACEMENTS_FILE),
-                e.to_string(),
-            ),
+            Err(e) => {
+                r.catalog.placements_error = Some(e.to_string());
+                r.problem(
+                    &sources.knowledge.join(atlas_core::catalog::PLACEMENTS_FILE),
+                    e.to_string(),
+                );
+            }
         }
     }
     if let Some(public) = &sources.public_skills

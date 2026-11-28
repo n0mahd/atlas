@@ -11,11 +11,9 @@
 //! reason. Every change goes through [`crate::change`], one commit in the knowledge repo.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
 
 use askama::Template;
-use atlas_core::catalog::edit::RepoKind;
-use atlas_core::catalog::{PLACEMENTS_FILE, Placement, Placements, Skill, SkillHome};
+use atlas_core::catalog::{PLACEMENTS_FILE, Placement, Skill, SkillHome};
 use atlas_core::kernel::{HarnessKind, Scope, Slug};
 use atlas_harness::placement::{Reach, Solved, solve};
 use atlas_harness::switches::can_switch_off;
@@ -25,8 +23,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::change::{self, ChangeError, Outcome, RepoChange};
-use crate::views::{self, AGENTS, Page, Snapshot, join_names, short};
+use crate::change::{self, ChangeError, Outcome};
+use crate::edit::wants_json;
+use crate::views::{self, Page, Snapshot, join_names, short};
 use crate::{AppError, AppState, icons, skill_ops};
 
 /// Turning a skill off for this many agents or more at once asks first.
@@ -46,7 +45,7 @@ pub(crate) async fn set_agents(
     on: bool,
 ) -> Result<Outcome, ChangeError> {
     let message = agents_message(&skills, agent, on);
-    edit_placements(s, headers, csrf, message, move |p| {
+    change::edit_placements(s, headers, csrf, message, move |p| {
         for (home, name) in &skills {
             let mut placement = p.of(home, name).clone();
             match (agent, on) {
@@ -57,10 +56,11 @@ pub(crate) async fn set_agents(
                     placement.off.insert(k);
                 }
                 (None, true) => placement.off.clear(),
-                (None, false) => placement.off.extend(AGENTS),
+                (None, false) => placement.off.extend(HarnessKind::agents()),
             }
             p.set(home, name, placement);
         }
+        Ok(())
     })
     .await
 }
@@ -81,42 +81,13 @@ pub(crate) async fn set_use(
             format!("Use {name} only in {} in Atlas", and_list(&names))
         }
     };
-    edit_placements(s, headers, csrf, message, move |p| {
+    change::edit_placements(s, headers, csrf, message, move |p| {
         let mut placement = p.of(&home, &name).clone();
         placement.only_projects = projects;
         p.set(&home, &name, placement);
+        Ok(())
     })
     .await
-}
-
-/// Reads the placements, changes them with `edit`, and writes them back only when they
-/// differ, so a change that changes nothing commits nothing (not even a new empty file).
-async fn edit_placements(
-    s: &AppState,
-    headers: &HeaderMap,
-    csrf: &str,
-    message: String,
-    edit: impl FnOnce(&mut Placements) + Send + 'static,
-) -> Result<Outcome, ChangeError> {
-    let root = s.sources.knowledge.clone();
-    let repos = vec![RepoChange {
-        kind: RepoKind::Knowledge,
-        root: root.clone(),
-        paths: vec![PathBuf::from(PLACEMENTS_FILE)],
-        message,
-    }];
-    let apply: change::Apply = Box::new(move || {
-        let (mut placements, hash) =
-            atlas_fs::library::read_placements(&root).map_err(|e| format!("{e}."))?;
-        let before = placements.clone();
-        edit(&mut placements);
-        if placements != before {
-            atlas_fs::library::write_placements(&root, &placements, &hash)
-                .map_err(|e| format!("{e}."))?;
-        }
-        Ok(())
-    });
-    change::commit_change(s, headers, csrf, repos, apply).await
 }
 
 fn and_list(items: &[&str]) -> String {
@@ -188,7 +159,7 @@ impl Solver {
         let here: BTreeSet<HarnessKind> = snap
             .harnesses
             .iter()
-            .filter(|h| h.present && AGENTS.contains(&h.kind))
+            .filter(|h| h.present && !h.kind.is_host())
             .map(|h| h.kind)
             .collect();
         Self {
@@ -346,6 +317,8 @@ pub struct SkillPlace {
     pub focus: bool,
     /// The placements file can't be read, so nothing can change until it's fixed.
     pub problem: Option<String>,
+    /// The sign-in page, coming back to the skill.
+    pub signin: String,
 }
 
 /// What the page around the switches needs to know.
@@ -459,23 +432,18 @@ fn place_for(
         send: ctx.send,
         focus: false,
         problem: ctx.problem.map(ToOwned::to_owned),
+        signin: crate::auth::signin_href(&format!("/skills/{}/{}", skill.home.key(), skill.name)),
     }
 }
 
-/// The placements file, or the default and a sentence when it can't be read.
-async fn load(s: &AppState) -> Result<(Placements, Option<String>), AppError> {
-    let root = s.sources.knowledge.clone();
-    tokio::task::spawn_blocking(move || match atlas_fs::library::read_placements(&root) {
-        Ok((p, _)) => (p, None),
-        Err(e) => (
-            Placements::default(),
-            Some(format!(
-                "Switches are off until {PLACEMENTS_FILE} is fixed: {e}."
-            )),
-        ),
-    })
-    .await
-    .map_err(|_| AppError::Internal)
+/// Why the switches are off, when the snapshot's placements file can't be read. Pages
+/// read placements from the snapshot; only a change reads the file again (under the git
+/// lock, in [`change::rewrite_placements`]).
+fn placements_problem(snap: &Snapshot) -> Option<String> {
+    snap.catalog
+        .placements_error
+        .as_ref()
+        .map(|e| format!("Switches are off until {PLACEMENTS_FILE} is fixed: {e}."))
 }
 
 fn send_on_save(s: &AppState) -> bool {
@@ -518,14 +486,15 @@ impl ListPlace {
 }
 
 /// Builds the list's switches. `open` is `<home>/<name>` of the row just changed.
-pub(crate) async fn list(
+pub(crate) fn list(
     s: &AppState,
     snap: &Snapshot,
     scope: &Scope,
     page: &Page,
     open: &str,
-) -> Result<ListPlace, AppError> {
-    let (placements, problem) = load(s).await?;
+) -> ListPlace {
+    let placements = &snap.catalog.placements;
+    let problem = placements_problem(snap);
     let projects = registered(s);
     let ctx = Ctx {
         back: Back::List,
@@ -551,18 +520,19 @@ pub(crate) async fn list(
             (place.action.clone(), place)
         })
         .collect();
-    Ok(ListPlace { rows })
+    ListPlace { rows }
 }
 
 /// The switches on a skill's own page.
-pub(crate) async fn detail(
+pub(crate) fn detail(
     s: &AppState,
     snap: &Snapshot,
     skill: &Skill,
     scope: &Scope,
     page: &Page,
-) -> Result<SkillPlace, AppError> {
-    let (placements, problem) = load(s).await?;
+) -> SkillPlace {
+    let placements = &snap.catalog.placements;
+    let problem = placements_problem(snap);
     let projects = registered(s);
     let ctx = Ctx {
         back: Back::Page,
@@ -573,12 +543,12 @@ pub(crate) async fn detail(
         problem: problem.as_deref(),
     };
     let mut solver = Solver::new(snap);
-    Ok(place_for(
+    place_for(
         &mut solver,
         skill,
         placements.of(&skill.home, &skill.name),
         &ctx,
-    ))
+    )
 }
 
 /// The flash line after a change, from the redirect's own validated parameters (never
@@ -590,7 +560,7 @@ pub fn did_text(turned: &str, agent: &str, used: &str) -> Option<String> {
             let who = if agent == "all" {
                 "every agent".to_owned()
             } else {
-                let k: HarnessKind = agent.parse().ok().filter(|k| AGENTS.contains(k))?;
+                let k: HarnessKind = agent.parse().ok().filter(|k: &HarnessKind| !k.is_host())?;
                 short(k).to_owned()
             };
             Some(format!("Turned {turned} for {who}"))
@@ -692,7 +662,9 @@ async fn finish(
 ) -> Result<Response, AppError> {
     match result {
         Ok(outcome) => Ok(change::respond(s, headers, &outcome, next)),
+        // The page script shows a refusal in place; a page here would make it post again.
         Err(e @ (ChangeError::Forbidden | ChangeError::ReadOnly)) => Ok(e.into_response(headers)),
+        Err(e @ ChangeError::Refused(_)) if wants_json(headers) => Ok(e.into_response(headers)),
         Err(ChangeError::Refused(msg)) => {
             step(
                 s,
@@ -735,15 +707,30 @@ pub(crate) async fn post_agents(
     headers: HeaderMap,
     Path((home, name)): Path<(String, String)>,
     Form(f): Form<AgentsForm>,
+) -> Response {
+    if let Err(e) = change::authorise(&s, &headers, &f.csrf) {
+        return e.into_response(&headers);
+    }
+    agents(&s, &headers, &home, &name, f)
+        .await
+        .unwrap_or_else(|e| change::form_error(&headers, e))
+}
+
+async fn agents(
+    s: &AppState,
+    headers: &HeaderMap,
+    home: &str,
+    name: &str,
+    f: AgentsForm,
 ) -> Result<Response, AppError> {
     let snap = s.snapshot().await?;
-    let skill = find(&snap, &home, &name).ok_or(AppError::NotFound)?;
+    let skill = find(&snap, home, name).ok_or(AppError::NotFound)?;
     let agent = match f.agent.as_str() {
         "all" => None,
         id => Some(
             id.parse::<HarnessKind>()
                 .ok()
-                .filter(|k| AGENTS.contains(k))
+                .filter(|k| !k.is_host())
                 .ok_or_else(|| bad("That isn't an agent Atlas knows. Nothing changed."))?,
         ),
     };
@@ -757,12 +744,7 @@ pub(crate) async fn post_agents(
     let back_to = back_href(back, skill, &scope);
 
     if !on && agent.is_none() && f.confirmed != "1" {
-        let w = crate::edit::writer(&s)?;
-        if !w.authorised(&headers, &f.csrf) {
-            return Ok(ChangeError::Forbidden.into_response(&headers));
-        }
-        let (placements, _) = load(&s).await?;
-        let placement = placements.of(&skill.home, &skill.name);
+        let placement = snap.catalog.placements.of(&skill.home, &skill.name);
         let mode = Mode::of(&skill.home, placement);
         let mut solver = Solver::new(&snap);
         let turning: Vec<HarnessKind> = solver
@@ -792,11 +774,11 @@ pub(crate) async fn post_agents(
                 scope: scope
                     .project()
                     .map_or_else(|| "global".to_owned(), ToString::to_string),
-                send: send_on_save(&s),
+                send: send_on_save(s),
             };
             return step(
-                &s,
-                &headers,
+                s,
+                headers,
                 StatusCode::OK,
                 format!("Turn {} off?", skill.name),
                 Some(ask),
@@ -814,15 +796,15 @@ pub(crate) async fn post_agents(
     );
     let next = next_href(back, &skill.home, &skill.name, &scope, &did);
     let result = set_agents(
-        &s,
-        &headers,
+        s,
+        headers,
         &f.csrf,
         vec![(skill.home.clone(), skill.name.clone())],
         agent,
         on,
     )
     .await;
-    finish(&s, &headers, result, &next, back_to).await
+    finish(s, headers, result, &next, back_to).await
 }
 
 /// Where "Use in…" puts a skill.
@@ -875,32 +857,16 @@ async fn change_use(
             let result = set_use(s, headers, csrf, from.clone(), name, None).await;
             (result, from)
         }
+        UseChoice::Only(chosen) if in_project => {
+            // A project's skill becomes a global one used only in `chosen`, in one change.
+            let to = SkillHome::Private;
+            let result =
+                skill_ops::move_to_global_only_in(s, headers, csrf, from, name, chosen).await;
+            (result, to)
+        }
         UseChoice::Only(chosen) => {
-            // A project's skill first becomes a global one, then is limited.
-            let (moved, home) = if in_project {
-                let to = SkillHome::Private;
-                let moved = skill_ops::move_skills(
-                    s,
-                    headers,
-                    csrf,
-                    vec![(from, name.clone())],
-                    to.clone(),
-                )
-                .await;
-                match moved {
-                    Ok(outcome) => (Some(outcome), to),
-                    Err(e) => return (Err(e), to),
-                }
-            } else {
-                (None, from)
-            };
-            let then = set_use(s, headers, csrf, home.clone(), name, Some(chosen)).await;
-            let result = match (moved, then) {
-                (_, Err(e)) => Err(e),
-                (Some(committed @ Outcome::Committed { .. }), Ok(_)) => Ok(committed),
-                (_, Ok(o)) => Ok(o),
-            };
-            (result, home)
+            let result = set_use(s, headers, csrf, from.clone(), name, Some(chosen)).await;
+            (result, from)
         }
     }
 }
@@ -912,16 +878,35 @@ pub(crate) async fn post_use(
     headers: HeaderMap,
     Path((home, name)): Path<(String, String)>,
     Form(fields): Form<Vec<(String, String)>>,
+) -> Response {
+    let csrf = fields
+        .iter()
+        .find(|(k, _)| k == "csrf")
+        .map_or("", |(_, v)| v.as_str());
+    if let Err(e) = change::authorise(&s, &headers, csrf) {
+        return e.into_response(&headers);
+    }
+    use_in(&s, &headers, &home, &name, &fields)
+        .await
+        .unwrap_or_else(|e| change::form_error(&headers, e))
+}
+
+async fn use_in(
+    s: &AppState,
+    headers: &HeaderMap,
+    home: &str,
+    name: &str,
+    fields: &[(String, String)],
 ) -> Result<Response, AppError> {
     let snap = s.snapshot().await?;
-    let skill = find(&snap, &home, &name).ok_or(AppError::NotFound)?;
+    let skill = find(&snap, home, name).ok_or(AppError::NotFound)?;
     let field = |key: &str| {
         fields
             .iter()
             .find(|(k, _)| k == key)
             .map_or("", |(_, v)| v.as_str())
     };
-    let projects = registered(&s);
+    let projects = registered(s);
     let project = |value: &str| -> Result<Slug, AppError> {
         projects
             .iter()
@@ -955,8 +940,8 @@ pub(crate) async fn post_use(
     };
     let used = format!("used={}", choice.word());
     let (result, to_home) = change_use(
-        &s,
-        &headers,
+        s,
+        headers,
         field("csrf"),
         skill.home.clone(),
         skill.name.clone(),
@@ -964,7 +949,7 @@ pub(crate) async fn post_use(
     )
     .await;
     let next = next_href(back, &to_home, &skill.name, &to_scope, &used);
-    finish(&s, &headers, result, &next, back_to).await
+    finish(s, headers, result, &next, back_to).await
 }
 
 #[cfg(test)]
@@ -1028,7 +1013,7 @@ mod tests {
 
     #[test]
     fn a_page_of_default_skills_solves_once_per_wanted_set() {
-        let snap = snap_with(&AGENTS);
+        let snap = snap_with(&HarnessKind::agents().collect::<Vec<_>>());
         let mut solver = Solver::new(&snap);
         let listed = solver.listed(Mode::Home);
         let all: BTreeSet<HarnessKind> = listed.iter().copied().collect();

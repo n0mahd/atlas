@@ -49,14 +49,15 @@ fn repo(dir: &Path, files: &[(&str, &str)]) {
 struct Hub {
     _tmp: tempfile::TempDir,
     knowledge: PathBuf,
+    shop: PathBuf,
     app: axum::Router,
     cookie: String,
     csrf: String,
 }
 
 /// A hub whose machine has `agents` set up (by their marker folders), a knowledge repo
-/// with `pdf-tools` and `stock`, and two projects: `shop` (with its own `stock`) and
-/// `cafe`.
+/// with `pdf-tools` and `stock`, and two projects: `shop` (with its own `stock` and
+/// `labels`) and `cafe`.
 async fn hub(agents: &[&str]) -> Hub {
     hub_with(agents, 0).await
 }
@@ -102,6 +103,10 @@ async fn hub_with(agents: &[&str], extra: usize) -> Hub {
                 ".agents/skills/stock/SKILL.md",
                 "---\ndescription: Count\n---\nBody\n",
             ),
+            (
+                ".agents/skills/labels/SKILL.md",
+                "---\ndescription: Print labels\n---\nBody\n",
+            ),
         ],
     );
     let cafe = home.join("Projects/cafe");
@@ -117,7 +122,7 @@ async fn hub_with(agents: &[&str], extra: usize) -> Hub {
             },
             Project {
                 name: Slug::new("shop").unwrap(),
-                root: shop,
+                root: shop.clone(),
             },
         ],
     };
@@ -130,6 +135,7 @@ async fn hub_with(agents: &[&str], extra: usize) -> Hub {
     let mut hub = Hub {
         _tmp: tmp,
         knowledge,
+        shop,
         app,
         cookie,
         csrf: String::new(),
@@ -187,6 +193,24 @@ fn post(hub: &Hub, path: &str, fields: &[(&str, &str)]) -> Request<Body> {
         .header(header::COOKIE, format!("{COOKIE}={}", hub.cookie))
         .body(Body::from(body))
         .unwrap()
+}
+
+fn json(mut req: Request<Body>) -> Request<Body> {
+    req.headers_mut()
+        .insert(header::ACCEPT, "application/json".parse().unwrap());
+    req
+}
+
+/// The page script's view of an answer: its status, whether it is JSON, and the body.
+async fn send_json(hub: &Hub, req: Request<Body>) -> (StatusCode, bool, String) {
+    let res = hub.app.clone().oneshot(json(req)).await.unwrap();
+    let status = res.status();
+    let is_json = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|v| v.to_str().unwrap().contains("application/json"));
+    let body = to_bytes(res.into_body(), 1 << 22).await.unwrap();
+    (status, is_json, String::from_utf8_lossy(&body).into_owned())
 }
 
 fn head(hub: &Hub) -> String {
@@ -610,4 +634,187 @@ async fn a_large_store_renders_quickly() {
     assert!(page.matches(r#"role="switch""#).count() >= 120 * 9);
     // Generous for an unoptimised test build; a release build renders this far faster.
     assert!(took < Duration::from_millis(500), "{took:?}");
+}
+
+#[tokio::test]
+async fn the_page_script_gets_refusals_as_json_so_it_never_posts_again() {
+    // passkey.js posts the form again as a plain one when the answer isn't JSON, which
+    // would repeat a refused change. Every refusal answers it with {error}.
+    let hub = hub(&[".claude", ".codex"]).await;
+    let before = head(&hub);
+    // A form that can't go ahead: "Only these projects" with nothing ticked.
+    let (status, is_json, body) = send_json(
+        &hub,
+        post(
+            &hub,
+            "/skills/private/pdf-tools/use",
+            &[("csrf", &hub.csrf), ("use", "only")],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(is_json, "{body}");
+    assert_eq!(
+        body,
+        r#"{"error":"Pick at least one project. Nothing changed."}"#
+    );
+    // A change a rule refuses: shop already has a skill named stock.
+    let (status, is_json, body) = send_json(
+        &hub,
+        post(
+            &hub,
+            "/skills/private/stock/use",
+            &[("csrf", &hub.csrf), ("use", "project"), ("project", "shop")],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(is_json && body.starts_with(r#"{"error":""#), "{body}");
+    assert!(body.contains("already exists"), "{body}");
+    // An unknown agent and a skill that isn't there.
+    let (status, is_json, _) = send_json(
+        &hub,
+        post(
+            &hub,
+            "/skills/private/pdf-tools/agents",
+            &[("csrf", &hub.csrf), ("agent", "nobody"), ("on", "0")],
+        ),
+    )
+    .await;
+    assert_eq!((status, is_json), (StatusCode::BAD_REQUEST, true));
+    let (status, is_json, _) = send_json(
+        &hub,
+        post(
+            &hub,
+            "/skills/private/nope/agents",
+            &[("csrf", &hub.csrf), ("agent", "codex"), ("on", "0")],
+        ),
+    )
+    .await;
+    assert_eq!((status, is_json), (StatusCode::NOT_FOUND, true));
+    assert_eq!(head(&hub), before);
+    assert!(placements(&hub).is_none());
+}
+
+#[tokio::test]
+async fn a_signed_out_or_cross_origin_post_is_refused_before_any_work() {
+    let hub = hub(&[".claude", ".codex"]).await;
+    // Fields that would fail validation, and a skill that doesn't exist: the session
+    // check comes first, so each is a plain 403.
+    let cases: [(&str, Vec<(&str, &str)>); 4] = [
+        (
+            "/skills/private/nope/agents",
+            vec![("agent", "codex"), ("on", "0")],
+        ),
+        (
+            "/skills/private/pdf-tools/agents",
+            vec![("agent", "nobody"), ("on", "yes")],
+        ),
+        ("/skills/private/pdf-tools/use", vec![("use", "sideways")]),
+        ("/skills/private/nope/use", vec![("use", "global")]),
+    ];
+    for (path, fields) in &cases {
+        let mut all = vec![("csrf", hub.csrf.as_str())];
+        all.extend(fields.iter().copied());
+        let mut signed_out = post(&hub, path, &all);
+        signed_out.headers_mut().remove(header::COOKIE);
+        assert_eq!(
+            send(&hub, signed_out).await.0,
+            StatusCode::FORBIDDEN,
+            "{path}"
+        );
+        let mut other = post(&hub, path, &all);
+        other
+            .headers_mut()
+            .insert(header::ORIGIN, "https://evil.test".parse().unwrap());
+        let (status, is_json, body) = send_json(&hub, other).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+        assert!(is_json && body.contains("Sign in again"), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn only_these_projects_for_a_project_skill_is_one_change() {
+    let hub = hub(&[".claude", ".codex"]).await;
+    let count = |dir: &Path| git(dir, &["rev-list", "--count", "HEAD"]).trim().to_owned();
+    let (k_before, shop_before) = (count(&hub.knowledge), count(&hub.shop));
+    let (status, location, _) = send(
+        &hub,
+        post(
+            &hub,
+            "/skills/shop/labels/use",
+            &[
+                ("csrf", &hub.csrf),
+                ("use", "only"),
+                ("projects", "cafe"),
+                ("back", "page"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        location.starts_with("/skills/private/labels?") && location.contains("used=only"),
+        "{location}"
+    );
+    // One commit in the knowledge repo holds the folder and its only-projects entry, so
+    // the skill is never global for every project, even for a moment.
+    assert_eq!(
+        count(&hub.knowledge).parse::<u32>().unwrap(),
+        k_before.parse::<u32>().unwrap() + 1
+    );
+    let files = git(
+        &hub.knowledge,
+        &["show", "--name-only", "--format=%s", "HEAD"],
+    );
+    assert!(
+        files.starts_with("Move labels to Global and use it only in cafe in Atlas\n"),
+        "{files}"
+    );
+    assert!(files.contains("skills/labels/SKILL.md"), "{files}");
+    assert!(files.contains(PLACEMENTS), "{files}");
+    let text = placements(&hub).unwrap();
+    assert!(
+        text.contains("[global.labels]\nonly-projects = [") && text.contains("\"cafe\""),
+        "{text}"
+    );
+    // The project's commit removes it there.
+    assert_eq!(
+        count(&hub.shop).parse::<u32>().unwrap(),
+        shop_before.parse::<u32>().unwrap() + 1
+    );
+    assert!(!hub.shop.join(".agents/skills/labels").exists());
+    let (_, _, page) = send(&hub, get(&hub, &location, true)).await;
+    assert!(page.contains("Now used only in the projects you chose"));
+    assert!(page.contains(r#"name="projects" value="cafe" checked"#));
+}
+
+#[tokio::test]
+async fn an_invalid_placements_file_turns_the_switches_off_from_the_snapshot() {
+    let hub = hub(&[".claude", ".codex"]).await;
+    let file = hub.knowledge.join(PLACEMENTS);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "[global.pdf-tools]\noff = [\"nobody\"]\n").unwrap();
+    git(&hub.knowledge, &["add", "-A"]);
+    git(&hub.knowledge, &["commit", "-q", "-m", "by hand"]);
+    // A change reads the file fresh, so it is refused; and it drops the cached read.
+    let (status, is_json, body) = send_json(
+        &hub,
+        post(
+            &hub,
+            "/skills/private/pdf-tools/agents",
+            &[("csrf", &hub.csrf), ("agent", "codex"), ("on", "0")],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(is_json && body.contains("is invalid"), "{body}");
+    let (_, _, page) = send(&hub, get(&hub, "/skills/private/pdf-tools", true)).await;
+    assert!(
+        page.contains("Switches are off until atlas/placements.toml is fixed"),
+        "problem shown"
+    );
+    assert!(switch(&page, "Codex uses pdf-tools").contains(" disabled"));
+    let (_, _, list) = send(&hub, get(&hub, "/skills", true)).await;
+    assert!(list.contains("Switches are off until atlas/placements.toml is fixed"));
 }

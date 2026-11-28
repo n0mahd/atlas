@@ -853,3 +853,45 @@ async fn the_list_groups_marks_conflicts_and_filters_what_needs_attention() {
     assert!(searched.body.contains("keep"));
     assert!(!searched.body.contains("value=\"private/pdf\""));
 }
+
+#[tokio::test]
+async fn bulk_and_new_skill_refusals_answer_the_page_script_in_json() {
+    // A non-JSON answer makes passkey.js post the form again as a plain one.
+    let hub = hub();
+    let before = commits(&hub.knowledge);
+    let is_json = |g: &Got| g.body.starts_with(r#"{"error":""#);
+    let none = post_with(&hub, "/skills/bulk", &[("action", "on")], &hub.csrf, true).await;
+    assert_eq!(none.status, StatusCode::BAD_REQUEST);
+    assert!(is_json(&none), "{}", none.body);
+    assert!(none.body.contains("Pick at least one skill first."));
+    let stale = "0".repeat(64);
+    let forbidden = post_with(
+        &hub,
+        "/skills/bulk",
+        &[("action", "on"), ("s", "private/a")],
+        &stale,
+        true,
+    )
+    .await;
+    assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+    assert!(is_json(&forbidden), "{}", forbidden.body);
+    let new = post_with(
+        &hub,
+        "/skills/new",
+        &[
+            ("name", "fresh"),
+            ("description", "New"),
+            ("where", "global"),
+        ],
+        &stale,
+        true,
+    )
+    .await;
+    assert_eq!(new.status, StatusCode::FORBIDDEN);
+    assert!(is_json(&new), "{}", new.body);
+    // A plain form post still gets text.
+    let plain = post(&hub, "/skills/bulk", &[("action", "on")]).await;
+    assert_eq!(plain.status, StatusCode::BAD_REQUEST);
+    assert!(!plain.body.starts_with('{'));
+    assert_eq!(commits(&hub.knowledge), before);
+}

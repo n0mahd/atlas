@@ -15,14 +15,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use atlas_core::catalog::edit::RepoKind;
+use atlas_core::catalog::{PLACEMENTS_FILE, Placements};
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Serialize;
 
-use crate::AppState;
 use crate::auth::safe_next;
 use crate::edit::{forbidden, wants_json};
+use crate::{AppError, AppState};
 
 /// One repo's part of a change.
 #[derive(Clone, Debug)]
@@ -93,6 +94,39 @@ impl ChangeError {
     }
 }
 
+/// Checks the hub can write and the request carries a live session and its CSRF token
+/// from this origin. Every handler that changes something calls it first, before reading
+/// the store or checking the form, so a signed-out or cross-origin post does no work.
+pub(crate) fn authorise(s: &AppState, headers: &HeaderMap, csrf: &str) -> Result<(), ChangeError> {
+    match &s.writer {
+        None => Err(ChangeError::ReadOnly),
+        Some(w) if w.authorised(headers, csrf) => Ok(()),
+        Some(_) => Err(ChangeError::Forbidden),
+    }
+}
+
+/// The answer to a change's form that can't go ahead before the change starts (a field
+/// is missing or names something Atlas doesn't know). The page script gets JSON `{error}`,
+/// which it shows in place instead of posting the form again; a plain post gets the usual
+/// error page.
+pub(crate) fn form_error(headers: &HeaderMap, e: AppError) -> Response {
+    if !wants_json(headers) {
+        return e.into_response();
+    }
+    let (status, msg) = match &e {
+        AppError::Bad(m) => (StatusCode::BAD_REQUEST, m.as_str()),
+        AppError::NotFound => (
+            StatusCode::NOT_FOUND,
+            "That isn't in Atlas any more. Nothing changed.",
+        ),
+        AppError::Internal => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong. Nothing changed.",
+        ),
+    };
+    (status, Json(ErrorJson { error: msg })).into_response()
+}
+
 fn shown(root: &Path) -> String {
     root.file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
@@ -106,10 +140,8 @@ pub(crate) async fn commit_change(
     repos: Vec<RepoChange>,
     apply: Apply,
 ) -> Result<Outcome, ChangeError> {
+    authorise(s, headers, csrf)?;
     let w = Arc::clone(s.writer.as_ref().ok_or(ChangeError::ReadOnly)?);
-    if !w.authorised(headers, csrf) {
-        return Err(ChangeError::Forbidden);
-    }
     let push = w.settings().push_after_save;
     let writer = Arc::clone(&w);
     let outcome = tokio::task::spawn_blocking(move || run(&writer.git, push, &repos, apply))
@@ -122,6 +154,44 @@ pub(crate) async fn commit_change(
     // Whatever happened, the next page should read the store as it now is.
     s.invalidate().await;
     outcome
+}
+
+/// Changes `atlas/placements.toml` alone, as one commit in the knowledge repo: the file
+/// is read and written inside the change, under the git lock (see [`rewrite_placements`]).
+pub(crate) async fn edit_placements(
+    s: &AppState,
+    headers: &HeaderMap,
+    csrf: &str,
+    message: String,
+    edit: impl FnOnce(&mut Placements) -> Result<(), String> + Send + 'static,
+) -> Result<Outcome, ChangeError> {
+    let root = s.sources.knowledge.clone();
+    let repos = vec![RepoChange {
+        kind: RepoKind::Knowledge,
+        root: root.clone(),
+        paths: vec![PathBuf::from(PLACEMENTS_FILE)],
+        message,
+    }];
+    let apply: Apply = Box::new(move || rewrite_placements(&root, edit));
+    commit_change(s, headers, csrf, repos, apply).await
+}
+
+/// The one way a change writes the placements file, for use inside an [`Apply`]: reads
+/// it fresh, changes it with `edit`, and writes it back only when it differs, so a change
+/// that changes nothing commits nothing (not even a new empty file). A file changed since
+/// it was read, or one that doesn't parse, refuses the change.
+pub(crate) fn rewrite_placements(
+    knowledge: &Path,
+    edit: impl FnOnce(&mut Placements) -> Result<(), String>,
+) -> Result<(), String> {
+    let fail = |e: atlas_fs::library::LibraryError| format!("{e}.");
+    let (mut placements, hash) = atlas_fs::library::read_placements(knowledge).map_err(fail)?;
+    let before = placements.clone();
+    edit(&mut placements)?;
+    if placements != before {
+        atlas_fs::library::write_placements(knowledge, &placements, &hash).map_err(fail)?;
+    }
+    Ok(())
 }
 
 /// Opens each repo and checks the rules before anything is written: each repo once, the
