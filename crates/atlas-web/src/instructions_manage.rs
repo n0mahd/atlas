@@ -938,13 +938,10 @@ fn apply_writes(writes: &[Write], knowledge: &Path) -> Result<(), String> {
 }
 
 fn set_claude(knowledge: &Path, choice: ClaudeAgentsMd) -> Result<(), String> {
-    let (mut p, base) = atlas_fs::library::read_placements(knowledge).map_err(|e| e.to_string())?;
-    if p.instructions.claude_reads_agents_md == Some(choice) {
-        return Ok(());
-    }
-    p.instructions.claude_reads_agents_md = Some(choice);
-    atlas_fs::library::write_placements(knowledge, &p, &base).map_err(|e| e.to_string())?;
-    Ok(())
+    change::rewrite_placements(knowledge, |p| {
+        p.instructions.claude_reads_agents_md = Some(choice);
+        Ok(())
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1151,15 +1148,12 @@ pub(crate) async fn claude_option(
     let Some(choice) = ClaudeAgentsMd::from_id(&form.value) else {
         return AppError::Bad("Unknown choice.".to_owned()).into_response();
     };
-    let knowledge = s.sources.knowledge.clone();
-    let repos = vec![RepoChange {
-        kind: RepoKind::Knowledge,
-        root: knowledge.clone(),
-        paths: vec![PathBuf::from(PLACEMENTS_FILE)],
-        message: format!("Claude Code reads AGENTS.md: {}", choice.id()),
-    }];
-    let apply: change::Apply = Box::new(move || set_claude(&knowledge, choice));
-    match change::commit_change(&s, &headers, &form.csrf, repos, apply).await {
+    let message = format!("Claude Code reads AGENTS.md: {}", choice.id());
+    let edit = move |p: &mut atlas_core::catalog::Placements| {
+        p.instructions.claude_reads_agents_md = Some(choice);
+        Ok(())
+    };
+    match change::edit_placements(&s, &headers, &form.csrf, message, edit).await {
         Ok(outcome) => change::respond(&s, &headers, &outcome, "/instructions"),
         Err(e) => e.into_response(&headers),
     }
