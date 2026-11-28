@@ -2,7 +2,7 @@
 {% block content %}
 <form class="new-skill" method="post" action="/skills/new" data-send-on-save>
   <input type="hidden" name="csrf" value="{{ page.csrf }}">
-  {% if !error.is_empty() %}<p class="marginalia warn-note" role="alert">{{ error }}</p>{% endif %}
+  <p class="marginalia warn-note" data-error role="alert"{% if error.is_empty() %} hidden{% endif %}>{{ error }}</p>
   <label class="field" for="new-name">Name
     <input id="new-name" class="search" name="name" value="{{ name }}" required maxlength="64" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="pdf-tools" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="new-name-hint">
   </label>

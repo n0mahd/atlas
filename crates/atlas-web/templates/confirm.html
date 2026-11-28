@@ -19,6 +19,7 @@
     <input type="hidden" name="confirmed" value="1">
     <button class="button-ink{% if danger %} danger{% endif %}" type="submit">{{ button }}</button>
     <a class="link-cap" href="{{ back }}">Cancel</a>
+    <p class="marginalia warn-note" data-error hidden role="alert"></p>
   </form>
   <p class="editor-note">Each change is one git commit, so git can undo it.</p>
   {% endif %}

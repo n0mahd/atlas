@@ -118,22 +118,56 @@
     location.assign(done.next);
   }
 
-  // Save sends: post the form, then send, with one passkey tap. Any failure of the save
-  // itself falls back to a normal submit, which shows the error page.
+  // Shows why a change was refused inside its form and lets the owner try again.
+  function refused(form, button, message) {
+    var note = form.querySelector("[data-error]");
+    if (!note) {
+      note = document.createElement("p");
+      note.className = "marginalia warn-note";
+      note.setAttribute("role", "alert");
+      note.setAttribute("data-error", "");
+      form.insertBefore(note, form.firstChild);
+    }
+    note.hidden = false;
+    note.textContent = message || "That didn't work; nothing changed.";
+    if (button) button.disabled = false;
+  }
+
+  // Save sends: post the form, then send, with one passkey tap. A change refused with a
+  // reason shows it in place; any other failure of the save falls back to a normal
+  // submit, which shows the error page.
   document.addEventListener("submit", function (event) {
     var form = event.target;
     if (!form.matches("form[data-send-on-save]") || form.dataset.plain || !window.PublicKeyCredential || !window.fetch) return;
     event.preventDefault();
     var button = form.querySelector('[type="submit"]');
     if (button) button.disabled = true;
-    var plain = function () { form.dataset.plain = "1"; form.submit(); };
+    // A form with several actions (the Skills bulk bar) names them on its buttons; carry
+    // the pressed one, which FormData and form.submit() would otherwise leave out.
+    var submitter = event.submitter;
+    var plain = function () {
+      form.dataset.plain = "1";
+      if (submitter && submitter.name) {
+        var carry = document.createElement("input");
+        carry.type = "hidden";
+        carry.name = submitter.name;
+        carry.value = submitter.value;
+        form.appendChild(carry);
+      }
+      form.submit();
+    };
+    var data = new FormData(form);
+    if (submitter && submitter.name) data.append(submitter.name, submitter.value);
     fetch(form.action, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Accept": "application/json" },
-      body: new URLSearchParams(new FormData(form))
+      body: new URLSearchParams(data)
     }).then(function (res) {
-      if (!res.ok || !(res.headers.get("content-type") || "").includes("application/json")) return plain();
+      var json = (res.headers.get("content-type") || "").includes("application/json");
+      // A refused change answers {error}: show it here; posting again would retry it.
+      if (!res.ok && json) return res.json().then(function (failed) { refused(form, button, failed.error); });
+      if (!res.ok || !json) return plain();
       return res.json().then(function (saved) {
         if (!saved.send) return location.assign(saved.next);
         return send(withParam(saved.next, "sent"))

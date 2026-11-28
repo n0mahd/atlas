@@ -10,7 +10,6 @@ use atlas_core::catalog::{Catalog, SkillHome};
 use atlas_core::distribution::HarnessView;
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
-use sha2::{Digest as _, Sha256};
 
 use crate::Sources;
 use crate::library::{self, LibraryError};
@@ -48,9 +47,9 @@ fn refuse_links(dir: &Dir, rel: &Path) -> Result<(), LibraryError> {
 }
 
 /// Moves folder `from_rel` of `from_root` to `to_rel` of `to_root` (which must not exist):
-/// copies it whole into place, keeps executable bits, then removes the original, so a
-/// failure part way leaves an extra copy, never none. A folder holding links is refused,
-/// because a copy can't carry a link safely.
+/// copies it whole into place (execute bits kept), then removes the original, so a
+/// failure part way leaves an extra copy, never none. A folder holding anything a copy
+/// can't carry (a link, a `.git`, a socket) is refused, so nothing is lost.
 ///
 /// # Errors
 /// The source is missing, is or holds a link, the destination exists, or a write fails.
@@ -64,36 +63,13 @@ pub fn move_folder(
     let from_dir = Dir::open_ambient_dir(from_root, ambient_authority())?;
     refuse_links(&from_dir, from_p)?;
     let tree = library::read_tree(&from_root.join(from_p))?;
-    if let Some(link) = tree.skipped.first() {
-        return Err(LibraryError::Symlink(format!(
-            "{from_rel}/{}",
-            link.display()
+    if let Some(odd) = tree.skipped.first() {
+        return Err(LibraryError::Io(format!(
+            "{from_rel}/{} can't be copied (a link, a .git folder or a special file), so move this skill by hand",
+            odd.display()
         )));
     }
-    let src = from_dir.open_dir(from_p)?;
-    let mut executable = Vec::new();
-    for f in &tree.files {
-        let mode = cap_std::fs::PermissionsExt::mode(&src.metadata(&f.rel)?.permissions());
-        if mode & 0o111 != 0 {
-            executable.push((f.rel.clone(), mode & 0o777));
-        }
-    }
     library::write_tree(to_root, to_rel, &tree)?;
-    let placed = (|| -> Result<(), LibraryError> {
-        let to_dir = Dir::open_ambient_dir(to_root, ambient_authority())?;
-        let dst = to_dir.open_dir(to_rel)?;
-        for (rel, mode) in &executable {
-            dst.set_permissions(
-                rel,
-                <cap_std::fs::Permissions as cap_std::fs::PermissionsExt>::from_mode(*mode),
-            )?;
-        }
-        Ok(())
-    })();
-    if let Err(e) = placed {
-        let _ = library::remove_tree(to_root, to_rel);
-        return Err(e);
-    }
     library::remove_tree(from_root, from_rel)
 }
 
@@ -143,39 +119,20 @@ pub fn read_file(
 pub struct Copy {
     /// Where it is, as shown (`~/...`).
     pub shown: String,
-    /// SHA-256 of its `SKILL.md`; None when that can't be read.
+    /// The folder's exact fingerprint ([`library::Tree::exact_digest`]); None when it
+    /// can't be read or holds links or other things a copy can't carry.
     pub digest: Option<String>,
     /// It is a skill in the store (not a harness's own folder).
     pub in_store: bool,
 }
 
-const MAX_SKILL_MD: u64 = 1024 * 1024;
-
-fn digest_of(path: &Path) -> Option<String> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_SKILL_MD {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(MAX_SKILL_MD)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    Some(
-        Sha256::digest(&bytes)
-            .iter()
-            .fold(String::new(), |mut s, b| {
-                use std::fmt::Write as _;
-                let _ = write!(s, "{b:02x}");
-                s
-            }),
-    )
+fn digest_of(folder: &Path) -> Option<String> {
+    library::read_tree(folder).ok()?.exact_digest()
 }
 
 /// Every name that more than one place holds a real copy of (store homes, and harness
-/// folders' own folders or outside links), with a fingerprint of each copy's `SKILL.md`.
-/// Reads only the `SKILL.md` of names that occur twice or more, so it stays cheap.
+/// folders' own folders or outside links), with a fingerprint of each copy's folder.
+/// Reads only the folders of names that occur twice or more, so it stays cheap.
 #[must_use]
 pub fn same_named(
     sources: &Sources,
@@ -210,7 +167,7 @@ pub fn same_named(
                 let list = places.entry(name.clone()).or_default();
                 // Two harnesses reading one folder hold one copy.
                 if !list.iter().any(|(s, ..)| *s == shown) {
-                    list.push((shown, folder.join("SKILL.md"), false));
+                    list.push((shown, folder, false));
                 }
             }
         }
@@ -221,9 +178,9 @@ pub fn same_named(
         .map(|(name, v)| {
             let copies = v
                 .into_iter()
-                .map(|(shown, md, in_store)| Copy {
+                .map(|(shown, folder, in_store)| Copy {
                     shown,
-                    digest: digest_of(&md),
+                    digest: digest_of(&folder),
                     in_store,
                 })
                 .collect();
@@ -252,6 +209,10 @@ mod tests {
         )
         .unwrap();
         move_folder(a.path(), "skills/x", b.path(), ".agents/skills/x").unwrap();
+        assert_eq!(
+            fs::read(b.path().join(".agents/skills/x/SKILL.md")).unwrap(),
+            b"x"
+        );
         assert!(!a.path().join("skills/x").exists());
         let mode = fs::metadata(b.path().join(".agents/skills/x/scripts/run.sh"))
             .unwrap()
@@ -261,10 +222,7 @@ mod tests {
 
         fs::create_dir_all(a.path().join("skills/y")).unwrap();
         std::os::unix::fs::symlink("/etc/passwd", a.path().join("skills/y/leak")).unwrap();
-        assert!(matches!(
-            move_folder(a.path(), "skills/y", b.path(), "y"),
-            Err(LibraryError::Symlink(_))
-        ));
+        assert!(move_folder(a.path(), "skills/y", b.path(), "y").is_err());
         assert!(a.path().join("skills/y").exists() && !b.path().join("y").exists());
     }
 

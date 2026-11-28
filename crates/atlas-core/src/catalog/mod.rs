@@ -10,7 +10,7 @@ mod skill;
 pub use frontmatter::{Frontmatter, FrontmatterError, split_frontmatter};
 pub use hook::{HookDef, HookEvent, HookManifest};
 pub use memory::{MemoryFrontmatter, MemoryKind, MemoryMetadata, MemoryPage};
-pub use placement::{Keep, PLACEMENTS_FILE, Placement, Placements};
+pub use placement::{Keep, KeepKind, PLACEMENTS_FILE, Placement, Placements};
 pub use skill::{Skill, SkillFrontmatter, SkillHome};
 
 use crate::kernel::Scope;
@@ -41,6 +41,9 @@ pub struct Catalog {
     pub instructions: Vec<InstructionFile>,
     pub memory: Vec<MemoryPage>,
     pub hooks: Vec<HookDef>,
+    /// `atlas/placements.toml` as read (defaults when it is missing or invalid; an
+    /// invalid file is also a problem, and nothing writes placements until it is fixed).
+    pub placements: Placements,
     pub problems: Vec<Problem>,
 }
 

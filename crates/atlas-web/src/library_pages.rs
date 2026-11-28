@@ -235,7 +235,7 @@ pub(crate) async fn bulk(State(s): State<AppState>, headers: HeaderMap, body: St
         Err(ChangeError::Refused(msg)) if !wants_json(&headers) => {
             refused_page(&s, &headers, &msg, &back).await
         }
-        Err(e) => e.into_response(),
+        Err(e) => e.into_response(&headers),
     }
 }
 
@@ -245,7 +245,6 @@ pub(crate) async fn bulk(State(s): State<AppState>, headers: HeaderMap, body: St
 #[template(path = "confirm.html")]
 struct ConfirmPage {
     page: Page,
-    question: String,
     lines: Vec<String>,
     notes: Vec<String>,
     error: String,
@@ -272,7 +271,6 @@ async fn refused_page(s: &AppState, headers: &HeaderMap, msg: &str, back: &str) 
     );
     let html = ConfirmPage {
         page,
-        question: String::new(),
         lines: Vec::new(),
         notes: Vec::new(),
         error: msg.to_owned(),
@@ -378,7 +376,6 @@ pub(crate) async fn confirm(
     Ok(Html(
         ConfirmPage {
             page,
-            question,
             lines,
             notes,
             error,
@@ -519,7 +516,14 @@ pub(crate) async fn new_save(
         Some(SkillHome::Project(p)) => Some(p.to_string()),
         _ => None,
     };
-    let fail = |msg: String| new_page(&s, &headers, &snap, &f, project.clone(), msg);
+    let json = wants_json(&headers);
+    let fail = |msg: String| async {
+        if json {
+            Ok(ChangeError::Refused(msg).into_response(&headers))
+        } else {
+            new_page(&s, &headers, &snap, &f, project.clone(), msg).await
+        }
+    };
     let Some(home) = home else {
         return fail("Pick Global or a registered project.".to_owned()).await;
     };
@@ -537,7 +541,7 @@ pub(crate) async fn new_save(
     match skill_ops::create_skill(&s, &headers, &f.csrf, home, name, f.description.clone()).await {
         Ok(outcome) => Ok(respond(&s, &headers, &outcome, &next)),
         Err(ChangeError::Refused(msg)) => fail(msg).await,
-        Err(e) => Ok(e.into_response()),
+        Err(e) => Ok(e.into_response(&headers)),
     }
 }
 
@@ -636,7 +640,6 @@ struct FilePage {
     page: Page,
     skill_href: String,
     skill: String,
-    rel: String,
     shown: String,
     html: String,
     text: String,
@@ -713,7 +716,6 @@ pub(crate) async fn file_view(
             skill_href: format!("/skills/{}/{}", pct(&home), pct(&name)),
             skill: name.clone(),
             script: is_script(&file),
-            rel: file,
             shown,
             html,
             text,

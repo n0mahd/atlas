@@ -6,6 +6,14 @@
 //! in…" moves a skill between Global and a project) and the list page (bulk move and
 //! delete). The library worker implements them; callers may rely on them as written.
 //!
+//! Public skills follow decision 0016: changes to the public repo are committed and never
+//! pushed by Atlas (the owner pushes after a privacy check); the confirmation says so.
+//!
+//! Private and public skills share one placements namespace (`[global.<name>]`), because
+//! atlasd links skills by name. Deleting or moving one global skill drops its placement
+//! entry only when no other global home still has a skill of that name. The placements
+//! file is read and written only inside the change's apply step.
+//!
 //! The `skills` CLI's record of where a skill came from (`atlas_fs::lock`) goes with it
 //! when both locks involved sit in repos Atlas commits. A lock outside git (the global
 //! one usually is, in `~/.agents`) is never written; [`preview_move`] and
@@ -15,9 +23,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use atlas_core::catalog::edit::RepoKind;
-use atlas_core::catalog::{PLACEMENTS_FILE, Placements, SkillHome};
+use atlas_core::catalog::{PLACEMENTS_FILE, Placement, Placements, SkillHome};
 use atlas_core::kernel::Slug;
-use atlas_fs::library::{self, Tree, TreeFile};
+use atlas_fs::library::{self, LibraryError, Tree, TreeFile};
 use atlas_fs::lock::{self, Lock, LockKind, ReadLock};
 use axum::http::HeaderMap;
 
@@ -65,50 +73,22 @@ pub(crate) async fn create_skill(
                 files: vec![TreeFile {
                     rel: PathBuf::from("SKILL.md"),
                     bytes: skill_text(name.as_str(), &description).into_bytes(),
+                    executable: false,
                 }],
                 skipped: Vec::new(),
             },
         });
         // A leftover entry for the same name would switch the new skill off somewhere.
-        let mut placements = PlacementEdit::read(&st)?;
-        placements.now.remove(&home, &name);
-        placements.finish(&st, &mut plan);
+        plan.placement(&st, PlacementOp::Forget { home, name });
+        plan.close(&st);
         Ok(plan)
     })
     .await?;
     plan.commit(s, headers, csrf).await
 }
 
-/// Deletes a skill's folder and its placement entry. atlasd removes the links on each
-/// machine with the next update. Public skills are refused (they're deleted by hand
-/// after a privacy check, like every public change).
-pub(crate) async fn delete_skill(
-    s: &AppState,
-    headers: &HeaderMap,
-    csrf: &str,
-    home: SkillHome,
-    name: Slug,
-) -> Result<Outcome, ChangeError> {
-    delete_skills(s, headers, csrf, vec![(home, name)]).await
-}
-
-/// Moves a skill's folder to another home (Global ↔ a project, private ↔ project),
-/// carrying its placement (per-agent `off` stays; `only-projects` is dropped when it
-/// becomes a project skill) and the `skills` CLI's lock record when there is one. Never
-/// merges or overwrites: a name already taken at the destination is refused. Commits the
-/// destination repo first, then the source.
-pub(crate) async fn move_skill(
-    s: &AppState,
-    headers: &HeaderMap,
-    csrf: &str,
-    from: SkillHome,
-    name: Slug,
-    to: SkillHome,
-) -> Result<Outcome, ChangeError> {
-    move_skills(s, headers, csrf, vec![(from, name)], to).await
-}
-
-/// Deletes several skills as one change: one commit per repo involved.
+/// Deletes skills' folders and their placement entries, as one change (one commit per
+/// repo it touches). atlasd removes the links on each machine with the next update.
 pub(crate) async fn delete_skills(
     s: &AppState,
     headers: &HeaderMap,
@@ -121,7 +101,11 @@ pub(crate) async fn delete_skills(
     plan.commit(s, headers, csrf).await
 }
 
-/// Moves several skills to `to` as one change: one commit per repo, destination first.
+/// Moves skills' folders to another home (Global ↔ a project, private ↔ public),
+/// carrying each placement (per-agent `off` stays; `only-projects` is dropped when it
+/// becomes a project skill) and the `skills` CLI's lock record when there is one. Never
+/// merges or overwrites: a name already taken at the destination refuses the whole
+/// change. Commits the destination repo first, then the source repos.
 pub(crate) async fn move_skills(
     s: &AppState,
     headers: &HeaderMap,
@@ -152,7 +136,7 @@ pub(crate) async fn preview_delete(
     match blocking(move || plan_delete(&st, &skills)).await {
         Ok(plan) => Ok(plan.preview()),
         Err(ChangeError::Refused(m)) => Err(m),
-        Err(ChangeError::Forbidden) => Err("Sign in again.".to_owned()),
+        Err(_) => Err("Sign in again.".to_owned()),
     }
 }
 
@@ -166,7 +150,7 @@ pub(crate) async fn preview_move(
     match blocking(move || plan_move(&st, &skills, &to)).await {
         Ok(plan) => Ok(plan.preview()),
         Err(ChangeError::Refused(m)) => Err(m),
-        Err(ChangeError::Forbidden) => Err("Sign in again.".to_owned()),
+        Err(_) => Err("Sign in again.".to_owned()),
     }
 }
 
@@ -178,8 +162,9 @@ fn refused(msg: &str) -> ChangeError {
 
 fn authorise(s: &AppState, headers: &HeaderMap, csrf: &str) -> Result<(), ChangeError> {
     match &s.writer {
+        None => Err(ChangeError::ReadOnly),
         Some(w) if w.authorised(headers, csrf) => Ok(()),
-        _ => Err(ChangeError::Forbidden),
+        Some(_) => Err(ChangeError::Forbidden),
     }
 }
 
@@ -312,7 +297,7 @@ fn home_words(home: &SkillHome) -> String {
     }
 }
 
-const PUBLIC_REFUSED: &str = "Public skills are changed by hand after a privacy check, like every public change; Atlas doesn't delete or move them.";
+const PUBLIC_NOTE: &str = "The public skills repo is committed but never pushed by Atlas: check it for private details, then push it by hand.";
 
 enum Write {
     NewTree {
@@ -337,9 +322,71 @@ enum Write {
     },
     Placements {
         knowledge: PathBuf,
-        placements: Placements,
-        expected: String,
+        ops: Vec<PlacementOp>,
     },
+}
+
+/// One skill's entry in the placements file, applied inside the change.
+#[derive(Clone, Debug)]
+enum PlacementOp {
+    /// The skill is new: drop any leftover entry for its name.
+    Forget { home: SkillHome, name: Slug },
+    /// The skill is gone: drop its entry, unless another global home still has a skill
+    /// of that name (`keep`).
+    ForgetUnlessShared {
+        home: SkillHome,
+        name: Slug,
+        keep: bool,
+    },
+    /// The skill moved: its entry goes with it (and stays too when `keep`).
+    Carry {
+        from: SkillHome,
+        to: SkillHome,
+        name: Slug,
+        keep: bool,
+    },
+}
+
+impl PlacementOp {
+    fn apply(&self, p: &mut Placements) {
+        match self {
+            Self::Forget { home, name } => p.remove(home, name),
+            Self::ForgetUnlessShared { home, name, keep } => {
+                if !keep {
+                    p.remove(home, name);
+                }
+            }
+            Self::Carry {
+                from,
+                to,
+                name,
+                keep,
+            } => {
+                // Private and public share one entry per name: nothing to carry.
+                let global = |h: &SkillHome| !matches!(h, SkillHome::Project(_));
+                if global(from) && global(to) {
+                    return;
+                }
+                let carried = p.of(from, name).clone();
+                if !keep {
+                    p.remove(from, name);
+                }
+                p.set(to, name, carried);
+            }
+        }
+    }
+}
+
+fn apply_placements(knowledge: &Path, ops: &[PlacementOp]) -> Result<(), LibraryError> {
+    let (before, expected) = library::read_placements(knowledge)?;
+    let mut now = before.clone();
+    for op in ops {
+        op.apply(&mut now);
+    }
+    if now != before {
+        library::write_placements(knowledge, &now, &expected)?;
+    }
+    Ok(())
 }
 
 impl Write {
@@ -354,11 +401,7 @@ impl Write {
             } => atlas_fs::skill_folder::move_folder(&from_root, &from_rel, &to_root, &to_rel),
             Self::Remove { root, rel } => library::remove_tree(&root, &rel),
             Self::File { root, rel, bytes } => library::write_file(&root, &rel, &bytes),
-            Self::Placements {
-                knowledge,
-                placements,
-                expected,
-            } => library::write_placements(&knowledge, &placements, &expected).map(|_| ()),
+            Self::Placements { knowledge, ops } => apply_placements(&knowledge, &ops),
         };
         r.map_err(|e| {
             let mut t = e.to_string();
@@ -373,6 +416,7 @@ impl Write {
 struct Plan {
     repos: Vec<RepoChange>,
     writes: Vec<Write>,
+    placements_at: Option<usize>,
     message: String,
     lines: Vec<String>,
     notes: Vec<String>,
@@ -383,6 +427,7 @@ impl Plan {
         Self {
             repos: Vec::new(),
             writes: Vec::new(),
+            placements_at: None,
             message,
             lines: Vec::new(),
             notes: Vec::new(),
@@ -404,6 +449,35 @@ impl Plan {
                 paths: vec![rel],
                 message: self.message.clone(),
             });
+        }
+    }
+
+    /// Records a placements change. The file is read and written inside the change, so
+    /// it is always one of the knowledge repo's paths (committed only if it changed).
+    fn placement(&mut self, s: &AppState, op: PlacementOp) {
+        let knowledge = s.sources.knowledge.clone();
+        if let Some(Write::Placements { ops, .. }) = self
+            .writes
+            .iter_mut()
+            .find(|w| matches!(w, Write::Placements { .. }))
+        {
+            ops.push(op);
+            return;
+        }
+        self.placements_at = Some(self.writes.len());
+        self.writes.push(Write::Placements {
+            knowledge,
+            ops: vec![op],
+        });
+    }
+
+    /// Touches the placements file last, after the repos that gain and lose folders.
+    fn close(&mut self, s: &AppState) {
+        if self.placements_at.is_some() {
+            self.touch(&RepoKind::Knowledge, &s.sources.knowledge, PLACEMENTS_FILE);
+        }
+        if self.repos.iter().any(|r| r.kind == RepoKind::PublicSkills) {
+            self.notes.push(PUBLIC_NOTE.to_owned());
         }
     }
 
@@ -440,36 +514,6 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(f)
         .await
         .map_err(|_| refused("Atlas stopped unexpectedly; nothing changed."))?
-}
-
-/// The placements file as read, and as the change leaves it.
-struct PlacementEdit {
-    before: Placements,
-    now: Placements,
-    expected: String,
-}
-
-impl PlacementEdit {
-    fn read(s: &AppState) -> Result<Self, ChangeError> {
-        let (before, expected) = library::read_placements(&s.sources.knowledge)
-            .map_err(|e| ChangeError::Refused(format!("{e}. Nothing changed.")))?;
-        Ok(Self {
-            now: before.clone(),
-            before,
-            expected,
-        })
-    }
-
-    fn finish(self, s: &AppState, plan: &mut Plan) {
-        if self.now != self.before {
-            plan.touch(&RepoKind::Knowledge, &s.sources.knowledge, PLACEMENTS_FILE);
-            plan.writes.push(Write::Placements {
-                knowledge: s.sources.knowledge.clone(),
-                placements: self.now,
-                expected: self.expected,
-            });
-        }
-    }
 }
 
 /// Where a home's `skills` CLI lock is, and whether Atlas commits it.
@@ -570,18 +614,28 @@ fn source_words(entry: &serde_json::Value) -> String {
     lock::source_of(entry).map_or_else(String::new, |s| format!(" (from {s})"))
 }
 
+/// Whether the other global home (private for public, public for private) has a skill
+/// named `name` that this change leaves in place, so their shared entry stays.
+fn shared_global(s: &AppState, home: &SkillHome, name: &Slug, batch: &[(SkillHome, Slug)]) -> bool {
+    let other = match home {
+        SkillHome::Private => SkillHome::Public,
+        SkillHome::Public => SkillHome::Private,
+        SkillHome::Project(_) => return false,
+    };
+    let leaves = !batch.iter().any(|(h, n)| *h == other && n == name);
+    leaves && home_at(s, &other).is_ok_and(|o| o.occupied(name.as_str()))
+}
+
 fn plan_delete(s: &AppState, skills: &[(SkillHome, Slug)]) -> Result<Plan, ChangeError> {
     if skills.is_empty() {
         return Err(refused("Pick at least one skill."));
     }
     let names: Vec<&str> = skills.iter().map(|(_, n)| n.as_str()).collect();
     let mut plan = Plan::new(format!("Delete {} in Atlas", list_names(&names)));
-    let mut placements = PlacementEdit::read(s)?;
+    let (placed, _) = library::read_placements(&s.sources.knowledge).unwrap_or_default();
     let mut locks = Locks::default();
+    let mut entries = false;
     for (home, name) in skills {
-        if matches!(home, SkillHome::Public) {
-            return Err(refused(PUBLIC_REFUSED));
-        }
         let at = home_at(s, home)?;
         if !at.has(name.as_str()) {
             return Err(ChangeError::Refused(format!(
@@ -596,7 +650,19 @@ fn plan_delete(s: &AppState, skills: &[(SkillHome, Slug)]) -> Result<Plan, Chang
             rel,
         });
         plan.lines.push(format!("{}/{name}", at.shown));
-        placements.now.remove(home, name);
+        let keep = shared_global(s, home, name, skills);
+        entries |= !keep && *placed.of(home, name) != Placement::default();
+        plan.placement(
+            s,
+            PlacementOp::ForgetUnlessShared {
+                home: home.clone(),
+                name: name.clone(),
+                keep,
+            },
+        );
+        if keep {
+            continue;
+        }
         if let Some(lat) = lock_at(s, home) {
             let (lat, read, changed) = locks.get(&lat);
             if let ReadLock::Found(l) = read
@@ -614,19 +680,23 @@ fn plan_delete(s: &AppState, skills: &[(SkillHome, Slug)]) -> Result<Plan, Chang
                     plan.notes.push(format!(
                         "The skills CLI still lists {name}{from} in {}, which {}; Atlas leaves it as it is.",
                         lat.shown,
-                        if lat.repo.is_some() { "has a version Atlas doesn't write" } else { "isn't in a repo Atlas commits" }
+                        if lat.repo.is_some() {
+                            "has a version Atlas doesn't write"
+                        } else {
+                            "isn't in a repo Atlas commits"
+                        }
                     ));
                 }
             }
         }
     }
-    if placements.now != placements.before {
+    if entries {
         plan.lines
-            .push(format!("Their entries in {PLACEMENTS_FILE}"));
+            .push(format!("Their switches in {PLACEMENTS_FILE}"));
     }
     // Folders first, then lock records, then placements: the order writes happen in.
     locks.finish(&mut plan);
-    placements.finish(s, &mut plan);
+    plan.close(s);
     Ok(plan)
 }
 
@@ -637,11 +707,6 @@ fn plan_move(
 ) -> Result<Plan, ChangeError> {
     if skills.is_empty() {
         return Err(refused("Pick at least one skill."));
-    }
-    if matches!(to, SkillHome::Public) {
-        return Err(refused(
-            "Making a skill public is done by hand after a privacy check; Atlas doesn't move skills into the public repo.",
-        ));
     }
     let dest = home_at(s, to)?;
     let names: Vec<&str> = skills.iter().map(|(_, n)| n.as_str()).collect();
@@ -655,14 +720,12 @@ fn plan_move(
     for (_, name) in skills {
         plan.touch(&dest.kind, &dest.root, &dest.rel(name.as_str()));
     }
-    let mut placements = PlacementEdit::read(s)?;
+    let (placed, _) = library::read_placements(&s.sources.knowledge).unwrap_or_default();
+    let mut entries = false;
     let mut locks = Locks::default();
     let to_lock = lock_at(s, to);
     let now = iso_now();
     for (from, name) in skills {
-        if matches!(from, SkillHome::Public) {
-            return Err(refused(PUBLIC_REFUSED));
-        }
         if from == to {
             return Err(ChangeError::Refused(format!(
                 "{name} is already in {}.",
@@ -688,13 +751,13 @@ fn plan_move(
                 dest.shown
             )));
         }
-        // Private and public skills share one namespace.
-        if matches!(to, SkillHome::Private)
-            && let Ok(public) = home_at(s, &SkillHome::Public)
-            && public.occupied(name.as_str())
+        // Private and public skills share one namespace: a skill moving into one of them
+        // can't take a name the other holds (unless that is the skill itself moving).
+        if to.scope() == atlas_core::kernel::Scope::Global
+            && shared_global(s, to, name, &[(from.clone(), name.clone())])
         {
             return Err(ChangeError::Refused(format!(
-                "A public skill is already named {name}. Rename one first."
+                "Another global skill is already named {name}. Rename one first."
             )));
         }
         let from_rel = src.rel(name.as_str());
@@ -707,19 +770,29 @@ fn plan_move(
         plan.touch(&src.kind, &src.root, &from_rel);
         plan.lines
             .push(format!("{}/{name} → {}/{name}", src.shown, dest.shown));
-        let carried = placements.now.of(from, name).clone();
-        placements.now.remove(from, name);
-        placements.now.set(to, name, carried);
-        if let (Some(fl), Some(tl)) = (lock_at(s, from), to_lock.as_ref()) {
+        let keep = shared_global(s, from, name, skills);
+        entries |= *placed.of(from, name) != Placement::default();
+        plan.placement(
+            s,
+            PlacementOp::Carry {
+                from: from.clone(),
+                to: to.clone(),
+                name: name.clone(),
+                keep,
+            },
+        );
+        if let (Some(fl), Some(tl)) = (lock_at(s, from), to_lock.as_ref())
+            && !keep
+        {
             carry_record(&mut plan, &mut locks, &fl, tl, &src, name, &now);
         }
     }
-    if placements.now != placements.before {
+    if entries {
         plan.lines
-            .push(format!("Their switches carried in {PLACEMENTS_FILE}"));
+            .push(format!("Their switches go with them in {PLACEMENTS_FILE}"));
     }
     locks.finish(&mut plan);
-    placements.finish(s, &mut plan);
+    plan.close(s);
     Ok(plan)
 }
 

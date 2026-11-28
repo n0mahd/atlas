@@ -33,6 +33,7 @@
     <button class="button-plain" type="submit" name="action" value="move">Move</button>
   </span>
   <button class="button-plain danger" type="submit" name="action" value="delete">Delete</button>
+  <p class="marginalia warn-note" data-error hidden role="alert"></p>
 </form>
 {% endif %}
 
@@ -48,6 +49,7 @@
         {% for r in s.all_rows() %}<input type="hidden" name="s" value="{{ r.key() }}">{% endfor %}
         <button class="mini" type="submit" name="action" value="on" aria-label="Turn every skill in {{ s.title }} on">All on</button>
         <button class="mini" type="submit" name="action" value="off" aria-label="Turn every skill in {{ s.title }} off">All off</button>
+        <span class="warn-note switches-error" data-error hidden role="alert"></span>
       </form>
       {% endif %}
     </div>
@@ -71,6 +73,7 @@
           {% for r in g.rows %}<input type="hidden" name="s" value="{{ r.key() }}">{% endfor %}
           <button class="mini" type="submit" name="action" value="on" aria-label="Turn every skill from {{ g.source }} on">All on</button>
           <button class="mini" type="submit" name="action" value="off" aria-label="Turn every skill from {{ g.source }} off">All off</button>
+          <span class="warn-note switches-error" data-error hidden role="alert"></span>
         </form>
         {% endif %}
       </div>

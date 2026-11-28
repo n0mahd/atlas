@@ -1,14 +1,14 @@
 //! Finding, reading and writing the file behind an edit. Writes stay inside the repo
 //! (cap-std), replace the file atomically and never go through a symlink.
 
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use atlas_core::catalog::SkillHome;
 use atlas_core::catalog::edit::{EditTarget, RepoKind};
 use atlas_core::kernel::Scope;
 use cap_std::ambient_authority;
-use cap_std::fs::{Dir, OpenOptions};
+use cap_std::fs::Dir;
 use sha2::{Digest, Sha256};
 
 use crate::paths::Sources;
@@ -183,25 +183,9 @@ pub fn write_if_unchanged(
 /// # Errors
 /// A link, or the write fails.
 pub fn write_raw(located: &Located, text: &str) -> Result<(), EditError> {
-    let dir = open_root(located)?;
-    if dir
-        .symlink_metadata(&located.rel)
-        .is_ok_and(|m| m.file_type().is_symlink())
-    {
-        return Err(EditError::Symlink);
-    }
-    let rel = Path::new(&located.rel);
-    let tmp = rel.with_file_name(format!(
-        ".{}.atlas-tmp",
-        rel.file_name()
-            .map_or_else(|| "file".into(), |n| n.to_string_lossy())
-    ));
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    let mut file = dir.open_with(&tmp, &options)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    dir.rename(&tmp, &dir, rel)?;
-    Ok(())
+    use crate::library::{LibraryError, write_file};
+    write_file(&located.root, &located.rel, text.as_bytes()).map_err(|e| match e {
+        LibraryError::Symlink(_) => EditError::Symlink,
+        other => EditError::Io(other.to_string()),
+    })
 }

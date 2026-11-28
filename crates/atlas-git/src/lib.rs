@@ -219,17 +219,21 @@ impl Repo {
                 });
             }
         }
-        let mut changed = false;
+        // Only paths that changed: git refuses a pathspec that matches nothing, such as a
+        // file the change could have written but didn't.
+        let mut dirty: Vec<&Path> = Vec::with_capacity(paths.len());
         for rel in paths {
-            changed |= !self.status_of(rel)?.is_empty();
+            if !self.status_of(rel)?.is_empty() {
+                dirty.push(rel);
+            }
         }
-        if !changed {
+        if dirty.is_empty() {
             return Err(GitError::NothingToCommit);
         }
         let with_paths = |head: &[&'static str]| -> Vec<&OsStr> {
             head.iter()
                 .map(|s| os(s))
-                .chain(paths.iter().map(|p| p.as_os_str()))
+                .chain(dirty.iter().map(|p| p.as_os_str()))
                 .collect()
         };
         self.git(&with_paths(&["add", "-A", "--"]), LOCAL_TIMEOUT)?;
@@ -239,11 +243,15 @@ impl Repo {
             .collect();
         commit.push(os(message));
         commit.push(os("--"));
-        commit.extend(paths.iter().map(|p| p.as_os_str()));
+        commit.extend(dirty.iter().map(|p| p.as_os_str()));
         if let Err(err) = self.git(&commit, LOCAL_TIMEOUT) {
-            if self.head_exists()? {
-                let _ = self.run(&with_paths(&["reset", "-q", "HEAD", "--"]), LOCAL_TIMEOUT);
-            }
+            // Best effort: leave the index for these paths as it was.
+            let undo: &[&'static str] = if self.head_exists()? {
+                &["reset", "-q", "HEAD", "--"]
+            } else {
+                &["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"]
+            };
+            let _ = self.run(&with_paths(undo), LOCAL_TIMEOUT);
             return Err(err);
         }
         let out = self.git(&["rev-parse", "HEAD"], LOCAL_TIMEOUT)?;
@@ -261,31 +269,56 @@ impl Repo {
             check_rel(rel)?;
         }
         let head = self.head_exists()?;
+        // Every path is attempted even when one fails; the first error is returned.
+        let mut first_err = None;
         for rel in paths {
-            if head {
-                let _ = self.run(
-                    &[os("reset"), os("-q"), os("HEAD"), os("--"), rel.as_os_str()],
-                    LOCAL_TIMEOUT,
-                );
-                let listed = self.git(
-                    &[
-                        os("ls-tree"),
-                        os("--name-only"),
-                        os("HEAD"),
-                        os("--"),
-                        rel.as_os_str(),
-                    ],
-                    LOCAL_TIMEOUT,
-                )?;
-                if !listed.stdout.is_empty() {
-                    self.git(
-                        &[os("checkout"), os("HEAD"), os("--"), rel.as_os_str()],
-                        LOCAL_TIMEOUT,
-                    )?;
-                }
+            if let Err(e) = self.restore_one(rel, head) {
+                first_err.get_or_insert(e);
             }
+        }
+        first_err.map_or(Ok(()), Err)
+    }
+
+    fn restore_one(&self, rel: &Path, head: bool) -> Result<(), GitError> {
+        let undo_index = if head {
+            [os("reset"), os("-q"), os("HEAD"), os("--")].to_vec()
+        } else {
+            [
+                os("rm"),
+                os("-r"),
+                os("-q"),
+                os("--cached"),
+                os("--ignore-unmatch"),
+                os("--"),
+            ]
+            .to_vec()
+        };
+        let mut undo_index = undo_index;
+        undo_index.push(rel.as_os_str());
+        let _ = self.run(&undo_index, LOCAL_TIMEOUT);
+        let in_head = head && {
+            let listed = self.git(
+                &[
+                    os("ls-tree"),
+                    os("--name-only"),
+                    os("HEAD"),
+                    os("--"),
+                    rel.as_os_str(),
+                ],
+                LOCAL_TIMEOUT,
+            )?;
+            !listed.stdout.is_empty()
+        };
+        // The path was clean before the change, so untracked files under it are the
+        // change's. Remove them first (git clean spares ignored files, which may be the
+        // owner's), so a file the change turned into a folder or back can be checked out.
+        self.git(
+            &[os("clean"), os("-fdq"), os("--"), rel.as_os_str()],
+            LOCAL_TIMEOUT,
+        )?;
+        if in_head {
             self.git(
-                &[os("clean"), os("-fdq"), os("--"), rel.as_os_str()],
+                &[os("checkout"), os("HEAD"), os("--"), rel.as_os_str()],
                 LOCAL_TIMEOUT,
             )?;
         }
