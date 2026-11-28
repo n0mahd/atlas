@@ -17,13 +17,17 @@ and a flat 2D engraved medallion logo of the crouching verdigris Atlas statue be
 gilt armillary sphere (`assets/logo/`, served in `atlas-web` as `/static/logo.png` and
 `/static/favicon.png`).
 
-## Density (2026-11-27)
+## Density & attention (2026-11-27)
 The look stays; the space goes to content. Approved after the owner found v1 wasteful.
+Treat reading and attention as currency: avoid reader fatigue by surfacing only what is
+needed to scan at a glance and tucking extra text behind an intentional expand or click.
 - Rail 188px, collapsible to 52px (remembered per browser). Phones get a top bar.
 - Masthead is one running head, an 8px Greek key and one row: 28px title plus the scope
   picker. No subtitles or explanatory paragraphs on pages.
-- Rows 46px: 16px name, 15px one-line description, marks and a chevron. No plate numbers,
-  location or status columns; problems show as a short oxblood flag on the row.
+- Rows 46px: 16px name, marks and a chevron, with no plate numbers, location or status
+  columns; problems show as a short oxblood flag on the row. On Skills, collapsed rows show
+  only the name (no one-line description under each skill); the description or outside
+  source appears inside the inline drawer when expanded.
 - Agent marks are the real brand marks in one colour (ink, gilt for "all agents"), 16px.
 - Detail opens inline (gilt left rule, deeper limestone); full pages only for reading a
   file.

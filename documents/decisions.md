@@ -377,6 +377,30 @@ for the passkey again. They are now saved to `<state>/sessions.json` (mode 0600)
 the SHA-256 of the cookie token so the file can't be replayed as a cookie, with wall-clock
 expiry. The 12-hour lifetime, cookie flags and CSRF are unchanged.
 
+## 0035 · 2026-11-27 · Scannable skill rows without descriptions
+Amends 0014 for the Skills page. Showing a truncated first line of description under every
+skill row caused reader fatigue when scanning a list. Collapsed skill rows now show only
+the name, any short flag (`Also global`, `Not in …`, `Broken link`), agent marks, and the
+chevron; the full description (or source path for skills outside Atlas) sits inside the
+inline drawer when expanded, and search still matches descriptions. Reading and attention
+are treated as currency across the UI (`documents/design.md`).
+
+## 0036 · 2026-11-27 · The Machines page polls its list; installs start a first run
+The machine ledgers live in one partial (`machines_list.html`) that the page renders and
+`GET /machines/list` serves alone; the page polls it every 10 seconds, and at once when
+the tab comes back into view, so a newly paired machine appears without a reload. Polling,
+not server-sent events: one fragment endpoint, no open connections, and a machine reports
+at most every few seconds anyway. `atlas.js` skips polls while the tab is hidden (the htmx
+config forbids eval, so no `hx-trigger` filter), leaves the list alone when the response is
+unchanged (focus and selection survive) and reopens rows that were open, by `data-key`.
+The pairing command and the SSH form sit outside the list and are never replaced. The
+running head's totals ("2 machines · 1 reporting") refresh only on reload.
+The install script ends with `systemctl --user start --no-block atlasd.service` so the
+machine's first report reaches the hub within seconds rather than at the next timer tick.
+Through systemd rather than running `atlasd run` directly: the run gets the same sandbox
+as every later one, its output goes to the journal, systemd never runs it twice at once,
+and `--no-block` keeps the install (and an install over SSH) from waiting for it.
+
 ## 00XX · 2026-11-28 · The owner sees hook changes before signing
 An update pins whole commits of Knowledge and public skills, so it can carry changes the
 owner never made in Atlas: an agent writing to the knowledge repo, or a sync from another

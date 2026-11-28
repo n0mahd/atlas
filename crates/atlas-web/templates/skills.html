@@ -23,7 +23,6 @@
           <summary>
             <span class="row-main">
               <span class="row-name">{{ r.name }}</span>
-              <span class="row-desc">{{ r.description }}</span>
             </span>
             {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
             {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
@@ -31,6 +30,7 @@
             <span class="chev" aria-hidden="true"></span>
           </summary>
           <div class="drawer">
+            {% if !r.description.is_empty() %}<p class="drawer-desc">{{ r.description }}</p>{% endif %}
             <ul class="agent-states">
               {% for a in r.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
             </ul>

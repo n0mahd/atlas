@@ -1584,6 +1584,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_machine_list_refreshes_without_the_pairing_forms() {
+        let hub = SendHub::new();
+        let body = format!("csrf={}&name=workstation", hub.csrf);
+        call(&hub.app, post_form(&hub, "/machines/add", body)).await;
+        let (status, page) = call(&hub.app, hub.get("/machines")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains(
+            r#"<div id="machine-list" class="machine-list" hx-get="/machines/list" hx-trigger="every 10s, visibilitychange from:document" hx-swap="outerHTML" data-poll>"#
+        ));
+        assert!(page.contains("action=\"/machines/pair/ssh\""));
+
+        let (status, list) = call(&hub.app, hub.get("/machines/list")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            list.trim_start().starts_with("<div id=\"machine-list\""),
+            "{list}"
+        );
+        assert!(list.contains("class=\"ledger"), "{list}");
+        assert!(list.contains("<h2>hub</h2>"), "{list}");
+        // The unpaired machine's own row keeps its Pair, Install and remove buttons.
+        assert!(list.contains("<h2>workstation</h2>"), "{list}");
+        assert!(
+            list.contains("name=\"machine\" value=\"workstation\""),
+            "{list}"
+        );
+        assert!(list.contains("action=\"/machines/forget\""), "{list}");
+        // The forms at the top of the page (typing, copying) are never replaced.
+        for absent in [
+            "Pair a machine",
+            "name=\"target\" placeholder",
+            "action=\"/machines/add\"",
+            "<html",
+            "<nav",
+        ] {
+            assert!(!list.contains(absent), "{absent} in {list}");
+        }
+        // The same ledgers as the page, from the one partial.
+        let start = page.find("<div id=\"machine-list\"").unwrap();
+        assert!(page[start..].starts_with(list.trim()));
+    }
+
+    #[tokio::test]
+    async fn the_install_script_starts_a_first_run_at_once() {
+        let hub = SendHub::new();
+        let dist = hub.home.join("state/dist");
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(dist.join("atlasd-linux-x86_64"), b"build").unwrap();
+        let (status, script) = call(&hub.app, hub.get("/install")).await;
+        assert_eq!(status, StatusCode::OK);
+        let enable = script
+            .find("systemctl --user enable --now atlasd.timer\n")
+            .expect("timer enabled");
+        let start = script
+            .find("\nsystemctl --user start --no-block atlasd.service\n")
+            .expect("first run started");
+        assert!(enable < start, "{script}");
+    }
+
+    #[tokio::test]
     async fn the_old_releases_page_moved_to_settings() {
         let hub = SendHub::new();
         let res = hub.app.clone().oneshot(hub.get("/releases")).await.unwrap();

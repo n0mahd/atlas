@@ -148,6 +148,8 @@ h1 { margin: 0; font-family: var(--display); font-weight: 900; font-size: 28px; 
 /* ------------------------------------------------------------ sections and rows */
 
 .sections { display: flex; flex-direction: column; gap: 20px; }
+/* The polled machine list keeps the ledgers spaced as direct children of .sections. */
+.machine-list { display: contents; }
 .section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 4px; border-bottom: 3px double var(--ink); }
 .section-head .num { font-family: var(--display); font-weight: 700; font-size: 15px; color: var(--gilt); min-width: 18px; }
 .section-head .mark { align-self: center; }
@@ -189,6 +191,7 @@ h2 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 15px; 
 details[open] > summary .chev::before { transform: rotate(45deg); }
 
 .drawer { margin: 0 0 8px 8px; padding: 8px 12px 10px; border-left: 2px solid var(--gilt-orn); background: var(--ground-deep); display: flex; flex-direction: column; gap: 8px; }
+.drawer-desc { margin: 0; font-size: 15px; color: var(--ink-soft); line-height: 1.4; }
 .drawer-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; }
 .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .chips.stacked { flex-direction: column; }

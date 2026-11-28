@@ -130,9 +130,19 @@ async fn hostile_content_cannot_script_the_page() {
     }
     let (_, _, list) = get(&app, "/skills", Some(OWNER)).await;
     assert!(
+        !list.contains("row-desc"),
+        "collapsed skill rows must not show descriptions"
+    );
+    let summary_start = list.find("<summary>").unwrap();
+    let summary_end = list[summary_start..].find("</summary>").unwrap() + summary_start;
+    assert!(
+        !list[summary_start..summary_end].contains("onerror=alert(1)"),
+        "description belongs in the drawer, not the collapsed row"
+    );
+    assert!(
         list.contains("&#60;img src=x onerror=alert(1)&#62;"),
         "description must be escaped: {}",
-        &list[list.find("entry-desc").unwrap_or(0)..][..200]
+        &list[list.find("drawer-desc").unwrap_or(0)..][..200]
     );
 }
 
