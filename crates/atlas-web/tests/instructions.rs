@@ -527,3 +527,32 @@ async fn move_to_global_drops_every_import_of_global() {
         format!("{GLOBAL}\n<!-- atlas: from shop/AGENTS.md -->\n\nUse pnpm.\n")
     );
 }
+
+#[tokio::test]
+async fn moving_a_claude_local_md_that_imports_global_removes_it() {
+    let h = hub(&[("AGENTS.md", "# Shop\n")]);
+    fs::write(h.project.join(".git/info/exclude"), "/CLAUDE.local.md\n").unwrap();
+    fs::write(
+        h.project.join("CLAUDE.local.md"),
+        "@~/Knowledge/AGENTS.md\nOnly mine.\n",
+    )
+    .unwrap();
+    let res = confirm(&h, "/instructions/shop/CLAUDE.local.md/to-global", &[]).await;
+    assert_committed(&res);
+    assert!(!res.location.contains("kept=1"), "{}", res.location);
+    assert!(!h.project.join("CLAUDE.local.md").exists());
+    assert_eq!(
+        read(&h.knowledge.join("AGENTS.md")),
+        format!("{GLOBAL}\n<!-- atlas: from shop/CLAUDE.local.md -->\n\nOnly mine.\n")
+    );
+    // The next page reads the project as it now is.
+    let list = get(&h, "/instructions?scope=shop").await;
+    assert!(
+        !list
+            .body
+            .contains(r#"href="/instructions/shop/CLAUDE.local.md""#),
+        "{}",
+        list.body
+    );
+    assert!(list.body.contains("New CLAUDE.local.md"));
+}

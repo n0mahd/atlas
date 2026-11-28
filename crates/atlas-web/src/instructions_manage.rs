@@ -468,6 +468,15 @@ enum Write {
     ClaudeAlongside,
 }
 
+/// A file removed once Global holds its text.
+struct RemoveAfter {
+    path: PathBuf,
+    /// The file as the change read it; a file edited since is kept.
+    text: String,
+    /// What Global gained from it: `text` without its imports of Global.
+    own: String,
+}
+
 /// A change worked out from the files as they are now.
 struct Planned {
     confirm: Confirm,
@@ -477,7 +486,7 @@ struct Planned {
     inputs: Vec<PathBuf>,
     /// `CLAUDE.local.md` moved to Global: removed after Global's commit, when its text is
     /// there (git can't restore it, so it never goes before that).
-    remove_after: Option<(PathBuf, String)>,
+    remove_after: Option<RemoveAfter>,
     next: String,
 }
 
@@ -734,7 +743,11 @@ fn plan_to_global(
     }];
     let mut remove_after = None;
     if local {
-        remove_after = Some((path.clone(), text));
+        remove_after = Some(RemoveAfter {
+            path: path.clone(),
+            text,
+            own: own.clone(),
+        });
     } else {
         // Global gains the text first, so a failure part way leaves a copy, not a loss.
         repos.push(project_change(
@@ -1034,7 +1047,7 @@ pub(crate) async fn run(
         Err(e) => return e.into_response(&headers),
     };
     let mut next = p.next;
-    if let Some((path, was)) = p.remove_after {
+    if let Some(r) = p.remove_after {
         // Git can't restore CLAUDE.local.md, so it goes only once Global has its text.
         let sources = Arc::clone(&s.sources);
         let removed = tokio::task::spawn_blocking(move || {
@@ -1042,15 +1055,17 @@ pub(crate) async fn run(
                 .ok()
                 .flatten()
                 .unwrap_or_default();
-            let still = read_text(&path).ok().flatten();
-            if still.as_deref() == Some(was.as_str()) && contained(&was, &global, |_| false) {
-                fs::remove_file(&path).is_ok()
+            let still = read_text(&r.path).ok().flatten();
+            if still.as_deref() == Some(r.text.as_str()) && contained(&r.own, &global, |_| false) {
+                fs::remove_file(&r.path).is_ok()
             } else {
                 false
             }
         })
         .await
         .unwrap_or(false);
+        // commit_change cleared the cache before the file went; the next page reads again.
+        s.invalidate().await;
         if !removed {
             next.push_str(if next.contains('?') {
                 "&kept=1"
