@@ -30,10 +30,11 @@ changes between versions. Not yet built: the desktop app and MCP servers.
 
 Clone the repo on the machine that will be the hub, then:
 
-1. Run `deploy/install.sh https://<hub>.<tailnet>.ts.net:7443` with that machine's
-   Tailscale name. It checks what's missing before building, says what it will create,
-   sets up a starter knowledge repo if you have none, and prints a link to create your
-   passkey.
+1. Run `deploy/install.sh` with the address the hub will have, such as
+   `https://hub.example.ts.net:7443` (that machine's Tailscale name). It checks what's
+   missing before building, says what it will create, sets up a starter knowledge repo
+   if you have none, and prints a link to create your passkey. Then give the knowledge
+   repo a remote and push it, as the script says.
 2. On every machine whose agents Atlas should manage, the hub's own machine included:
    **Machines → Pair** in the hub, then run the command it shows.
 3. Edit a skill in the hub and press Save. Your machines have it within 10 minutes.
