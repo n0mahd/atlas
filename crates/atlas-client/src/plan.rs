@@ -11,7 +11,9 @@ use atlas_harness::hooks::{ManagedHook, antigravity_hooks, claude_settings, code
 use atlas_harness::instructions::{
     InstructionAction, InstructionConflict, InstructionFile, plan_claude_md, plan_instruction_link,
 };
+use atlas_harness::placement::{Reach, Solved, solve};
 use atlas_harness::skills::{Entry, SkillConflict, SkillOp, plan_skill_links};
+use atlas_harness::switches::can_switch_off;
 use atlas_harness::{Change, Layout, layouts};
 
 use crate::desired::Desired;
@@ -112,19 +114,8 @@ pub fn present(home: &Path) -> Vec<&'static Layout> {
 pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
     let mut plan = Plan::default();
     let harnesses = present(home);
-    // Each harness needs the links in one folder it reads. A harness that already reads a
-    // folder getting them (OpenCode reads Claude's and Codex's) gets nothing more, and a
-    // harness's other folders are left alone, or it would see every skill twice (Codex
-    // reads both ~/.agents/skills and ~/.codex/skills).
-    let mut linked: BTreeSet<&str> = BTreeSet::new();
-    for layout in &harnesses {
-        if layout.skill_dirs.iter().any(|d| linked.contains(d)) {
-            continue;
-        }
-        if let Some(dir) = layout.skill_dirs.first() {
-            linked.insert(dir);
-            skill_dir(&mut plan, home, &home.join(dir), desired, managed_roots);
-        }
+    for (dir, skills) in home_skill_folders(&harnesses, desired) {
+        skill_dir(&mut plan, home, &home.join(dir), &skills, managed_roots);
     }
     let claude = harnesses.iter().any(|l| l.kind == HarnessKind::ClaudeCode);
     for layout in &harnesses {
@@ -160,6 +151,46 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
     plan
 }
 
+/// The home skill folders Atlas manages and the skills each should hold. Each skill goes
+/// in the folders [`solve`] picks for the agents that want it. With every agent wanted that
+/// is each harness's first folder, unless a folder it reads already has the links (`OpenCode`
+/// reads Claude's and Codex's), and never a harness's other folders, or it would see every
+/// skill twice (Codex reads both ~/.agents/skills and ~/.codex/skills). The folders used
+/// with nothing off are always listed, so a skill that leaves one is unlinked there.
+fn home_skill_folders(
+    harnesses: &[&Layout],
+    desired: &Desired,
+) -> Vec<(&'static str, BTreeMap<String, PathBuf>)> {
+    let everyone: BTreeSet<HarnessKind> = HarnessKind::ALL.into_iter().collect();
+    let switchable = |k| can_switch_off(k, Reach::Home);
+    let mut folders: Vec<(&'static str, BTreeMap<String, PathBuf>)> =
+        solve(harnesses, &everyone, Reach::Home, &[], switchable)
+            .folders
+            .into_iter()
+            .map(|f| (f, BTreeMap::new()))
+            .collect();
+    // Skills with the same agents off share one solution.
+    let mut solved: BTreeMap<BTreeSet<HarnessKind>, Solved> = BTreeMap::new();
+    for (name, source) in &desired.skills {
+        let off = BTreeSet::new();
+        let s = solved.entry(off).or_insert_with_key(|off| {
+            let wanted: BTreeSet<HarnessKind> = everyone.difference(off).copied().collect();
+            solve(harnesses, &wanted, Reach::Home, &[], switchable)
+        });
+        for folder in &s.folders {
+            let at = folders
+                .iter()
+                .position(|(f, _)| f == folder)
+                .unwrap_or_else(|| {
+                    folders.push((folder, BTreeMap::new()));
+                    folders.len() - 1
+                });
+            folders[at].1.insert(name.clone(), source.clone());
+        }
+    }
+    folders
+}
+
 fn read_entries(dir: &Path) -> io::Result<BTreeMap<String, Entry>> {
     let mut out = BTreeMap::new();
     for entry in fs::read_dir(dir)? {
@@ -189,7 +220,13 @@ fn read_entries(dir: &Path) -> io::Result<BTreeMap<String, Entry>> {
     Ok(out)
 }
 
-fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots: &[PathBuf]) {
+fn skill_dir(
+    plan: &mut Plan,
+    home: &Path,
+    dir: &Path,
+    skills: &BTreeMap<String, PathBuf>,
+    roots: &[PathBuf],
+) {
     let shown = display(home, dir);
     let current = match fs::symlink_metadata(dir) {
         Ok(m) if m.file_type().is_symlink() => {
@@ -211,7 +248,7 @@ fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots:
             }
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            if !desired.skills.is_empty() {
+            if !skills.is_empty() {
                 plan.ensure_dir(dir);
             }
             BTreeMap::new()
@@ -221,8 +258,8 @@ fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots:
             return;
         }
     };
-    let skills = plan_skill_links(dir, &current, &desired.skills, roots);
-    for op in skills.ops {
+    let planned = plan_skill_links(dir, &current, skills, roots);
+    for op in planned.ops {
         plan.actions.push(match op {
             SkillOp::CreateLink { name, target } => Action::CreateLink {
                 path: dir.join(name),
@@ -239,7 +276,7 @@ fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots:
             },
         });
     }
-    for c in skills.conflicts {
+    for c in planned.conflicts {
         plan.conflicts.push(match c {
             SkillConflict::NotALink { name } => format!(
                 "{shown}/{name} is your own folder or file, so Atlas didn't link its skill {name} there"
