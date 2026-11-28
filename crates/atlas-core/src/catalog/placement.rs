@@ -74,9 +74,39 @@ impl Placement {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Keep {
-    /// `<kind>:<path as shown>`, such as `skill:~/.claude/skills/omarchy`.
+    /// `<kind>:<path as shown>`, such as `skill:~/.claude/skills/omarchy`. Build keys with
+    /// [`Keep::key`] so every page writes the same form.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub items: BTreeSet<String>,
+}
+
+/// What an outside item is, for its [`Keep`] key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeepKind {
+    Skill,
+    Instruction,
+    Memory,
+    Hook,
+}
+
+impl Keep {
+    /// The key for an item: its kind and its path as the hub shows it, with the home as
+    /// `~` (never an absolute home path, which would put a username in git).
+    #[must_use]
+    pub fn key(kind: KeepKind, shown: &str) -> String {
+        let kind = match kind {
+            KeepKind::Skill => "skill",
+            KeepKind::Instruction => "instruction",
+            KeepKind::Memory => "memory",
+            KeepKind::Hook => "hook",
+        };
+        format!("{kind}:{shown}")
+    }
+
+    #[must_use]
+    pub fn keeps(&self, kind: KeepKind, shown: &str) -> bool {
+        self.items.contains(&Self::key(kind, shown))
+    }
 }
 
 /// The whole `atlas/placements.toml`.

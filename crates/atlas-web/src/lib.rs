@@ -461,6 +461,7 @@ async fn skills(
     let v = views::skills(&snap, &scope, &q.q);
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
+    q.apply(&mut page);
     Ok(Html(SkillsPage { page, v }.render()?))
 }
 
@@ -498,6 +499,7 @@ async fn instructions(
         true,
     );
     page.totals = format!("{} files", snap.catalog.instructions.len());
+    q.apply(&mut page);
     Ok(Html(
         InstructionsPage {
             page,
@@ -542,6 +544,7 @@ async fn memory(
     let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
+    q.apply(&mut page);
     Ok(Html(MemoryPage { page, v }.render()?))
 }
 
@@ -562,11 +565,16 @@ async fn memory_detail(
     Ok(Html(MemoryDetailPage { page, v }.render()?))
 }
 
-async fn hooks(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
+async fn hooks(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::hooks(&snap);
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
+    q.apply(&mut page);
     Ok(Html(HooksPage { page, v }.render()?))
 }
 

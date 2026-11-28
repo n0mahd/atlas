@@ -55,6 +55,18 @@ impl HarnessKind {
         }
     }
 
+    /// Hosts run other agents and load no skills or instructions of their own (T3 Code,
+    /// Herdr), so "every agent" never includes them.
+    #[must_use]
+    pub const fn is_host(self) -> bool {
+        matches!(self, Self::T3 | Self::Herdr)
+    }
+
+    /// Every harness that is an agent (not a host), for "every agent" choices.
+    pub fn agents() -> impl Iterator<Item = Self> {
+        Self::ALL.into_iter().filter(|k| !k.is_host())
+    }
+
     /// The name shown in the UI.
     #[must_use]
     pub const fn display_name(self) -> &'static str {
