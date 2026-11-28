@@ -345,7 +345,7 @@ block, the only write Atlas makes inside `.git`.
 The hub compares skills installed with the `skills` CLI (`npx skills`) against their GitHub
 source only when the owner presses **Check for updates**, never on a timer. It reads
 GitHub's public trees and blobs API without signing in, using `reqwest` with rustls (atlasd
-already depends on it), with timeouts, size caps, same-host redirects only, and every file
+already depends on it), with timeouts, size caps, redirects only to the API's own origin (scheme, host and port), and every file
 checked against its git SHA; archive paths are sanitised and links refused. Keeping the
 owner's edits is a three-way line merge with `diffy` (MIT/Apache, no default
 dependencies); clashing files are the owner's choice. The CLI's lock is updated only when
