@@ -173,6 +173,56 @@ async fn logo_and_favicon_are_served_as_png() {
     }
 }
 
+/// Installing the hub as an app (a browser's "Install Atlas", or an app launcher entry)
+/// takes its name and icon from the web app manifest, so the page must link one, the CSP
+/// must let the browser load it, and every icon it lists must be a PNG of the stated size.
+#[tokio::test]
+async fn hub_is_installable_with_its_own_icon() {
+    let (_tmp, app) = app();
+    let (_, headers, page) = get(&app, "/", Some(OWNER)).await;
+    assert!(page.contains(r#"<link rel="manifest" href="/static/manifest.webmanifest">"#));
+    let csp = headers["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("manifest-src 'self'"), "{csp}");
+
+    let (status, headers, body) = get(&app, "/static/manifest.webmanifest", Some(OWNER)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "application/manifest+json");
+    let manifest: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(manifest["name"], "Atlas");
+    assert_eq!(manifest["start_url"], "/");
+    let icons = manifest["icons"].as_array().unwrap();
+    let sizes: Vec<&str> = icons.iter().map(|i| i["sizes"].as_str().unwrap()).collect();
+    assert!(
+        sizes.contains(&"192x192") && sizes.contains(&"512x512"),
+        "{sizes:?}"
+    );
+
+    for icon in icons {
+        let src = icon["src"].as_str().unwrap();
+        let res = app
+            .clone()
+            .oneshot(
+                Request::get(src)
+                    .header("Tailscale-User-Login", OWNER)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{src}");
+        assert_eq!(res.headers()["content-type"], "image/png", "{src}");
+        let png = to_bytes(res.into_body(), 4 << 20).await.unwrap();
+        // PNG IHDR: width and height are big-endian u32s at bytes 16..24.
+        let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+        let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
+        assert_eq!(
+            format!("{width}x{height}"),
+            icon["sizes"].as_str().unwrap(),
+            "{src}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn machines_lists_amp_and_muse_but_not_herdr() {
     let (tmp, app) = app();

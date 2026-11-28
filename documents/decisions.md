@@ -348,3 +348,14 @@ config on the hub.
   margin-inline: auto`) and `.marginalia`, `.flash`, `.empty`, and `.frontispiece` use
   `margin-block` instead of `margin` shorthands so banners align cleanly with the masthead on
   wide screens.
+
+## 0032 · 2026-11-27 · The hub is an installable web app
+The hub page links a web app manifest (`/static/manifest.webmanifest`: name Atlas,
+`start_url` and `scope` `/`, standalone, 192 and 512 px icons made from
+`assets/logo/atlas-icon-1024.png`), and the CSP allows `manifest-src 'self'` (under
+`default-src 'none'` a browser would otherwise refuse the manifest). A browser's own
+"Install Atlas" then makes the launcher entry, with the Atlas name, icon and a window class
+that matches it, on any desktop. Hand-made launchers (Omarchy's web app installer) still
+pick up the icon through `apple-touch-icon`, but they guess the window class from the
+browser, so the guide recommends the browser's install. A test checks the manifest is linked,
+allowed and that each icon it lists is served at the stated size.

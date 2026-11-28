@@ -8,6 +8,9 @@
 <title>{% if page.section == "/" %}Atlas{% else %}{{ page.title }} · Atlas{% endif %}</title>
 <link rel="icon" href="/static/favicon.png" type="image/png" sizes="64x64">
 <link rel="apple-touch-icon" href="/static/logo.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="application-name" content="Atlas">
+<meta name="theme-color" content="#16181D">
 {% if page.signed_in %}<meta name="atlas-csrf" content="{{ page.csrf }}">
 {% endif %}<link rel="stylesheet" href="/static/atlas.css">
 <script src="/static/atlas.js"></script>
