@@ -155,7 +155,7 @@ fn an_invalid_placements_file_changes_no_skill_links() {
         pass.problems
             .iter()
             .any(|p| p.contains("atlas/placements.toml is invalid")
-                && p.contains("no skill links or switches change")),
+                && p.contains("no skill links, switches or Claude Code setting change")),
         "{:?}",
         pass.problems
     );
@@ -175,4 +175,52 @@ fn an_invalid_placements_file_changes_no_skill_links() {
         "instructions still apply"
     );
     assert_eq!(w.state.last_applied, Some(2));
+}
+
+#[test]
+fn one_reader_for_the_whole_placements_file() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    w.apply(1, &key);
+    let settings = fs::read_to_string(h.join(".claude/settings.json")).unwrap();
+
+    // A typo in [instructions] is one problem, and changes no skill link or setting.
+    w.change_knowledge(&[
+        (
+            "atlas/placements.toml",
+            Some("[instructions]\nclaude-reads-agents-md = \"sometimes\"\n"),
+        ),
+        ("skills/gamma/SKILL.md", None),
+    ]);
+    let pass = w.apply(2, &key);
+    let about: Vec<&String> = pass
+        .problems
+        .iter()
+        .filter(|p| p.contains("placements.toml"))
+        .collect();
+    assert_eq!(about.len(), 1, "{:?}", pass.problems);
+    assert!(
+        exists(&h.join(".claude/skills/gamma")),
+        "links stay as they were"
+    );
+    assert_eq!(
+        fs::read_to_string(h.join(".claude/settings.json")).unwrap(),
+        settings
+    );
+
+    // A link where the file should be is refused the same way, not followed.
+    let remote = w.knowledge_remote();
+    fs::remove_file(remote.join("atlas/placements.toml")).unwrap();
+    std::os::unix::fs::symlink("../AGENTS.md", remote.join("atlas/placements.toml")).unwrap();
+    w.change_knowledge(&[]);
+    let pass = w.apply(3, &key);
+    assert!(
+        pass.problems
+            .iter()
+            .any(|p| p.contains("placements.toml") && p.contains("no skill links")),
+        "{:?}",
+        pass.problems
+    );
+    assert!(exists(&h.join(".claude/skills/gamma")));
 }

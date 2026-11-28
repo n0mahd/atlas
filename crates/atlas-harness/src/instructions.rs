@@ -143,21 +143,11 @@ pub fn plan_claude_md(
             }
         }
         InstructionFile::File(text) => {
-            let imported = |line: &str| -> Option<PathBuf> {
-                let path = line.trim().strip_prefix('@')?;
-                let path = match path.strip_prefix("~/") {
-                    Some(rest) => home.join(rest),
-                    None => PathBuf::from(path),
-                };
-                Some(if path.is_absolute() {
-                    normalize(&path)
-                } else {
-                    resolve(file, &path)
-                })
-            };
+            let dir = file.parent().unwrap_or(Path::new("/"));
+            let imported = |line: &str| imports_path(line, dir, home);
             let managed = |p: &Path| managed_roots.iter().any(|r| p.starts_with(normalize(r)));
             let is_atlas_import =
-                |line: &str| imported(line).is_some_and(|p| p == store || managed(&p));
+                |line: &str| is_atlas_import(line, &store, managed_roots, dir, home);
             let has_own = text
                 .lines()
                 .any(|l| !l.trim().is_empty() && !is_atlas_import(l));
@@ -271,6 +261,23 @@ pub fn without_imports_of(text: &str, target: &Path, dir: &Path, home: &Path) ->
         out.push('\n');
     }
     out
+}
+
+/// Whether `line` is Atlas's own import of the global instructions: an `@<path>` line by
+/// itself importing `store`, or an older Atlas path in one of `managed_roots` (such as an
+/// adopted `@~/Knowledge/AGENTS.md`). Such a line is Atlas's to replace, so it never
+/// counts as the owner's text that must be kept. `dir` is the importing file's folder.
+#[must_use]
+pub fn is_atlas_import(
+    line: &str,
+    store: &Path,
+    managed_roots: &[PathBuf],
+    dir: &Path,
+    home: &Path,
+) -> bool {
+    let store = normalize(store);
+    imports_path(line, dir, home)
+        .is_some_and(|p| p == store || managed_roots.iter().any(|r| p.starts_with(normalize(r))))
 }
 
 /// The path a line imports, if it is an `@<path>` line by itself.

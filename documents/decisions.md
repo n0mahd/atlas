@@ -360,6 +360,9 @@ edited global skill shows as updatable again (the preview says so). One lock rea
   checkout no memory folder is linked and the pass says why.
 - **In a checkout Atlas removes only links its exclude block lists**, and never writes a
   path git tracks; the block is add-only (shared with the hub).
+- **One reader for `atlas/placements.toml` on machines**: skills and `[instructions]` come
+  from one `read_placements`; only a missing file means defaults, and any other fault is
+  one problem that changes no skill link, switch or Claude Code setting.
 - **Codex's switches for home and project skills are rendered once per pass**; Codex's
   format holds one Atlas switch per skill name, so a second same-named skill off is
   reported. `atlas_before` isn't kept: every format marks its entries in the file.

@@ -11,8 +11,8 @@ use atlas_core::catalog::ClaudeAgentsMd;
 use atlas_core::kernel::HarnessKind;
 use atlas_harness::hooks::{ManagedHook, antigravity_hooks, claude_settings, codex_hooks};
 use atlas_harness::instructions::{
-    InstructionAction, InstructionConflict, InstructionFile, claude_agents_md_setting,
-    plan_claude_md, plan_instruction_link,
+    InstructionAction, InstructionConflict, InstructionFile, claude_agents_md_setting, contained,
+    is_atlas_import, plan_claude_md, plan_instruction_link,
 };
 use atlas_harness::placement::Reach;
 use atlas_harness::skills::{
@@ -70,6 +70,9 @@ pub enum Action {
         was: Option<Vec<u8>>,
         bytes: Vec<u8>,
         kept_in: Option<PathBuf>,
+        /// Lines of `was` that are Atlas's own import of the global instructions (perhaps
+        /// at an older path): they are replaced, so they needn't be in `kept_in`.
+        imports: Vec<String>,
         why: &'static str,
     },
     /// An agent's own instruction file whose every line is in `target` becomes a link to
@@ -181,12 +184,13 @@ pub fn hook_file(kind: HarnessKind, config: &Path) -> PathBuf {
     }
 }
 
-/// The harnesses set up for this login. T3 Code reads the others' files.
+/// The agents set up for this login. Hosts (T3 Code, Herdr) run the others and read
+/// their files.
 #[must_use]
 pub fn present(home: &Path) -> Vec<&'static Layout> {
     layouts()
         .iter()
-        .filter(|l| l.kind != HarnessKind::T3 && home.join(l.marker).exists())
+        .filter(|l| !l.kind.is_host() && home.join(l.marker).exists())
         .collect()
 }
 
@@ -807,16 +811,19 @@ fn instruction(
         }),
         InstructionAction::Write(bytes) => {
             plan.ensure_dir(parent);
-            // Every line the old text had and the new one lacks must be in the store.
-            let drops = was.as_ref().is_some_and(|w| {
-                let w = String::from_utf8_lossy(w);
-                let b = String::from_utf8_lossy(&bytes);
-                !atlas_harness::instructions::contained(&w, &b, |_| false)
-            });
+            // Every line the old text had and the new one lacks must be in the store,
+            // except Atlas's own import, which the new text replaces.
+            let old = was
+                .as_deref()
+                .map_or_else(Default::default, String::from_utf8_lossy);
+            let ours = |l: &str| is_atlas_import(l, store, roots, parent, home);
+            let imports: Vec<String> = old.lines().filter(|l| ours(l)).map(str::to_owned).collect();
+            let drops = !contained(&old, &String::from_utf8_lossy(&bytes), ours);
             plan.actions.push(Action::WriteInstruction {
                 path: file.to_path_buf(),
                 was,
                 kept_in: drops.then(|| store.to_path_buf()),
+                imports,
                 why: if drops {
                     "its own text is all in the global instructions now, so just the import stays"
                 } else {
@@ -1099,6 +1106,16 @@ mod tests {
         let mut again = Plan::default();
         edit_config(&mut again, dir.path(), &file, &steps);
         assert_eq!(again.actions, [], "{:?}", again.conflicts);
+    }
+
+    #[test]
+    fn hosts_are_never_planned_as_agents() {
+        let home = tempfile::tempdir().unwrap();
+        for marker in [".t3", ".config/herdr", ".claude"] {
+            fs::create_dir_all(home.path().join(marker)).unwrap();
+        }
+        let kinds: Vec<HarnessKind> = present(home.path()).iter().map(|l| l.kind).collect();
+        assert_eq!(kinds, [HarnessKind::ClaudeCode]);
     }
 
     #[test]

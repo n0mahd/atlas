@@ -53,6 +53,7 @@ fn step(action: &Action) -> io::Result<()> {
             was,
             bytes,
             kept_in,
+            imports,
             ..
         } => {
             if !still(path, was.as_deref())? {
@@ -62,7 +63,8 @@ fn step(action: &Action) -> io::Result<()> {
                 let mut keep = read_small(store)?;
                 keep.push('\n');
                 keep.push_str(&String::from_utf8_lossy(bytes));
-                if !contained(&String::from_utf8_lossy(was), &keep, |_| false) {
+                let atlas_import = |l: &str| imports.iter().any(|i| i == l);
+                if !contained(&String::from_utf8_lossy(was), &keep, atlas_import) {
                     return Err(io::Error::other(
                         "the global instructions no longer hold all its text, so it was kept",
                     ));
