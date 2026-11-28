@@ -44,61 +44,6 @@
     <button class="button-plain" type="submit">Add</button>
   </form>
   {% endif %}
-  {% for m in machines %}
-  <section class="ledger{% if !m.hub && m.clients.is_empty() %} unpaired{% endif %}">
-    <div class="ledger-head">
-      <h2>{{ m.name }}</h2>
-      {% if m.hub %}<span class="badge">Hub</span>{% endif %}
-      <span class="ledger-sum">{{ m.summary }}</span>
-      {% if !m.hub && page.signed_in %}
-      <div class="ledger-actions">
-        <form method="post" action="/machines/pair" class="inline-form">
-          <input type="hidden" name="csrf" value="{{ page.csrf }}">
-          <input type="hidden" name="machine" value="{{ m.name }}">
-          <button class="button-plain button-sm" type="submit">Pair</button>
-        </form>
-        {% if m.clients.is_empty() %}
-        <form method="post" action="/machines/pair/ssh" class="inline-form" data-busy="Installing…">
-          <input type="hidden" name="csrf" value="{{ page.csrf }}">
-          <input type="hidden" name="target" value="{{ m.name }}">
-          <button class="button-plain button-sm" type="submit" title="Install atlasd on {{ m.name }} from the hub over SSH">Install</button>
-        </form>
-        {% endif %}
-        <form method="post" action="/machines/forget" class="inline-form">
-          <input type="hidden" name="csrf" value="{{ page.csrf }}">
-          <input type="hidden" name="name" value="{{ m.name }}">
-          <button class="icon-button" type="submit" title="Remove {{ m.name }}" aria-label="Remove {{ m.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
-        </form>
-      </div>
-      {% endif %}
-    </div>
-    {% if !m.harnesses.is_empty() %}
-    <ul class="rows">
-      {% for h in m.harnesses %}
-      <li>
-        <details class="row">
-          <summary>
-            <span class="mark lead" aria-hidden="true">{{ h.icon|safe }}</span>
-            <span class="row-name agent-name">{{ h.name }}</span>
-            <span class="cell">{{ h.skills }}{% if !h.skills_warn.is_empty() %} · <span class="warn">{{ h.skills_warn }}</span>{% endif %}</span>
-            <span class="cell {{ h.instructions_class }}">{{ h.instructions }}</span>
-            <span class="cell muted">{{ h.hooks }}</span>
-            <span class="chev" aria-hidden="true"></span>
-          </summary>
-          <div class="drawer"><ul class="list-plain mono muted">{% for d in h.dirs %}<li>{{ d }}</li>{% endfor %}</ul></div>
-        </details>
-      </li>
-      {% endfor %}
-    </ul>
-    {% if !m.absent.is_empty() %}<p class="ledger-note">Not set up here: {% for a in m.absent %}{{ a }}{% if !loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
-    {% endif %}
-    {% for c in m.clients %}
-    <div class="row static client-row">
-      <span class="row-main"><span class="row-name">{{ c.user }}</span><span class="row-desc {{ c.class }}">{{ c.status }}</span>{% for p in c.problems %}<span class="row-desc warn">{{ p }}</span>{% endfor %}</span>
-      {% if page.signed_in %}<form method="post" action="/machines/{{ c.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Unpair {{ c.user }} on {{ m.name }}" aria-label="Unpair {{ c.user }} on {{ m.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></form>{% endif %}
-    </div>
-    {% endfor %}
-  </section>
-  {% endfor %}
+  {% include "machines_list.html" %}
 </div>
 {% endblock %}
