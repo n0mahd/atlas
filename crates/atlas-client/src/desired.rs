@@ -1,5 +1,5 @@
 //! What should be installed for this login, read from the local copies: global skills,
-//! the global instructions and the global hooks.
+//! the global instructions, the global hooks and Claude Code's subagents.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,6 +28,8 @@ pub struct Desired {
     /// leaves Claude Code's setting as it is.
     pub claude_agents_md: Option<ClaudeAgentsMd>,
     pub hooks: Vec<HookSpec>,
+    /// Subagent file name (`<name>.md`) → the file in the knowledge copy.
+    pub agents: BTreeMap<String, PathBuf>,
     pub problems: Vec<String>,
 }
 
@@ -60,6 +62,37 @@ fn skills_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf
         if Slug::new(name.as_str()).is_err() {
             problems.push(format!(
                 "skill folder {name:?} skipped: its name isn't lowercase-with-hyphens"
+            ));
+            continue;
+        }
+        out.insert(name, path);
+    }
+    out
+}
+
+/// Regular `<name>.md` files directly under `dir`, by file name. Hidden files, links and
+/// names that aren't slugs are skipped, the last two reported.
+fn agents_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf> {
+    let mut out = BTreeMap::new();
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(stem) = name.strip_suffix(".md") else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        // Only real files: a link in a repo could point anywhere.
+        if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            problems.push(format!("subagent {name} skipped: it isn't a regular file"));
+            continue;
+        }
+        if Slug::new(stem).is_err() {
+            problems.push(format!(
+                "subagent {name} skipped: its name isn't lowercase-with-hyphens"
             ));
             continue;
         }
@@ -149,6 +182,7 @@ pub fn read(knowledge: Option<&Path>, public_skills: Option<&Path>) -> Desired {
     if fs::symlink_metadata(&agents).is_ok_and(|m| m.is_file()) {
         d.instructions = Some(agents);
     }
+    d.agents = agents_in(&knowledge.join("agents"), &mut d.problems);
     match instruction_settings(knowledge) {
         Ok(s) => d.claude_agents_md = s.claude_reads_agents_md,
         Err(e) => d.problems.push(format!(

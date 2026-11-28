@@ -348,6 +348,8 @@ pub(crate) struct SshResult {
     pub ok: bool,
     pub message: String,
     pub output: String,
+    /// The address typed, offered again after a failure so it needn't be retyped.
+    pub target: String,
 }
 
 // ---------------------------------------------------------------- handlers

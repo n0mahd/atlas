@@ -1646,11 +1646,18 @@ fn report_line(h: &atlas_core::distribution::HarnessReport) -> HarnessLine {
         skills_warn: parts.join(", "),
         instructions,
         instructions_class,
-        hooks: match h.hooks_managed {
-            0 => String::new(),
-            1 => "1 hook".to_owned(),
-            n => format!("{n} hooks"),
-        },
+        hooks: [
+            (h.hooks_managed, "hook", "hooks"),
+            (h.agents_from_atlas, "subagent", "subagents"),
+        ]
+        .into_iter()
+        .filter_map(|(n, one, many)| match n {
+            0 => None,
+            1 => Some(format!("1 {one}")),
+            n => Some(format!("{n} {many}")),
+        })
+        .collect::<Vec<_>>()
+        .join(" · "),
         dirs: Vec::new(),
     }
 }
@@ -1694,8 +1701,20 @@ pub fn mask_secrets(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_names, mask_secrets};
+    use super::{join_names, mask_secrets, report_line};
     use atlas_core::kernel::HarnessKind;
+
+    #[test]
+    fn a_harness_row_counts_hooks_and_subagents() {
+        // A report from an older client has no `agents_from_atlas`.
+        let old = r#"{"kind":"claude-code","present":true,"skills_from_atlas":1,"skills_outside":0,"broken":0,"instructions":"imports","hooks_managed":1}"#;
+        let mut h: atlas_core::distribution::HarnessReport = serde_json::from_str(old).unwrap();
+        assert_eq!(report_line(&h).hooks, "1 hook");
+        h.agents_from_atlas = 2;
+        assert_eq!(report_line(&h).hooks, "1 hook · 2 subagents");
+        h.hooks_managed = 0;
+        assert_eq!(report_line(&h).hooks, "2 subagents");
+    }
 
     #[test]
     fn masks_credentials_but_keeps_ordinary_commands() {

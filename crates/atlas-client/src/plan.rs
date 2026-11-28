@@ -133,7 +133,8 @@ pub fn present(home: &Path) -> Vec<&'static Layout> {
         .collect()
 }
 
-/// Plans every present harness: skill links, instruction files and hook configs.
+/// Plans every present harness: skill and subagent links, instruction files and hook
+/// configs.
 #[must_use]
 pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
     let mut plan = Plan::default();
@@ -149,7 +150,14 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
         }
         if let Some(dir) = layout.skill_dirs.first() {
             linked.insert(dir);
-            skill_dir(&mut plan, home, &home.join(dir), desired, managed_roots);
+            link_dir(
+                &mut plan,
+                home,
+                &home.join(dir),
+                &desired.skills,
+                managed_roots,
+                "skill",
+            );
         }
     }
     let claude = harnesses.iter().any(|l| l.kind == HarnessKind::ClaudeCode);
@@ -158,6 +166,17 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
         .as_deref()
         .map(|s| read_store_text(&mut plan, home, s));
     for layout in &harnesses {
+        // Subagents: only Claude Code's format is known so far (HARNESSES.md).
+        if let Some(dir) = layout.agent_dir {
+            link_dir(
+                &mut plan,
+                home,
+                &home.join(dir),
+                &desired.agents,
+                managed_roots,
+                "subagent",
+            );
+        }
         if let (Some(store), Some(text)) = (&desired.instructions, &store_text) {
             for file in layout.instruction_files {
                 instruction(
@@ -222,12 +241,21 @@ fn read_entries(dir: &Path) -> io::Result<BTreeMap<String, Entry>> {
     Ok(out)
 }
 
-fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots: &[PathBuf]) {
+/// Links `wanted` (entry name → source) into `dir` by the skill-link rules; `noun` says
+/// what they are in the conflicts.
+fn link_dir(
+    plan: &mut Plan,
+    home: &Path,
+    dir: &Path,
+    wanted: &BTreeMap<String, PathBuf>,
+    roots: &[PathBuf],
+    noun: &str,
+) {
     let shown = display(home, dir);
     let current = match fs::symlink_metadata(dir) {
         Ok(m) if m.file_type().is_symlink() => {
             plan.conflicts.push(format!(
-                "{shown} is a link to another folder; Atlas leaves it and its skills alone"
+                "{shown} is a link to another folder; Atlas leaves it and its {noun}s alone"
             ));
             return;
         }
@@ -244,7 +272,7 @@ fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots:
             }
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            if !desired.skills.is_empty() {
+            if !wanted.is_empty() {
                 plan.ensure_dir(dir);
             }
             BTreeMap::new()
@@ -254,7 +282,7 @@ fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots:
             return;
         }
     };
-    let skills = plan_skill_links(dir, &current, &desired.skills, roots);
+    let skills = plan_skill_links(dir, &current, wanted, roots);
     for op in skills.ops {
         plan.actions.push(match op {
             SkillOp::CreateLink { name, target } => Action::CreateLink {
@@ -275,14 +303,14 @@ fn skill_dir(plan: &mut Plan, home: &Path, dir: &Path, desired: &Desired, roots:
     for c in skills.conflicts {
         plan.conflicts.push(match c {
             SkillConflict::NotALink { name } => format!(
-                "{shown}/{name} is your own folder or file, so Atlas didn't link its skill {name} there"
+                "{shown}/{name} is your own folder or file, so Atlas didn't link its {noun} {name} there"
             ),
             SkillConflict::ForeignLink { name, target } => format!(
                 "{shown}/{name} links to {}, which Atlas doesn't manage, so it was left alone",
                 display(home, &target)
             ),
             SkillConflict::SourceOutsideRoots { name, source } => format!(
-                "skill {name} at {} is outside Atlas's folders, so it wasn't linked",
+                "{noun} {name} at {} is outside Atlas's folders, so it wasn't linked",
                 display(home, &source)
             ),
         });

@@ -138,6 +138,10 @@ pub struct HarnessReport {
     /// `linked`, `imports`, `separate` or `missing`.
     pub instructions: String,
     pub hooks_managed: u32,
+    /// Subagent definitions linked from Atlas's copies (Claude Code only so far). Absent
+    /// in reports from older clients.
+    #[serde(default)]
+    pub agents_from_atlas: u32,
 }
 
 /// What a client tells the hub after each run.
