@@ -12,11 +12,11 @@ mod edit;
 mod icons;
 mod install;
 mod instructions_manage;
+mod library;
+mod library_pages;
 mod markdown;
 pub mod release;
 pub mod remote;
-// Stubs until the library and placement work lands (decision 0027).
-#[allow(dead_code, clippy::unused_async)]
 mod skill_ops;
 mod skills_place;
 mod updates;
@@ -121,10 +121,17 @@ impl AppState {
             return Ok(Arc::clone(snap));
         }
         let sources = Arc::clone(&self.sources);
-        let snap = tokio::task::spawn_blocking(move || Snapshot {
-            catalog: atlas_fs::load_catalog(&sources),
-            harnesses: atlas_fs::scan_harnesses(&sources),
-            projects: atlas_fs::scan_projects(&sources),
+        let lock = self.updates.global_lock().to_path_buf();
+        let snap = tokio::task::spawn_blocking(move || {
+            let catalog = atlas_fs::load_catalog(&sources);
+            let harnesses = atlas_fs::scan_harnesses(&sources);
+            let library = library::Index::read(&sources, &lock, &catalog, &harnesses);
+            Snapshot {
+                catalog,
+                harnesses,
+                projects: atlas_fs::scan_projects(&sources),
+                library,
+            }
         })
         .await
         .map(Arc::new)
@@ -159,6 +166,16 @@ pub fn router(state: AppState, access: Access) -> Router {
     Router::new()
         .route("/", get(overview))
         .route("/skills", get(skills))
+        .route(
+            "/skills/new",
+            get(library_pages::new_form).post(library_pages::new_save),
+        )
+        .route("/skills/confirm", get(library_pages::confirm))
+        .route("/skills/bulk", post(library_pages::bulk))
+        .route(
+            "/skills/{home}/{name}/files/{*path}",
+            get(library_pages::file_view),
+        )
         .route("/skills/{home}/{name}", get(skill_detail))
         .route(
             "/skills/{home}/{name}/agents",
@@ -336,6 +353,7 @@ struct SkillsPage {
 struct SkillPage {
     page: Page,
     v: views::SkillDetail,
+    files: library_pages::FileTree,
     /// Who gets the skill: the switches and "Use in…".
     p: skills_place::SkillPlace,
 }
@@ -397,6 +415,12 @@ struct ListQuery {
     kind: String,
     #[serde(default)]
     host: String,
+    /// Skills: only those that need attention.
+    #[serde(default)]
+    attention: Option<String>,
+    /// Skills: show checkboxes and the bulk bar.
+    #[serde(default)]
+    select: Option<String>,
     /// After a save: the commit, and what happened to the push.
     #[serde(default)]
     saved: String,
@@ -510,7 +534,13 @@ async fn skills(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
-    let v = views::skills(&snap, &scope, &q.q);
+    let v = views::skills_library(
+        &snap,
+        &scope,
+        &q.q,
+        q.attention.is_some(),
+        q.select.is_some(),
+    );
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page);
@@ -540,8 +570,9 @@ async fn skill_detail(
         .writer
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
+    let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
     let p = skills_place::detail(&s, &snap, skill, &scope, &page).await?;
-    Ok(Html(SkillPage { page, v, p }.render()?))
+    Ok(Html(SkillPage { page, v, files, p }.render()?))
 }
 
 async fn memory(

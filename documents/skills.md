@@ -119,6 +119,21 @@ for same-named skills with different text, a **Needs attention** filter with a p
 the folder's file tree with a read-only viewer, and **Check for updates** for skills
 installed from GitHub (preview, keep-your-edits merge, the `skills` CLI's lock updated).
 
+How it works (`atlas-web::skill_ops`, `library`, `library_pages`):
+- Every create, delete, move or bulk switch is one change through `atlas-web::change`: one
+  commit per repo, the destination repo first; the placements file is read and written
+  inside the change. Turning several skills off, moving and deleting go through a
+  confirmation page that lists each folder, record and entry that changes.
+- A skill's `skills` CLI record moves with it (`atlas_fs::lock::convert_record`, as T3
+  Code's `convertRecord`) only when both locks sit in repos Atlas commits. The global lock
+  usually lives in `~/.agents`, outside git: then Atlas changes neither lock and the
+  confirmation says so. A delete drops the record only from a lock Atlas commits.
+- Groups, Conflict marks and Needs attention are worked out once per read of the store
+  (`library::Index`): conflicts compare exact folder fingerprints of same-named copies in
+  the store and in agents' own folders.
+- The file viewer opens only a file the catalog listed for that skill, refuses links, shows
+  at most 256 KB, and renders `.md` through the sanitiser; scripts are flagged, never run.
+
 ## Updates
 
 **Check for updates** (Skills page, signed in; never automatic) compares each store skill

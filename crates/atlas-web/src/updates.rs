@@ -81,6 +81,11 @@ impl Updates {
         )
     }
 
+    /// Where the `skills` CLI's global lock is read from (the skill library uses it too).
+    pub(crate) fn global_lock(&self) -> &Path {
+        &self.global_lock
+    }
+
     pub(crate) fn with(api: &str, global_lock: PathBuf) -> Self {
         Self {
             github: GitHub::new(api),
