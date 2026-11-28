@@ -1228,7 +1228,11 @@ async fn plan_change(
     let (lock_path, lock_kind) = (skill.lock.path.clone(), skill.lock.kind);
     let (name, source) = (skill.name.to_string(), skill.source.clone());
     let now = iso_now();
+    let pin = prepared.local.pin.clone();
     let write: change::Apply = Box::new(move || {
+        // The pin was checked before the git lock was taken; an edit or update committed
+        // since would be written over, so the folder is read again here, under the lock.
+        still_pinned(&root, &rel, &pin)?;
         if touched {
             write_folder(&root, &rel, &new_tree)?;
         }
@@ -1247,6 +1251,16 @@ async fn plan_change(
     Ok((repos, write))
 }
 
+/// Refuses when the skill's folder is no longer the one the preview showed.
+fn still_pinned(root: &Path, rel: &str, pin: &str) -> Result<(), String> {
+    let now = read_local(&root.join(rel))?;
+    if now.pin == pin {
+        Ok(())
+    } else {
+        Err("The skill changed since the preview. Open it again.".to_owned())
+    }
+}
+
 /// Replaces the skill's folder with `tree` (execute bits kept). Runs inside the change,
 /// which puts the folder back from git if anything here fails.
 fn write_folder(root: &Path, rel: &str, tree: &Tree) -> Result<(), String> {
@@ -1254,4 +1268,27 @@ fn write_folder(root: &Path, rel: &str, tree: &Tree) -> Result<(), String> {
         .map_err(|e| format!("Removing the old copy failed: {e}."))?;
     atlas_fs::library::write_tree(root, rel, tree)
         .map_err(|e| format!("Writing the update failed: {e}."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_changed_after_the_preview_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("skills/x");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("SKILL.md"), "one\n").unwrap();
+        let pin = read_local(&folder).unwrap().pin;
+        assert_eq!(still_pinned(dir.path(), "skills/x", &pin), Ok(()));
+        // Committed meanwhile (an edit, or another update).
+        std::fs::write(folder.join("SKILL.md"), "two\n").unwrap();
+        let got = still_pinned(dir.path(), "skills/x", &pin);
+        assert!(got.is_err_and(|m| m.contains("changed since the preview")));
+        // A new file counts too.
+        std::fs::write(folder.join("SKILL.md"), "one\n").unwrap();
+        std::fs::write(folder.join("extra.md"), "x\n").unwrap();
+        assert!(still_pinned(dir.path(), "skills/x", &pin).is_err());
+    }
 }
