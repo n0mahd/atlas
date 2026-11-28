@@ -51,7 +51,7 @@
     {% endif %}
     {% for c in m.clients %}
     <div class="row static client-row">
-      <span class="row-main"><span class="row-name">{{ c.user }}</span><span class="row-desc {{ c.class }}">{{ c.status }}</span>{% for p in c.problems %}<span class="row-desc warn">{{ p }}</span>{% endfor %}</span>
+      <span class="row-main"><span class="row-name">{{ c.user }}</span><span class="row-desc {{ c.class }}">{{ c.status }}</span>{% if !c.next.is_empty() %}<span class="row-desc muted">{{ c.next }}</span>{% endif %}{% for p in c.problems %}<span class="row-desc warn">{{ p }}</span>{% endfor %}</span>
       {% if page.signed_in %}<form method="post" action="/machines/{{ c.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Unpair {{ c.user }} on {{ m.name }}" aria-label="Unpair {{ c.user }} on {{ m.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></form>{% endif %}
     </div>
     {% endfor %}
