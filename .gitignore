@@ -2,3 +2,4 @@
 /.playwright-mcp
 /site/.wrangler
 /.claude/
+.env
