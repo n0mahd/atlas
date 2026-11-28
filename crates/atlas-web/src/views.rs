@@ -26,19 +26,6 @@ pub struct Snapshot {
     pub outside: atlas_fs::outside::Outside,
 }
 
-/// The agents Atlas shows marks for. T3 Code and Herdr run the others, so they have none
-/// of their own.
-pub const AGENTS: [HarnessKind; 8] = [
-    HarnessKind::ClaudeCode,
-    HarnessKind::Codex,
-    HarnessKind::OpenCode,
-    HarnessKind::Pi,
-    HarnessKind::Antigravity,
-    HarnessKind::Amp,
-    HarnessKind::Muse,
-    HarnessKind::Grok,
-];
-
 /// Short names, as people say them.
 pub(crate) const fn short(kind: HarnessKind) -> &'static str {
     match kind {
@@ -245,9 +232,7 @@ fn harness(snap: &Snapshot, kind: HarnessKind) -> Option<&HarnessView> {
 
 /// Agents set up for this login on the hub.
 fn present_agents(snap: &Snapshot) -> Vec<HarnessKind> {
-    AGENTS
-        .iter()
-        .copied()
+    HarnessKind::agents()
         .filter(|&k| harness(snap, k).is_some_and(|h| h.present))
         .collect()
 }
@@ -517,9 +502,8 @@ pub struct SkillsList {
 }
 
 fn agent_states(have: &[HarnessKind], present: &[HarnessKind]) -> Vec<AgentState> {
-    AGENTS
-        .iter()
-        .map(|&k| {
+    HarnessKind::agents()
+        .map(|k| {
             let (state, class) = if !present.contains(&k) {
                 ("not set up here".to_owned(), "muted")
             } else if have.contains(&k) {
@@ -1136,9 +1120,8 @@ fn states(
     reach: &[(HarnessKind, Access)],
     words: impl Fn(HarnessKind, &Access) -> String,
 ) -> Vec<AgentState> {
-    AGENTS
-        .iter()
-        .map(|&k| {
+    HarnessKind::agents()
+        .map(|k| {
             let (state, class) = match reach.iter().find(|(r, _)| *r == k) {
                 _ if !present.contains(&k) => ("not set up here".to_owned(), "muted"),
                 Some((_, a)) => (words(k, a), if a.reads() { "ok" } else { "warn" }),
@@ -1534,7 +1517,7 @@ fn hub_machine(snap: &Snapshot, hub: &str) -> Machine {
     let mut lines = Vec::new();
     let mut absent = Vec::new();
     let outside_total = snap.outside.skills.iter().filter(|s| !s.kept).count();
-    for &k in &AGENTS {
+    for k in HarnessKind::agents() {
         let Some(h) = harness(snap, k) else { continue };
         if !h.present {
             absent.push(short(k));

@@ -32,7 +32,11 @@ items = ["skill:~/.claude/skills/omarchy"]
 
 Types: `atlas_core::catalog::{Placements, Placement, Keep}`. Reading and writing:
 `atlas_fs::library::{read_placements, write_placements}` (refuses to overwrite a change
-made since it was read).
+made since it was read). Pages read placements from the store snapshot
+(`Catalog::placements`, and `Catalog::placements_error` when the file is invalid, which
+turns the switches off); only a change reads the file again, inside its apply step. The one
+way a change writes it is `atlas-web::change::rewrite_placements` (inside a larger change)
+or `change::edit_placements` (the file alone, one commit).
 
 ### Use in…
 
@@ -190,7 +194,14 @@ How it works (`atlas-web::skill_ops`, `library`, `library_pages`):
 - Every create, delete, move or bulk switch is one change through `atlas-web::change`: one
   commit per repo, the destination repo first; the placements file is read and written
   inside the change. Turning several skills off, moving and deleting go through a
-  confirmation page that lists each folder, record and entry that changes.
+  confirmation page that lists each folder, record and entry that changes. "Use in… →
+  Only these projects" on a project's skill is one change too: the knowledge repo's commit
+  holds the folder and its `only-projects` entry, so it is never global for every project.
+- Every handler that changes something checks the session and CSRF token first
+  (`change::authorise`), before reading the store or the form. The page script
+  (`passkey.js`, `Accept: application/json`) gets every refusal as JSON `{error}`
+  (`ChangeError::into_response`, `change::form_error`) and shows it in place; any other
+  answer makes it post the form again as a plain one.
 - A skill's `skills` CLI record moves with it (`atlas_fs::lock::convert_record`, as T3
   Code's `convertRecord`) only when both locks sit in repos Atlas commits. The global lock
   usually lives in `~/.agents`, outside git: then Atlas changes neither lock and the

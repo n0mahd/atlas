@@ -15,8 +15,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::change::{ChangeError, respond};
-use crate::edit::{forbidden, wants_json, writer};
+use crate::change::{self, ChangeError, respond};
+use crate::edit::{wants_json, writer};
 use crate::views::{Page, Snapshot};
 use crate::{AppError, AppState, markdown, skill_ops, skills_place};
 
@@ -159,7 +159,7 @@ fn check(s: &AppState, b: &Bulk) -> Result<Asked, String> {
             .agent
             .parse()
             .map_err(|_| format!("{} isn't an agent Atlas knows.", b.agent))?;
-        if !crate::views::AGENTS.contains(&k) {
+        if k.is_host() {
             return Err(format!("{} has no skills of its own.", k.display_name()));
         }
         Some(k)
@@ -188,15 +188,12 @@ struct Next {
 /// `confirmed=1`.
 pub(crate) async fn bulk(State(s): State<AppState>, headers: HeaderMap, body: String) -> Response {
     let b = Bulk::parse(&body);
-    let Ok(w) = writer(&s) else {
-        return AppError::NotFound.into_response();
-    };
-    if !w.authorised(&headers, &b.csrf) {
-        return forbidden("Your session ended. Sign in again; nothing changed.\n");
+    if let Err(e) = change::authorise(&s, &headers, &b.csrf) {
+        return e.into_response(&headers);
     }
     let asked = match check(&s, &b) {
         Ok(a) => a,
-        Err(msg) => return AppError::Bad(msg).into_response(),
+        Err(msg) => return change::form_error(&headers, AppError::Bad(msg)),
     };
     let needs_confirm = match asked.action {
         Action::On => false,
@@ -498,29 +495,32 @@ pub(crate) async fn new_save(
     State(s): State<AppState>,
     headers: HeaderMap,
     Form(f): Form<NewForm>,
-) -> Result<Response, AppError> {
-    let w = writer(&s)?;
-    if !w.authorised(&headers, &f.csrf) {
-        return Ok(forbidden(
-            "Your session ended. Sign in again; nothing changed.\n",
-        ));
+) -> Response {
+    if let Err(e) = change::authorise(&s, &headers, &f.csrf) {
+        return e.into_response(&headers);
     }
+    new_skill(&s, &headers, &f)
+        .await
+        .unwrap_or_else(|e| change::form_error(&headers, e))
+}
+
+async fn new_skill(s: &AppState, headers: &HeaderMap, f: &NewForm) -> Result<Response, AppError> {
     let snap = s.snapshot().await?;
     let home = if f.place == "global" || f.place.is_empty() {
         Some(SkillHome::Private)
     } else {
-        parse_home(&s, &f.place).filter(|h| matches!(h, SkillHome::Project(_)))
+        parse_home(s, &f.place).filter(|h| matches!(h, SkillHome::Project(_)))
     };
     let project = match &home {
         Some(SkillHome::Project(p)) => Some(p.to_string()),
         _ => None,
     };
-    let json = wants_json(&headers);
+    let json = wants_json(headers);
     let fail = |msg: String| async {
         if json {
-            Ok(ChangeError::Refused(msg).into_response(&headers))
+            Ok(ChangeError::Refused(msg).into_response(headers))
         } else {
-            new_page(&s, &headers, &snap, &f, project.clone(), msg)
+            new_page(s, headers, &snap, f, project.clone(), msg)
         }
     };
     let Some(home) = home else {
@@ -534,10 +534,10 @@ pub(crate) async fn new_save(
         .await;
     };
     let next = format!("/skills/{}/{name}", home.key());
-    match skill_ops::create_skill(&s, &headers, &f.csrf, home, name, f.description.clone()).await {
-        Ok(outcome) => Ok(respond(&s, &headers, &outcome, &next)),
+    match skill_ops::create_skill(s, headers, &f.csrf, home, name, f.description.clone()).await {
+        Ok(outcome) => Ok(respond(s, headers, &outcome, &next)),
         Err(ChangeError::Refused(msg)) => fail(msg).await,
-        Err(e) => Ok(e.into_response(&headers)),
+        Err(e) => Ok(e.into_response(headers)),
     }
 }
 

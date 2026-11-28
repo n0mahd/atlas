@@ -62,5 +62,5 @@
       <button class="button-ink" type="submit"{% if !p.can_change() %} disabled{% endif %}>Apply</button>
     </form>
   </details>
-  {% if p.can_sign_in() %}<p class="place-none"><a href="/signin?next={{ p.action }}">Sign in</a> to change who gets it.</p>{% endif %}
+  {% if p.can_sign_in() %}<p class="place-none"><a href="{{ p.signin }}">Sign in</a> to change who gets it.</p>{% endif %}
 </div>

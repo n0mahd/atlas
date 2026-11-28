@@ -19,7 +19,7 @@
 //! one usually is, in `~/.agents`) is never written; [`preview_move`] and
 //! [`preview_delete`] say so, for the confirmation page.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use atlas_core::catalog::edit::RepoKind;
@@ -30,7 +30,7 @@ use atlas_fs::lock::{self, LockFile, LockKind};
 use axum::http::HeaderMap;
 
 use crate::AppState;
-use crate::change::{Apply, ChangeError, Outcome, RepoChange, commit_change};
+use crate::change::{Apply, ChangeError, Outcome, RepoChange, authorise, commit_change};
 use crate::views::Snapshot;
 
 /// Creates `<home>/<name>/SKILL.md` with a frontmatter `name` and `description`, on for
@@ -119,6 +119,42 @@ pub(crate) async fn move_skills(
     plan.commit(s, headers, csrf).await
 }
 
+/// Moves a project's skill to Global and uses it only in `projects`, as one change: the
+/// knowledge repo's commit holds the folder and its `only-projects` entry together, then
+/// the project's commit removes it there. If the second commit fails, the global copy is
+/// already limited to `projects`, never used everywhere.
+pub(crate) async fn move_to_global_only_in(
+    s: &AppState,
+    headers: &HeaderMap,
+    csrf: &str,
+    from: SkillHome,
+    name: Slug,
+    projects: BTreeSet<Slug>,
+) -> Result<Outcome, ChangeError> {
+    authorise(s, headers, csrf)?;
+    let st = s.clone();
+    let plan = blocking(move || {
+        let to = SkillHome::Private;
+        let mut plan = plan_move(&st, &[(from, name.clone())], &to)?;
+        let names: Vec<&str> = projects.iter().map(Slug::as_str).collect();
+        plan.retitle(format!(
+            "Move {name} to Global and use it only in {} in Atlas",
+            list_names(&names)
+        ));
+        plan.placement(
+            &st,
+            PlacementOp::Limit {
+                home: to,
+                name,
+                projects,
+            },
+        );
+        Ok(plan)
+    })
+    .await?;
+    plan.commit(s, headers, csrf).await
+}
+
 /// What a confirmation page shows before a change: one line per thing that changes, and
 /// notes such as a lock file Atlas leaves alone.
 #[derive(Debug, Default)]
@@ -158,14 +194,6 @@ pub(crate) async fn preview_move(
 
 fn refused(msg: &str) -> ChangeError {
     ChangeError::Refused(msg.to_owned())
-}
-
-fn authorise(s: &AppState, headers: &HeaderMap, csrf: &str) -> Result<(), ChangeError> {
-    match &s.writer {
-        None => Err(ChangeError::ReadOnly),
-        Some(w) if w.authorised(headers, csrf) => Ok(()),
-        Some(_) => Err(ChangeError::Forbidden),
-    }
 }
 
 /// The longest description agents accept (Claude Code's limit).
@@ -345,6 +373,12 @@ enum PlacementOp {
         name: Slug,
         keep: bool,
     },
+    /// A global skill is used only in these projects.
+    Limit {
+        home: SkillHome,
+        name: Slug,
+        projects: BTreeSet<Slug>,
+    },
 }
 
 impl PlacementOp {
@@ -373,25 +407,22 @@ impl PlacementOp {
                 }
                 p.set(to, name, carried);
             }
+            Self::Limit {
+                home,
+                name,
+                projects,
+            } => {
+                let mut limited = p.of(home, name).clone();
+                limited.only_projects = Some(projects.clone());
+                p.set(home, name, limited);
+            }
         }
     }
 }
 
-fn apply_placements(knowledge: &Path, ops: &[PlacementOp]) -> Result<(), LibraryError> {
-    let (before, expected) = library::read_placements(knowledge)?;
-    let mut now = before.clone();
-    for op in ops {
-        op.apply(&mut now);
-    }
-    if now != before {
-        library::write_placements(knowledge, &now, &expected)?;
-    }
-    Ok(())
-}
-
 impl Write {
     fn run(self) -> Result<(), String> {
-        let r = match self {
+        let r: Result<(), LibraryError> = match self {
             Self::NewTree { root, rel, tree } => library::write_tree(&root, &rel, &tree),
             Self::Move {
                 from_root,
@@ -401,7 +432,14 @@ impl Write {
             } => atlas_fs::skill_folder::move_folder(&from_root, &from_rel, &to_root, &to_rel),
             Self::Remove { root, rel } => library::remove_tree(&root, &rel),
             Self::File { root, rel, bytes } => library::write_file(&root, &rel, &bytes),
-            Self::Placements { knowledge, ops } => apply_placements(&knowledge, &ops),
+            Self::Placements { knowledge, ops } => {
+                return crate::change::rewrite_placements(&knowledge, |p| {
+                    for op in &ops {
+                        op.apply(p);
+                    }
+                    Ok(())
+                });
+            }
         };
         r.map_err(|e| {
             let mut t = e.to_string();
@@ -479,6 +517,14 @@ impl Plan {
         if self.repos.iter().any(|r| r.kind == RepoKind::PublicSkills) {
             self.notes.push(PUBLIC_NOTE.to_owned());
         }
+    }
+
+    /// Gives every repo's commit `message`.
+    fn retitle(&mut self, message: String) {
+        for r in &mut self.repos {
+            r.message.clone_from(&message);
+        }
+        self.message = message;
     }
 
     fn preview(self) -> Preview {
