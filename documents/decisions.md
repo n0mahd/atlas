@@ -430,3 +430,19 @@ whose message ends "in Atlas", which is how Atlas's own editor names its commits
 that can't be told cheaply it says "changed since the last update". The classifier
 (`atlas-web::review`) sorts paths into "runs by itself" and "agents act on it", so MCP
 server entries can join the first group in phase 4.
+
+## 0037 · 2026-11-27 · A first run that doesn't assume the owner's machine
+`deploy/install.sh` is the path a newcomer takes, so it now checks its needs (Linux,
+cargo, git, a signed-in Tailscale, systemd user services) before the long build and
+names what's missing in one sentence; reads the login from `tailscale whois` rather than
+`python3`; lists what it will create, asking once only when run from a terminal; and
+shows Tailscale's own output and the hub's journal instead of hiding failures. It never
+changes an existing `hub.toml` or knowledge repo. When there is no `~/Knowledge` it
+makes a starter repo on `main` (`AGENTS.md`, `skills/`, `memory/`, `hooks/`, `agents/`)
+and says the one step left, adding a remote and `git push -u`, since updates pin the
+upstream commit. `public_skills` and `projects_dir` are written only when those folders
+exist. The unit is copied, not linked into the clone. It also builds atlasd for the
+hub's own CPU into `<state>/dist/`, static (musl) when that target is installed, else
+native with a warning that it suits only similar systems; other CPUs stay a manual
+cross-build. `deploy/test-install.sh` runs the script in throwaway homes with stand-in
+system tools, so it can be checked without touching the machine.
