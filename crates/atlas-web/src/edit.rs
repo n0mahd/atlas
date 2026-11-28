@@ -834,7 +834,7 @@ fn a_passkey_row_says_how_it_was_added() {
 }
 
 /// The notice after an update was sent from Settings.
-const SENT: &str = "On your machines within 10 minutes";
+const SENT: &str = "On your machines within a minute";
 
 async fn render_settings(
     s: &AppState,
@@ -1846,7 +1846,7 @@ mod tests {
         )
         .await;
         assert!(
-            view.contains("Saved · on your machines within 10 minutes"),
+            view.contains("Saved · on your machines within a minute"),
             "{view}"
         );
 

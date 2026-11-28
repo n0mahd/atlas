@@ -55,16 +55,20 @@ account's `~/.ssh/authorized_keys`.
 
 ## What the installer does
 
-1. Checks the machine is Linux or macOS and picks the build for its CPU.
+1. Checks the machine is Linux or macOS, picks the build for its CPU, and checks it can run
+   atlasd in the background (systemd user services on Linux, launchd on macOS). If it
+   can't, or the hub has no build for it, it stops and says why. Nothing is installed or
+   paired.
 2. Downloads atlasd from the hub and checks its SHA-256, so a damaged or altered download
-   is refused.
+   is refused. If the hub refuses the download, you see the hub's message.
 3. Installs it as `~/.local/bin/atlasd`.
 4. Pairs it with the hub, using the one-time code. The machine gets its own token.
-5. If `~/Knowledge` or `~/Skills` exist, lets atlasd take over the skill links an older
-   setup made into them.
-6. Runs atlasd once straight away, then every 10 minutes. On Linux that's a systemd user
-   timer, set to keep running after you log out. On macOS it's a launchd agent,
-   `~/Library/LaunchAgents/atlasd.plist`, logging to `~/Library/Logs/atlasd.log`.
+5. Runs atlasd once while you watch and prints a two- or three-line summary: what it
+   linked for which agents, and whether anything of yours was replaced.
+6. Then runs it every minute. On Linux that's a systemd user timer, set to keep
+   running after you log out (if that can't be turned on, it says atlasd only runs while
+   you're logged in). On macOS it's a launchd agent, `~/Library/LaunchAgents/atlasd.plist`,
+   logging to `~/Library/Logs/atlasd.log`.
 
 atlasd runs as your account. It never asks for root.
 
@@ -85,7 +89,7 @@ Before you've sent your first update it says "The hub has no signed release yet"
 
 On the hub, **Machines** lists the machine and account, with "seen … ago" once atlasd has
 reported in. If it says "Update 3, 1 behind", the machine hasn't picked up the latest yet;
-wait for the next 10-minute run.
+wait for the next run, within a minute.
 
 ## Removing Atlas
 

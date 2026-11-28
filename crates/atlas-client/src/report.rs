@@ -1,5 +1,6 @@
 //! What each harness looks like after a pass, for the hub's Machines screen.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -79,15 +80,23 @@ pub fn harnesses(home: &Path, sources_dir: &Path) -> Vec<HarnessReport> {
         .into_iter()
         .zip(layouts)
         .map(|(view, layout)| {
+            // An agent that reads two folders (OpenCode reads Claude's and Codex's) sees a
+            // skill linked in both once, so each name counts once, as on the hub's own row.
             let entries = view.skill_dirs.iter().flat_map(|d| d.entries.iter());
-            let (mut atlas, mut outside, mut broken) = (0, 0, 0);
+            let (mut atlas, mut outside, mut broken) =
+                (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
             for e in entries {
                 match e {
-                    InstalledSkill::FromAtlas { .. } => atlas += 1,
-                    InstalledSkill::Outside { .. } => outside += 1,
-                    InstalledSkill::Broken { .. } => broken += 1,
-                }
+                    InstalledSkill::FromAtlas { .. } => atlas.insert(e.name()),
+                    InstalledSkill::Outside { .. } => outside.insert(e.name()),
+                    InstalledSkill::Broken { .. } => broken.insert(e.name()),
+                };
             }
+            let (atlas, outside, broken) = (
+                count(atlas.len()),
+                count(outside.len()),
+                count(broken.len()),
+            );
             let instructions = match view.instructions.first().map(|i| &i.link) {
                 Some(InstructionLink::Linked) => "linked",
                 Some(InstructionLink::Imports) => "imports",

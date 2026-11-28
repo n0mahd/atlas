@@ -107,8 +107,8 @@ in <path> aren't in Atlas yet" and leaves it.
 
 `<knowledge>` here is **the owner's own checkout** of the knowledge repo, never Atlas's
 local copy: that copy is reset to the signed commit on every pass (`checkout --force` and
-`git clean`), so notes an agent wrote through a link into it would be deleted ten minutes
-later and never reach git. atlasd uses `memory_store` from `client.toml` (`atlasd pair
+`git clean`), so notes an agent wrote through a link into it would be deleted on the next
+pass and never reach git. atlasd uses `memory_store` from `client.toml` (`atlasd pair
 --memory-store ~/Knowledge`), else the first `adopt` folder inside a checkout, and only
 when that checkout's `origin` is the knowledge repo's remote. With none, nothing is linked
 and the pass says why. The trade-off: new notes reach git through the owner's own sync

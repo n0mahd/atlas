@@ -239,7 +239,7 @@ pub(crate) async fn page(
     page.flash = if q.unchanged.is_some() {
         "Nothing was chosen, so nothing changed.".to_owned()
     } else if q.sent.is_some() {
-        "Tidied · on your machines within 10 minutes".to_owned()
+        "Tidied · on your machines within a minute".to_owned()
     } else if !q.saved.is_empty() && q.saved.bytes().all(|b| b.is_ascii_hexdigit()) {
         "Tidied and committed.".to_owned()
     } else {

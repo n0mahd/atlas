@@ -37,7 +37,7 @@ Clone the repo on the machine that will be the hub, then:
    repo a remote and push it, as the script says.
 2. On every machine whose agents Atlas should manage, the hub's own machine included:
    **Machines → Pair** in the hub, then run the command it shows.
-3. Edit a skill in the hub and press Save. Your machines have it within 10 minutes.
+3. Edit a skill in the hub and press Save. Your machines have it within a minute.
 
 The [user guide](documents/guide/README.md) covers each step. The design is in
 `documents/` (strategy, architecture, decisions) and setup files are in `deploy/`. The

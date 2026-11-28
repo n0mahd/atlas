@@ -206,7 +206,8 @@ Mark: the one-colour `grok-build.svg` from xAI's Agent Client Protocol registry 
 
 ## 0023 · 2026-11-27 · How atlasd applies a release
 `atlasd` (crate `atlas-client`) runs as each OS account, from a systemd user timer every
-10 minutes, never as root. Each run: fetch the latest signed release, check it against the
+10 minutes (every minute since decision 0042), never as root. Each run: fetch
+the latest signed release, check it against the
 keys trusted at pairing (or carried by an applied release), refuse rollbacks and reused
 numbers, fetch every pinned repo into `~/.local/share/atlas/sources/` and check each tree
 before checking any out, then plan and apply: skill links in one folder per harness (a
@@ -425,7 +426,8 @@ when `/proc` and `/etc/hostname` are missing. The hub serves builds named
 `atlasd-<os>-<arch>` (`linux` or `macos`, `x86_64` or `aarch64`) from `<state>/dist/`, and
 one install script covers both: on Darwin it checks the download with `shasum -a 256` and
 loads a launchd agent (`deploy/atlasd.plist`, `~/Library/LaunchAgents/atlasd.plist`) that
-runs `atlasd run` at load and every 600 s, in the login's GUI domain, or its user domain
+runs `atlasd run` at load and every 600 s (60 s since decision 0042), in
+the login's GUI domain, or its user domain
 when nobody is logged in at the Mac. macOS builds are made on a Mac, because rustls'
 platform verifier links Apple's Security framework; CI-signed builds stay the target.
 
@@ -603,3 +605,65 @@ exclusive lock on `<file>.lock` in the state folder, since `atlas-hub` commands 
 same files. Setup links keep their 64-character form and have no rate limit: they are
 made on the hub itself and can't be guessed. The install script joins its arguments, so a
 code pasted with a space still works.
+
+## 0041 · 2026-11-28 · The install script runs the first pass in the foreground
+The served install script now runs `atlasd run --summary` itself, after pairing and before
+it starts the timer (or the launchd agent), so the person sees what happened in two or
+three lines: what was linked for which agents, and that nothing of theirs was deleted, or
+which older links were replaced. This replaces 0036's `systemctl --user start --no-block
+atlasd.service`: that first run was invisible and gave no summary. The cost is that the
+first run is outside the unit's sandbox settings; it is the same binary and user, and every
+later run is under systemd again. The summary comes from the actions the pass carried out,
+not a second count. The script checks for systemd user services (`systemctl --user
+show-environment`; `launchctl print` on macOS) before it downloads or pairs, so WSL or a
+container stops with one sentence and no paired machine that never reports. It no longer
+passes `--adopt "$HOME/Knowledge" "$HOME/Skills"`, which came from the owner's old setup;
+`atlasd pair --adopt` stays. Downloads use `curl -w '%{http_code}'` and print the hub's
+message on a refusal. With no builds in `<state>/dist/` the Machines page, the CLI's
+pair-code and `atlas-hub pair-code` issue no code and say how to add a build, and
+`/install` answers with a script that says the same and exits 1, served with status 200
+because the documented `curl -fsSL` would otherwise show only "error: 400".
+
+## 0042 · 2026-11-28 · atlasd runs every minute because an idle run writes nothing
+A run with nothing new now writes nothing on the machine, so `deploy/atlasd.timer`
+(`OnCalendar=*:*:00`, still `OnBootSec=2min` and `Persistent=true`) and the launchd
+agent (`StartInterval` 60) run atlasd every minute instead of every 10, and the UI,
+install script and guide say "within a minute".
+
+- **Copies left alone.** `Repo::checkout_detached` first runs one
+  `git --no-optional-locks status --porcelain=v2 --branch --untracked-files=all
+  --ignored=matching`. If HEAD is detached at the pinned commit and it lists nothing
+  (no change, staged file, untracked or ignored file), the checkout and `clean -ffdx` are
+  skipped; any drift still gets both. The status takes no lock and doesn't refresh the
+  index, so it writes nothing. The tree check before it is unchanged. `clone_or_open`
+  sets `origin`'s URL only when it differs, because `git remote set-url` rewrites
+  `.git/config` every time. An empty folder left in a copy is no longer removed on an
+  idle run (status can't see it); it holds no files, so no harness sees anything.
+- **Hub writes.** `clients.json` is rewritten at once when a report says something new
+  (anything but its `at`), and otherwise at most once a minute per client, for both the
+  report POST and `GET /api/release`. The newer `last_seen` stays in memory in between;
+  a hub restart can lose up to a minute of it, which is fine. CLI tokens already did the
+  same (decision 0038).
+- **Machines page.** A machine that is behind, or has applied no update while one exists,
+  reads "Applies at the next check, within a minute" when it was seen in the last five
+  minutes, else "Applies when this machine next checks in".
+
+Measured on a laptop (real `atlasd` and `atlas-hub` release builds, real git, a temp HOME
+with every XDG variable inside it, the hub on a throwaway socket behind a local HTTPS
+proxy that adds the Tailscale login header; knowledge repo of 30 skills, an `AGENTS.md`,
+a hook, a subagent and 40 memory notes, plus a public repo of 5 skills; Claude Code,
+Codex, OpenCode and Pi present; 15 no-change runs each):
+
+| | Before | After |
+|---|---|---|
+| Wall time, median (min–max) | 66 ms (65–69) | 65 ms (62–73) |
+| Hub requests | GET release, POST report | the same |
+| git processes | 12 (incl. 2 `checkout --force`, 2 `clean -ffdxq`, 2 `remote set-url`) | 10 (2 `status`, 2 `config --get`, no writes) |
+| Files written on the machine | `.git/index`, `.git/config` (and their folder) in both copies | none |
+| Hub `clients.json` rewrites | 2 per run | at most 1 a minute |
+
+Time barely moved: on a small copy one `git status` costs about what a checkout does.
+What changed is that an idle run is now read-only on the machine, and a minute's worth
+of runs costs the hub one small file write. Each run still logs a line ("Update N is
+applied.") to the journal, or to `~/Library/Logs/atlasd.log` on a Mac, which grows by
+about 30 KB a day there.

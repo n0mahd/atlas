@@ -427,7 +427,9 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
-    fn repo(identity: bool) -> tempfile::TempDir {
+    /// A repo with its own identity, so nothing depends on the machine's git settings.
+    /// Tests make a commit fail with a held `index.lock`, not a missing identity.
+    fn repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
         git(p, &["init", "--quiet", "--initial-branch=main"]);
@@ -439,12 +441,6 @@ mod tests {
         fs::write(p.join("notes.md"), "mine\n").unwrap();
         git(p, &["add", "."]);
         git(p, &["commit", "--quiet", "-m", "init"]);
-        if !identity {
-            // A repo whose commits fail: no identity anywhere git looks.
-            git(p, &["config", "--unset", "user.name"]);
-            git(p, &["config", "--unset", "user.email"]);
-            git(p, &["config", "user.useConfigOnly", "true"]);
-        }
         dir
     }
 
@@ -459,10 +455,10 @@ mod tests {
 
     #[test]
     fn a_failed_second_commit_restores_only_its_own_paths() {
-        let dest = repo(true);
+        let dest = repo();
         // The source's commit fails because git's index is locked, and the lock stays
         // while Atlas restores it, so the restore can't lean on git.
-        let src = repo(true);
+        let src = repo();
         // The owner has an uncommitted file in the source repo at a path the destination
         // part names; restoring the source must never touch it.
         fs::create_dir_all(src.path().join("skills/b")).unwrap();
@@ -513,7 +509,7 @@ mod tests {
 
     #[test]
     fn a_failing_or_panicking_apply_changes_nothing() {
-        let r = repo(true);
+        let r = repo();
         let repos = vec![change(
             r.path(),
             RepoKind::Knowledge,
@@ -542,7 +538,7 @@ mod tests {
 
     #[test]
     fn dirty_paths_refuse_before_anything_is_written() {
-        let r = repo(true);
+        let r = repo();
         fs::write(r.path().join("notes.md"), "edited by hand\n").unwrap();
         let repos = vec![change(r.path(), RepoKind::Knowledge, &["notes.md"])];
         let got = run(
@@ -560,7 +556,7 @@ mod tests {
 
     #[test]
     fn a_new_file_and_an_untouched_path_commit_together() {
-        let r = repo(true);
+        let r = repo();
         let repos = vec![change(
             r.path(),
             RepoKind::Knowledge,

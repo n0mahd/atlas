@@ -408,7 +408,10 @@ impl Repo {
             )?;
         }
         let repo = Repo::open(dir)?;
-        repo.git(&["remote", "set-url", "origin", remote], LOCAL_TIMEOUT)?;
+        // Only when it changed: `set-url` rewrites the config file even when it's the same.
+        if repo.config("remote.origin.url")?.as_deref() != Some(remote) {
+            repo.git(&["remote", "set-url", "origin", remote], LOCAL_TIMEOUT)?;
+        }
         Ok(repo)
     }
 
@@ -439,12 +442,17 @@ impl Repo {
     }
 
     /// Checks out `commit` detached, discarding anything else in the working tree.
-    /// Only for Atlas's own copies, never a user's repo.
+    /// Only for Atlas's own copies, never a user's repo. A copy already detached at
+    /// `commit` with nothing changed, staged, untracked or ignored is left alone, so a run
+    /// with nothing new writes nothing; a copy that drifted is checked out and cleaned.
     ///
     /// # Errors
     /// Not a full commit id, or git fails.
     pub fn checkout_detached(&self, commit: &str) -> Result<(), GitError> {
         check_oid(commit)?;
+        if self.pristine_at(commit) {
+            return Ok(());
+        }
         self.git(
             &[
                 "-c",
@@ -459,6 +467,42 @@ impl Repo {
         )?;
         self.git(&["clean", "-ffdxq"], LOCAL_TIMEOUT)?;
         Ok(())
+    }
+
+    /// Whether HEAD is detached at `commit` and the index and working tree match it
+    /// exactly, which is what `checkout --force --detach` plus `clean -ffdx` would leave.
+    /// One `git status` that takes no lock and doesn't refresh the index, so it writes
+    /// nothing. Any doubt (git fails, odd output) counts as not pristine.
+    fn pristine_at(&self, commit: &str) -> bool {
+        let Ok(out) = self.run(
+            &[
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--untracked-files=all",
+                "--ignored=matching",
+                "--ignore-submodules=none",
+            ],
+            LOCAL_TIMEOUT,
+        ) else {
+            return false;
+        };
+        if !out.status.success() {
+            return false;
+        }
+        let oid = format!("branch.oid {commit}");
+        let (mut at, mut detached) = (false, false);
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            match line.strip_prefix("# ") {
+                Some(h) if h == oid => at = true,
+                Some("branch.head (detached)") => detached = true,
+                Some(_) => {}
+                // Any entry is a change, an untracked file or an ignored one.
+                None => return false,
+            }
+        }
+        at && detached
     }
 
     /// The tree of `commit`.

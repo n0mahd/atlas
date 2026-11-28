@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- atlasd on macOS: a launchd agent for this login that runs `atlasd run` every 10 minutes,
+<!-- atlasd on macOS: a launchd agent for this login that runs `atlasd run` every minute,
      like atlasd.timer on Linux. The installer fills in __HOME__ and writes it to
      ~/Library/LaunchAgents/atlasd.plist. -->
 <plist version="1.0">
@@ -22,7 +22,7 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
-  <integer>600</integer>
+  <integer>60</integer>
   <key>Umask</key>
   <integer>63</integer>
   <key>ProcessType</key>

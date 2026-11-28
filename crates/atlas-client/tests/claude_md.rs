@@ -19,7 +19,7 @@ fn world(key: &Key, claude_md: &str) -> World {
 fn quiet(pass: &Pass, n: u64) {
     assert_eq!(
         pass.lines,
-        [format!("Release {n} is applied.")],
+        [format!("Update {n} is applied.")],
         "nothing to do"
     );
 }

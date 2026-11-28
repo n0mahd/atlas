@@ -31,7 +31,7 @@ struct Config {
     /// The address people open, such as `https://hub.example.ts.net:7443`. Passkeys are
     /// tied to it; without it Atlas stays read-only.
     public_url: Option<String>,
-    /// Passkeys and settings. Default: `$STATE_DIRECTORY`, else `~/.local/state/atlas-hub`.
+    /// Passkeys and settings. Default: as systemd's `StateDirectory=` (`default_state_dir`).
     state_dir: Option<String>,
     /// Minutes after start during which the first passkey can be made from the browser by
     /// an allowed Tailscale login, while none exists. Default 30; 0 turns it off.
@@ -68,11 +68,40 @@ fn load_config(home: &Path) -> Config {
 fn state_dir(home: &Path, config: &Config) -> PathBuf {
     config.state_dir.as_deref().map_or_else(
         || {
-            std::env::var_os("STATE_DIRECTORY")
-                .map_or_else(|| home.join(".local/state/atlas-hub"), PathBuf::from)
+            default_state_dir(
+                home,
+                std::env::var_os("STATE_DIRECTORY"),
+                std::env::var_os("XDG_STATE_HOME"),
+            )
         },
         |d| expand(home, d),
     )
+}
+
+/// The state folder as systemd's `StateDirectory=atlas-hub` makes it for a user service,
+/// so `atlas-hub setup` from a shell and the service agree: `$STATE_DIRECTORY` (the first
+/// one, if systemd lists several) when set, else `$XDG_STATE_HOME/atlas-hub`, else
+/// `~/.local/state/atlas-hub`. Relative values are ignored, as the XDG spec says.
+fn default_state_dir(
+    home: &Path,
+    state_directory: Option<std::ffi::OsString>,
+    xdg_state_home: Option<std::ffi::OsString>,
+) -> PathBuf {
+    let absolute = |p: PathBuf| p.is_absolute().then_some(p);
+    state_directory
+        .and_then(|v| {
+            v.to_str()
+                .and_then(|s| s.split(':').next())
+                .map(PathBuf::from)
+        })
+        .and_then(absolute)
+        .or_else(|| {
+            xdg_state_home
+                .map(PathBuf::from)
+                .and_then(absolute)
+                .map(|x| x.join("atlas-hub"))
+        })
+        .unwrap_or_else(|| home.join(".local/state/atlas-hub"))
 }
 
 const USAGE: &str = "usage: atlas-hub                         serve the hub
@@ -95,11 +124,12 @@ fn public_origin(config: &Config) -> String {
 /// The hub's origin and a fresh pairing code, for `pair-code` and `add-machine`.
 fn pairing(home: &Path, config: &Config) -> (String, String) {
     let origin = public_origin(config);
-    let code = atlas_signer::setup::issue_pairing(
-        &state_dir(home, config),
-        atlas_web::remote::PAIRING_TTL,
-    )
-    .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));
+    let state = state_dir(home, config);
+    if !atlas_web::install::has_builds(&state) {
+        fail(atlas_web::install::NO_BUILDS);
+    }
+    let code = atlas_signer::setup::issue_pairing(&state, atlas_web::remote::PAIRING_TTL)
+        .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));
     (origin, code)
 }
 
@@ -304,5 +334,40 @@ fn check_private(socket: &Path) {
             "{} must belong to this user and be closed to others (chmod 700)",
             dir.display()
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `atlas-hub setup` from a shell and the service must use one folder, or the setup
+    /// link is written where the service never looks.
+    #[test]
+    fn the_state_folder_is_where_systemd_puts_it() {
+        let home = Path::new("/home/u");
+        let dir = |state: Option<&str>, xdg: Option<&str>| {
+            default_state_dir(home, state.map(Into::into), xdg.map(Into::into))
+        };
+        assert_eq!(dir(None, None), home.join(".local/state/atlas-hub"));
+        assert_eq!(
+            dir(None, Some("/var/xdg")),
+            PathBuf::from("/var/xdg/atlas-hub")
+        );
+        assert_eq!(
+            dir(Some("/run/state/atlas-hub"), Some("/var/xdg")),
+            PathBuf::from("/run/state/atlas-hub"),
+            "the service's own variable wins"
+        );
+        assert_eq!(
+            dir(Some("/a/atlas-hub:/b/other"), None),
+            PathBuf::from("/a/atlas-hub"),
+            "systemd lists several with colons"
+        );
+        assert_eq!(
+            dir(Some("relative"), Some("also-relative")),
+            home.join(".local/state/atlas-hub"),
+            "relative values are ignored"
+        );
     }
 }

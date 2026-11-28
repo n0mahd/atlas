@@ -1,10 +1,11 @@
-# Runs atlasd.service every 10 minutes. See atlasd.service for install steps.
+# Runs atlasd.service every minute, to apply the latest update. See atlasd.service.
+# A run with nothing new is one GET and one POST to the hub and writes nothing here.
 [Unit]
-Description=Run atlasd every 10 minutes
+Description=Run atlasd every minute
 
 [Timer]
 OnBootSec=2min
-OnCalendar=*:0/10
+OnCalendar=*:*:00
 Persistent=true
 
 [Install]

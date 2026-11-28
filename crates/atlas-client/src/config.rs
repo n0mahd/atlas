@@ -9,6 +9,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::fsx;
 
+/// How to pair, for every message that says this login isn't paired.
+pub const HOW_TO_PAIR: &str = "To pair, choose Pair on the hub's Machines page and run the command it shows on this machine, or run `atlasd pair <hub-url> <code>`.";
+
+/// Why the pairing or trust file can't be read: a missing one means this login was never
+/// paired, which deserves plain words rather than "No such file or directory".
+fn unpaired(path: &Path, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!("this login isn't paired with a hub yet. {HOW_TO_PAIR}")
+    } else {
+        format!("can't read {}: {e}", path.display())
+    }
+}
+
 /// Every path the client uses, derived from the login's home folder.
 #[derive(Clone, Debug)]
 pub struct Paths {
@@ -157,12 +170,7 @@ impl Config {
     /// # Errors
     /// The file is missing or isn't a valid config.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| {
-            format!(
-                "can't read {}: {e}. Pair first with `atlasd pair <hub> <code>`.",
-                path.display()
-            )
-        })?;
+        let text = std::fs::read_to_string(path).map_err(|e| unpaired(path, &e))?;
         toml::from_str(&text).map_err(|e| format!("{} isn't valid: {e}", path.display()))
     }
 
@@ -191,12 +199,7 @@ impl State {
     /// # Errors
     /// The file is missing or isn't valid.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|e| {
-            format!(
-                "can't read {}: {e}. Pair first with `atlasd pair <hub> <code>`.",
-                path.display()
-            )
-        })?;
+        let bytes = std::fs::read(path).map_err(|e| unpaired(path, &e))?;
         serde_json::from_slice(&bytes).map_err(|e| format!("{} isn't valid: {e}", path.display()))
     }
 

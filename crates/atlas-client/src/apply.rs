@@ -16,9 +16,9 @@ use crate::tree::Held;
 
 /// What applying a plan did.
 #[derive(Clone, Debug, Default)]
-pub struct Applied {
-    /// What was done, in words.
-    pub done: Vec<String>,
+pub struct Applied<'a> {
+    /// The actions carried out.
+    pub done: Vec<&'a crate::plan::Action>,
     /// What failed, in words; nothing of it was changed.
     pub failed: Vec<String>,
     /// Each original kept, and where its copy is.
@@ -224,13 +224,15 @@ fn read_small(path: &Path) -> io::Result<String> {
 
 /// Applies every action in order, keeping copies through `keeper`.
 #[must_use]
-pub fn apply(plan: &Plan, home: &Path, keeper: &Keeper) -> Applied {
+pub fn apply<'a>(plan: &'a Plan, home: &Path, keeper: &Keeper) -> Applied<'a> {
     let mut applied = Applied::default();
     for action in &plan.actions {
-        let said = action.describe(home, keeper.root());
         match step(action, keeper, &mut applied.kept) {
-            Ok(()) => applied.done.push(said),
-            Err(e) => applied.failed.push(format!("couldn't {said}: {e}")),
+            Ok(()) => applied.done.push(action),
+            Err(e) => applied.failed.push(format!(
+                "couldn't {}: {e}",
+                action.describe(home, keeper.root())
+            )),
         }
     }
     applied

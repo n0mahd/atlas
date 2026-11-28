@@ -1,22 +1,13 @@
-# atlasd: keeps this login's harnesses in step with the owner's signed releases.
+# atlasd: keeps this login's agents in step with the owner's signed updates.
 # One per OS account on each machine, as a user service; never as root.
+# The hub's install script (curl <hub>/install | sh -s -- <code>) writes this file and
+# atlasd.timer to ~/.config/systemd/user and enables the timer.
 #
-# Install (as the login that runs the agents):
-#   cargo build --release -p atlas-client && install -Dm755 target/release/atlasd ~/.local/bin/atlasd
-#   atlasd pair https://<hub> <code>        # code from the hub's Machines page
-#   atlasd run --dry-run                    # read the plan before the first real run
-#   mkdir -p ~/.config/systemd/user
-#   ln -sf "$PWD/deploy/atlasd.service" "$PWD/deploy/atlasd.timer" ~/.config/systemd/user/
-#   systemctl --user daemon-reload && systemctl --user enable --now atlasd.timer
-#   loginctl enable-linger "$USER"          # keep the timer running without a login session
-#
-# atlasd takes over from ~/Knowledge/bin/link-agents. On a machine running atlasd, stop
-# ~/Knowledge/bin/sync from calling link-agents, or both will manage the same links and
-# keep repointing them. Links that link-agents made can be handed over by listing their
-# folders under `adopt` in ~/.config/atlas/client.toml (for example "~/Knowledge" and
-# "~/Skills"); atlasd then repoints them into its own copies.
+# Links an older setup made can be handed over to atlasd by listing the folders they
+# point into under `adopt` in ~/.config/atlas/client.toml (or `atlasd pair --adopt DIR`);
+# atlasd then repoints them into its own copies.
 [Unit]
-Description=Atlas client: apply the latest signed release
+Description=Atlas client: apply the latest signed update
 
 [Service]
 Type=oneshot

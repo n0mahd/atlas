@@ -1591,8 +1591,12 @@ pub struct PairedClient {
     pub id: String,
     pub user: String,
     pub status: String,
+    /// When a machine that's behind will catch up; empty when it's up to date.
+    pub next: &'static str,
     pub class: &'static str,
     pub problems: Vec<String>,
+    /// It has sent at least one report (paired but silent doesn't count as reporting).
+    pub reporting: bool,
 }
 
 /// The hub itself, from a live look at its own harness folders.
@@ -1755,15 +1759,27 @@ fn paired(c: &crate::clients::Client, latest: Option<u64>) -> PairedClient {
     let seen = c
         .last_seen
         .map_or_else(|| "never seen".to_owned(), |t| format!("seen {}", ago(t)));
+    // atlasd checks every minute; a machine quiet for longer is off or can't reach the hub.
+    let behind = latest.is_some_and(|l| applied.is_none_or(|a| a < l));
+    let checking = c
+        .last_seen
+        .is_some_and(|t| crate::clients::now().saturating_sub(t) < 5 * 60);
+    let next = match (behind, checking) {
+        (false, _) => "",
+        (true, true) => "Applies at the next check, within a minute",
+        (true, false) => "Applies when this machine next checks in",
+    };
     PairedClient {
         id: c.id.clone(),
         user: c.user.clone(),
         status: format!("{status} · {seen}"),
+        next,
         class,
         problems: c
             .report
             .as_ref()
             .map_or_else(Vec::new, |r| r.problems.clone()),
+        reporting: c.report.is_some(),
     }
 }
 
@@ -1843,8 +1859,41 @@ pub fn mask_secrets(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_names, mask_secrets, report_line};
+    use super::{join_names, mask_secrets, paired, report_line};
     use atlas_core::kernel::HarnessKind;
+
+    #[test]
+    fn a_machine_behind_says_when_it_will_catch_up() {
+        let client = |applied: Option<u64>, seen_ago: Option<u64>| {
+            let now = crate::clients::now();
+            serde_json::from_value::<crate::clients::Client>(serde_json::json!({
+                "id": "c1", "machine": "box", "user": "me", "token_hash": "x", "paired": 0,
+                "last_seen": seen_ago.map(|s| now - s),
+                "report": applied.map(|a| serde_json::json!({
+                    "release": a, "at": 0, "harnesses": [], "problems": []
+                })),
+            }))
+            .unwrap()
+        };
+        let soon = "Applies at the next check, within a minute";
+        assert_eq!(paired(&client(Some(2), Some(30)), Some(3)).next, soon);
+        assert_eq!(paired(&client(None, Some(30)), Some(3)).next, soon);
+        assert_eq!(paired(&client(Some(3), Some(30)), Some(3)).next, "");
+        assert_eq!(
+            paired(&client(None, Some(30)), None).next,
+            "",
+            "no update at all"
+        );
+        assert_eq!(
+            paired(&client(Some(2), Some(3600)), Some(3)).next,
+            "Applies when this machine next checks in",
+            "a machine that has gone quiet isn't promised a minute"
+        );
+        assert_eq!(
+            paired(&client(None, None), Some(3)).next,
+            "Applies when this machine next checks in"
+        );
+    }
 
     #[test]
     fn a_harness_row_counts_hooks_and_subagents() {

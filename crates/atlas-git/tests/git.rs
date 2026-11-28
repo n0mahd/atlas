@@ -364,6 +364,34 @@ fn a_client_copy_follows_a_pinned_commit() {
     repo.checkout_detached(&second).unwrap();
     assert_eq!(std::fs::read_to_string(copy.join("a")).unwrap(), "two");
     assert!(!copy.join("stray").exists());
+
+    // Already there and untouched: nothing is written, not even the index or the config.
+    let written = |p: &str| std::fs::metadata(copy.join(p)).unwrap().modified().unwrap();
+    let (index, config) = (written(".git/index"), written(".git/config"));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let repo = atlas_git::Repo::clone_or_open(remote, &copy).unwrap();
+    repo.checkout_detached(&second).unwrap();
+    assert_eq!(
+        (written(".git/index"), written(".git/config")),
+        (index, config)
+    );
+
+    // Drift of any kind is still put right: an edit, a staged change, an untracked or an
+    // ignored file, and a branch at the same commit.
+    std::fs::write(copy.join("a"), "edited").unwrap();
+    repo.checkout_detached(&second).unwrap();
+    assert_eq!(std::fs::read_to_string(copy.join("a")).unwrap(), "two");
+    std::fs::write(copy.join("new"), "x").unwrap();
+    git(&copy, &["add", "new"]);
+    repo.checkout_detached(&second).unwrap();
+    assert!(!copy.join("new").exists());
+    std::fs::write(copy.join(".git/info/exclude"), "*.log\n").unwrap();
+    std::fs::write(copy.join("x.log"), "x").unwrap();
+    repo.checkout_detached(&second).unwrap();
+    assert!(!copy.join("x.log").exists());
+    git(&copy, &["switch", "-q", "-c", "mine"]);
+    repo.checkout_detached(&second).unwrap();
+    assert_eq!(git(&copy, &["branch", "--show-current"]), "");
     assert!(repo.checkout_detached("--help").is_err());
     assert!(atlas_git::Repo::clone_or_open("--upload-pack=x", &tmp.path().join("bad")).is_err());
 }

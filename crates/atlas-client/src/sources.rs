@@ -45,7 +45,7 @@ fn fetch_and_check(source: &Source, dir: &Path) -> Result<Repo, String> {
     let tree = repo.tree_of(source.commit.as_str()).map_err(fail)?;
     if tree != source.tree.as_str() {
         return Err(format!(
-            "{} at commit {} has tree {tree}, but the release pins {}; not using it",
+            "{} at commit {} has tree {tree}, but the update pins {}; not using it",
             label(&source.id),
             source.commit.as_str(),
             source.tree
@@ -105,7 +105,7 @@ pub fn existing(manifest: &Manifest, sources_dir: &Path) -> (Copies, Vec<String>
         };
         if repo.head().map(|(c, _)| c).ok().as_deref() != Some(source.commit.as_str()) {
             notes.push(format!(
-                "the local copy of {} isn't at this release's commit yet; this plan uses it as it stands",
+                "the local copy of {} isn't at this update's commit yet; this plan uses it as it stands",
                 label(&source.id)
             ));
         }

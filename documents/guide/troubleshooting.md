@@ -155,8 +155,8 @@ atlasd only changes links it made (or was told to take over). Your own folders, 
 links elsewhere are left alone and reported on the Machines page. Move yours aside if you
 want Atlas to manage that place. To hand over links an older script made into a folder,
 add that folder to `adopt` in `~/.config/atlas/client.toml`, for example
-`adopt = ["~/Knowledge"]`. The installer does this for `~/Knowledge` and `~/Skills` when
-they exist.
+`adopt = ["~/Knowledge"]`, or pair with `atlasd pair <hub-url> <code> --adopt ~/Knowledge`.
+The installer doesn't adopt any folder on its own.
 
 ## Saving
 

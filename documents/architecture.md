@@ -170,7 +170,10 @@ Planned: `VerifiedRelease` (only constructible by checking a signature; today
   `K7QF-9XMR2D` and shows `curl <hub>/install | sh -s -- <code>`; the hub takes at most
   five wrong codes a minute (decision 0039). With a passkey session the hub can also run it
   on a machine itself over SSH (`atlas_web::remote`, used by the page and by
-  `atlas-hub add-machine`; decision 0025).
+  `atlas-hub add-machine`; decision 0025). With no atlasd build in `<state>/dist/` none
+  of them issues a code; the page says how to add a build. The script checks for user
+  services, pairs, runs the first pass in the foreground with `atlasd run --summary`,
+  then starts the timer or launchd agent.
 
 ## Local Atlas
 - Edits local files. Global edits go to the hub as proposals the user signs.
