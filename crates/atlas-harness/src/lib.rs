@@ -9,6 +9,7 @@ pub mod change;
 pub mod hooks;
 pub mod instructions;
 pub mod placement;
+pub mod readers;
 pub mod skills;
 pub mod switches;
 

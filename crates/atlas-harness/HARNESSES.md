@@ -60,3 +60,43 @@ Notes behind the table:
   Hook `timeout` is in seconds, default 5; Claude tool names in a `matcher` are mapped to
   Grok's. Whether it expands Claude's `@<path>` imports was not established, as that needs
   a signed-in session; its docs don't mention them.
+
+## Who reads which instruction file
+
+What `src/readers.rs` (`READERS`) holds: the files each agent reads in a project's top
+folder and in the login's home, and how it picks when several exist. **All**: every file
+that exists loads. **First**: only the first existing name loads, so a later name is
+skipped while an earlier one exists. Atlas joins the global `AGENTS.md` at the home file
+named under "Global joins" (a link, or for Claude Code an `@<path>` import). Claude Code's
+`@path` import is the only one that inlines another file. Most selection rules come from
+the owner's T3 Code table (`AgentInstructionFiles.ts`, T3 Code PR 17515), which cites each
+agent's docs and source; marked here as `T3 table` with that source.
+
+| Agent | Project files (in order) | Home files | Global joins | Source |
+|---|---|---|---|---|
+| Claude Code | All: `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`; `AGENTS.md` and `.claude/AGENTS.md` only as its AGENTS.md setting says | `.claude/CLAUDE.md` | import | code.claude.com/docs/en/memory (T3 table); the setting verified in the 2.1.332 binary (below) |
+| Codex | First: `AGENTS.override.md`, `AGENTS.md` | First non-empty: `.codex/AGENTS.override.md`, `.codex/AGENTS.md` | link | learn.chatgpt.com/docs/agent-configuration/agents-md and codex `core/src/agents_md.rs` (T3 table) |
+| OpenCode | First: `AGENTS.md`, then `CLAUDE.md` | `.config/opencode/AGENTS.md`; without it, `.claude/CLAUDE.md` (imports not followed) | link | opencode.ai/docs/rules and `session/instruction.ts` (T3 table) |
+| Pi | First: `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD` | the same five names in `.pi/agent/` | link | pi `docs/configuration.md` and `core/resource-loader.ts` (T3 table) |
+| Antigravity | All: `AGENTS.md`, `GEMINI.md`, `.agents/AGENTS.md`, `.agents/GEMINI.md` | `.gemini/config/AGENTS.md` | link | antigravity.google/docs/rules (T3 table); home file verified (above) |
+| Amp | First: `AGENTS.md`, `AGENT.md`, `CLAUDE.md` | All: `.config/amp/AGENTS.md`, `.config/AGENTS.md` | link | ampcode.com/docs (AGENTS.md) · docs |
+| Muse | First: `AGENTS.md`, `CLAUDE.md` | `.config/muse/AGENTS.md` | link | Muse Code 1.4.25 (names verified; that it picks the first is from its layout, not checked) |
+| Grok Build | All, except files git ignores: `Agents.md`, `Claude.md`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `.claude/CLAUDE.local.md` | All: `.grok/AGENTS.md`, `.grok/Agents.md`, `.grok/CLAUDE.md`, and always `.claude/CLAUDE.md` | link | `grok inspect` on 1.0.92 (verified, above) and grok-build `xai-grok-config/src/compat.rs` (T3 table) |
+
+Claude Code's AGENTS.md setting: `pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`
+in `~/.claude/settings.json` (ignored in project settings), one of `claude-md-or-agents-md`
+(the default: AGENTS.md only where a project has no CLAUDE.md, `.claude/CLAUDE.md` or
+`CLAUDE.local.md`), `claude-md-and-agents-md` (beside them), `claude-md` (never) and
+`managed-only`. Before 2.1.285 the plugin was `agents-md@builtin`; later versions read
+either, so Atlas keeps a legacy entry that has a value in step. Claude Code reads AGENTS.md
+at all from 2.1.277. Source: the T3 table's `ClaudeInstructionSetting.ts` (citing
+code.claude.com/docs/en/memory, "Choose which instruction files load"); the plugin name,
+the `instructionFiles` option and the four values verified in the strings of the Claude
+Code 2.1.332 binary, which describes it as "AGENTS.md as project instructions: by default
+loaded where the project has no CLAUDE.md; by its instructionFiles option, loaded beside
+CLAUDE.md, left out, or with the project instructions dropped". The `@builtin` suffix is
+from the T3 table only.
+
+Not checked: whether Amp reads both of its home files (atlasd links both, which would
+load the global file twice), and whether Grok Build expands Claude's `@<path>` imports in
+`~/.claude/CLAUDE.md` (the table assumes not, so Grok reaches Global only through a link).
