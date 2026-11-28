@@ -169,7 +169,8 @@ fn fetch(config: &Config) -> Fetched {
     match http::release(&config.hub, &config.token) {
         Ok(Some(r)) => Fetched::Release(Box::new(r)),
         Ok(None) => Fetched::Nothing,
-        Err(e) => Fetched::Unreachable(e),
+        Err(http::ReleaseError::Unpaired) => Fetched::Unpaired,
+        Err(http::ReleaseError::Failed(e)) => Fetched::Unreachable(e),
     }
 }
 
@@ -187,7 +188,7 @@ fn run(paths: &Paths, mode: Mode) -> Result<ExitCode, String> {
     let config = Config::load(&paths.config)?;
     let state = State::load(&paths.state)?;
     let fetched = fetch(&config);
-    let reachable = !matches!(fetched, Fetched::Unreachable(_));
+    let reachable = !matches!(fetched, Fetched::Unreachable(_) | Fetched::Unpaired);
     let pass = pass::run(paths, &config, &state, fetched, dry_run, now());
     let summary = mode == Mode::Summary;
     let lines = if summary { &pass.summary } else { &pass.lines };

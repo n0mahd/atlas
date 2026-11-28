@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use atlas_core::distribution::Report;
 use atlas_core::release::{SignedRelease, SourceId};
 
-use crate::config::{Config, Paths, State};
+use crate::config::{Config, HOW_TO_PAIR, Paths, State};
 use crate::plan::Action;
 use crate::sources::Copies;
 use crate::{desired, display, plan, release, report, sources};
@@ -21,6 +21,8 @@ pub enum Fetched {
     Nothing,
     /// The hub couldn't be reached; the local copies stay as they are.
     Unreachable(String),
+    /// The hub refused this login's token: it was unpaired there.
+    Unpaired,
 }
 
 /// What a pass did.
@@ -70,6 +72,13 @@ pub fn run(
             );
             out.problems.push(format!(
                 "couldn't reach the hub ({e}); agents keep using the local copies ({at})"
+            ));
+        }
+        Fetched::Unpaired => {
+            failed = true;
+            out.problems.push(format!(
+                "this login isn't paired with {} any more, so agents keep using the local copies. {HOW_TO_PAIR}",
+                config.hub
             ));
         }
         Fetched::Nothing => {

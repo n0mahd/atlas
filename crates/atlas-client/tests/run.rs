@@ -871,7 +871,7 @@ fn only_plain_top_level_markdown_files_are_subagents() {
     assert_eq!(d.problems.len(), 3, "{:?}", d.problems);
 }
 
-/// OpenCode reads both ~/.claude/skills and ~/.agents/skills, where the same three skills
+/// `OpenCode` reads both `~/.claude/skills` and `~/.agents/skills`, where the same three skills
 /// are linked; the hub's Machines page showed it with six.
 #[test]
 fn an_agent_reading_two_folders_counts_each_skill_once() {
@@ -888,4 +888,38 @@ fn an_agent_reading_two_folders_counts_each_skill_once() {
         .unwrap();
     assert!(opencode.present);
     assert_eq!(opencode.skills_from_atlas, 3);
+}
+
+/// A login the hub unpaired, or one never paired, is told so and how to pair, not that
+/// the hub couldn't be reached.
+#[test]
+fn an_unpaired_login_is_told_how_to_pair() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    assert!(!w.run(&signed(&w.manifest(1, &[&key]), &key), false).failed);
+    let before = snapshot(w.home());
+    let pass = pass::run(&w.paths, &w.config, &w.state, Fetched::Unpaired, false, 2);
+    assert!(pass.failed);
+    assert_eq!(snapshot(w.home()), before);
+    assert_eq!(pass.state, w.state);
+    let p = &pass.problems[0];
+    assert!(
+        p.starts_with("this login isn't paired with https://hub.example any more"),
+        "{p}"
+    );
+    assert!(p.contains("choose Pair on the hub's Machines page"), "{p}");
+    assert!(!p.contains("couldn't reach"), "{p}");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let fresh = Paths::new(tmp.path());
+    for e in [
+        Config::load(&fresh.config).unwrap_err(),
+        State::load(&fresh.state).unwrap_err(),
+    ] {
+        assert!(
+            e.starts_with("this login isn't paired with a hub yet."),
+            "{e}"
+        );
+        assert!(e.contains("atlasd pair <hub-url> <code>"), "{e}");
+    }
 }

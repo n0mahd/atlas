@@ -46,23 +46,34 @@ pub fn pair(hub: &str, request: &PairRequest) -> Result<PairResponse, String> {
         .map_err(|e| format!("the hub's answer isn't valid: {e}"))
 }
 
+/// Why the hub's latest release couldn't be had.
+#[derive(Debug)]
+pub enum ReleaseError {
+    /// The hub doesn't know this login's token: it was unpaired there.
+    Unpaired,
+    /// The hub is unreachable or answered something else, in words.
+    Failed(String),
+}
+
 /// The hub's latest signed release; None when it has none yet.
 ///
 /// # Errors
-/// The hub is unreachable or refused the token.
-pub fn release(hub: &str, token: &str) -> Result<Option<SignedRelease>, String> {
-    let resp = client()?
+/// The hub is unreachable, refused the token, or answered something else.
+pub fn release(hub: &str, token: &str) -> Result<Option<SignedRelease>, ReleaseError> {
+    let resp = client()
+        .map_err(ReleaseError::Failed)?
         .get(format!("{hub}/api/release"))
         .bearer_auth(token)
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ReleaseError::Failed(e.to_string()))?;
     match resp.status() {
         StatusCode::NO_CONTENT => Ok(None),
+        StatusCode::UNAUTHORIZED => Err(ReleaseError::Unpaired),
         s if s.is_success() => resp
             .json()
             .map(Some)
-            .map_err(|e| format!("the hub's update isn't valid: {e}")),
-        _ => Err(refused(resp)),
+            .map_err(|e| ReleaseError::Failed(format!("the hub's update isn't valid: {e}"))),
+        _ => Err(ReleaseError::Failed(refused(resp))),
     }
 }
 
