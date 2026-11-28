@@ -1,0 +1,9 @@
+FrontispieceHub · verify-hub
+ATLAS
+Skills, instructions, memory and hooks, kept once and carried to every agent.
+I4Skills3 global, 1 in projects
+II2Instructionsfiles
+III3Memorynotes in the store
+IV1Hooks0 outside Atlas
+§Needs a look1
+Nothing has been sent to your machines yetSend

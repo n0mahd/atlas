@@ -1,0 +1,26 @@
+Folio I · Skills3 skills
+Skills
+Showing
+Scope
+Globalshop
+on
+Machine
+verify-hublaptop (not paired)
+<button type="submit">Go</button>
+Filter skills
+IGlobal3
+review
+No agent has it
+Review code for correctness
+~/Skills/review/SKILL.md
+Read the skill
+deploy
+No agent has it
+Ship the app to production
+~/Knowledge/skills/deploy/SKILL.md · 1 more files
+Read the skill
+pdf-tools
+No agent has it
+Read and merge PDF files
+~/Knowledge/skills/pdf-tools/SKILL.md
+Read the skill

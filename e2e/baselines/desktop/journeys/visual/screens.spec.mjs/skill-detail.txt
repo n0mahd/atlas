@@ -1,0 +1,11 @@
+Folio I · Skills
+deploy
+Ship the app to production
+deploy
+Run the deploy script.
+Lives inGlobal, private
+File~/Knowledge/skills/deploy/SKILL.md
+Agents
+Files
+scripts/run.sh
+All skills

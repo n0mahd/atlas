@@ -1,0 +1,11 @@
+Folio III · Memory
+verify-outcomes
+Verify outcomes, not status
+Confirm what the user sees before claiming a fix worked.
+Why: status lies.
+Kindfeedback
+Hostall
+File~/Knowledge/memory/verify-outcomes.md
+Linked from
+user-tz
+All memory

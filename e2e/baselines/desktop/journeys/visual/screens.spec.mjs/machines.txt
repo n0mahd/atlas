@@ -1,0 +1,17 @@
+Folio V · Machines2 machines · 1 reporting
+Machines
+Pair a machineGet a one-time command for atlasd on another machine or account.
+Pair
+Or install it from the hub over SSHNeeds Tailscale SSH on the machine, or the hub's SSH key.
+The machine's SSH address
+Install
+Track a machineAdd a machine name to this list before pairing it.
+Machine name
+Add
+verify-hub
+Hub
+0 agents
+laptop
+Not paired yet
+Pair
+Install

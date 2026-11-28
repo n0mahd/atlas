@@ -1,0 +1,19 @@
+Settings
+Settings
+IUpdates0
+Send changes to my machines when I saveOne passkey tap saves and sends. Machines update within a minute.
+Also push project repos after savingPushing main may deploy the project.
+Save
+Nothing has been sent to your machines yet
+Send now
+IIPasskeys1
+Verify laptop[masked]
+Add a second passkey, such as your phone or a security key, so losing one doesn't lock you out.
+Name the new passkey
+Add a passkey
+Sign out everywhereEnds every passkey session, this one too. Each browser signs in again with a passkey.
+Sign out all
+IIICLI tokens0
+Create a CLI tokenLets atlasd machines on a workstation list, add (over its own SSH), and remove machines.
+Name the CLI token
+Create token

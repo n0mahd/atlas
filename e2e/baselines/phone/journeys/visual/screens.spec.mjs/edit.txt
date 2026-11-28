@@ -1,0 +1,13 @@
+Folio I · Skills
+Edit deploy
+~/Knowledge/skills/deploy/SKILL.md
+Cancel
+Save
+File text
+---
+name: deploy
+description: Ship the app to production
+---
+# deploy
+Run the deploy script.
+Saving commits to the knowledge repo and sends it to your machines.

@@ -1,0 +1,7 @@
+Folio II · Instructions
+Global AGENTS.md
+Global agent instructions
+Always use the simplest solution that works.
+File~/Knowledge/AGENTS.md
+Agents
+All instructions
