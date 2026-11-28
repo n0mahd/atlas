@@ -32,7 +32,7 @@ used, so their rows are `docs`.
 | Claude Code | `hooks → Event → [{matcher, hooks: [{type, command, timeout}]}]` | handler `command` ends in the shell comment `# atlas:<name>` | session-start → `SessionStart`, user-prompt → `UserPromptSubmit`, pre-tool-use → `PreToolUse`, post-tool-use → `PostToolUse`, stop → `Stop` |
 | Codex | same as Claude Code | same as Claude Code | same names as Claude Code |
 | Muse | same as Claude Code | same as Claude Code | same names as Claude Code |
-| Grok Build | same as Claude Code, one or more files per folder; `type` may also be `http` with a `url` | Atlas writes none: Claude Code's copy already runs there | Claude Code's names plus `SessionEnd`, `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `Notification`, `SubagentStart`/`Stop`, `PreCompact`/`PostCompact` |
+| Grok Build | same as Claude Code, one or more files per folder; `type` may also be `http` with a `url` | `.grok/hooks/atlas.json`, holding only hooks Claude Code's copy doesn't already bring (decision 0026) | Claude Code's names plus `SessionEnd`, `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `Notification`, `SubagentStart`/`Stop`, `PreCompact`/`PostCompact` |
 | Antigravity | `{"<hook name>": {Event: [...]}}`; tool events use matcher groups, others list handlers directly | top-level key `atlas:<name>` | session-start, pre-tool-use, post-tool-use, stop; user-prompt has no equivalent and is skipped |
 
 Notes behind the table:

@@ -262,3 +262,12 @@ would stop the hub starting where it doesn't exist. Little is lost: the hub runs
 own user, who can't write `/usr`, `/etc` or `/proc/sys`, and home must stay writable.
 The seccomp filter, `NoNewPrivileges`, `MemoryDenyWriteExecute` and the address-family
 limit stay.
+
+## 0026 · 2026-11-27 · Atlas writes Grok Build's hooks to its own file
+atlasd keeps Atlas's Grok Build hooks in `~/.grok/hooks/atlas.json`, a file it owns beside
+the owner's files in that folder, in Claude Code's shape (Grok reads every `*.json` there).
+Grok also runs the hooks in `~/.claude/settings.json`, so when Claude Code is set up for the
+login the file holds only hooks Claude's copy doesn't carry (those limited to `grok`), and
+otherwise every hook meant for Grok. When Claude Code appears later the duplicates leave
+`atlas.json`, and the file is removed once it holds nothing. Replaces 0022's "Atlas writes
+no hooks for Grok".

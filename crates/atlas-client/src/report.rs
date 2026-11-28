@@ -9,6 +9,7 @@ use atlas_fs::Sources;
 use atlas_harness::hooks::managed_name;
 use serde_json::Value;
 
+use crate::plan::hook_file;
 use crate::sources::key;
 
 const MAX_FILE: u64 = 1024 * 1024;
@@ -84,9 +85,9 @@ pub fn harnesses(home: &Path, sources_dir: &Path) -> Vec<HarnessReport> {
                 skills_outside: outside,
                 broken,
                 instructions: instructions.to_owned(),
-                hooks_managed: layout
-                    .hook_config
-                    .map_or(0, |c| managed_hooks(view.kind, &home.join(c))),
+                hooks_managed: layout.hook_config.map_or(0, |c| {
+                    managed_hooks(view.kind, &hook_file(view.kind, &home.join(c)))
+                }),
             }
         })
         .collect()

@@ -87,6 +87,17 @@ impl Plan {
     }
 }
 
+/// The file Atlas writes a harness's hooks to. Grok Build reads a folder of hook files,
+/// so Atlas keeps its own, `atlas.json`, beside the owner's.
+#[must_use]
+pub fn hook_file(kind: HarnessKind, config: &Path) -> PathBuf {
+    if kind == HarnessKind::Grok {
+        config.join("atlas.json")
+    } else {
+        config.to_path_buf()
+    }
+}
+
 /// The harnesses set up for this login. T3 Code reads the others' files.
 #[must_use]
 pub fn present(home: &Path) -> Vec<&'static Layout> {
@@ -115,6 +126,7 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
             skill_dir(&mut plan, home, &home.join(dir), desired, managed_roots);
         }
     }
+    let claude = harnesses.iter().any(|l| l.kind == HarnessKind::ClaudeCode);
     for layout in &harnesses {
         if let Some(store) = &desired.instructions {
             for file in layout.instruction_files {
@@ -129,12 +141,19 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
             }
         }
         if let Some(config) = layout.hook_config {
+            let mut wanted = desired.hooks_for(layout.kind);
+            if layout.kind == HarnessKind::Grok && claude {
+                // Grok Build also runs ~/.claude/settings.json's hooks, so only hooks Claude's
+                // copy doesn't carry go in its own file; the rest would run twice.
+                let via_claude = desired.hooks_for(HarnessKind::ClaudeCode);
+                wanted.retain(|h| !via_claude.iter().any(|c| c.name == h.name));
+            }
             hooks(
                 &mut plan,
                 home,
                 layout.kind,
-                &home.join(config),
-                &desired.hooks_for(layout.kind),
+                &hook_file(layout.kind, &home.join(config)),
+                &wanted,
             );
         }
     }
@@ -314,9 +333,9 @@ fn instruction(
 
 fn hooks(plan: &mut Plan, home: &Path, kind: HarnessKind, config: &Path, wanted: &[ManagedHook]) {
     // Atlas writes hooks only in these formats; other harnesses' hook files are only read.
-    // Grok Build also runs Claude Code's hooks, so Claude's copy already reaches it.
+    // Grok Build's hook files use Claude Code's shape.
     let render = match kind {
-        HarnessKind::ClaudeCode => claude_settings,
+        HarnessKind::ClaudeCode | HarnessKind::Grok => claude_settings,
         HarnessKind::Codex => codex_hooks,
         HarnessKind::Antigravity => antigravity_hooks,
         _ => return,

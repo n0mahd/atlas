@@ -564,8 +564,8 @@ fn each_harness_gets_its_skills_in_one_folder() {
 
 #[test]
 fn grok_build_gets_the_global_instructions_and_nothing_twice() {
-    // Grok Build reads ~/.agents/skills, ~/.claude/skills and Claude's hooks itself, so it
-    // only needs its own AGENTS.md link; its hooks folder is the owner's (decision 0022).
+    // Grok Build reads ~/.agents/skills, ~/.claude/skills and Claude's hooks itself, so with
+    // Claude Code set up it only needs its own AGENTS.md link (decisions 0022, 0026).
     let key = Key::new(1, "Laptop");
     let mut w = World::new(&key);
     let h = w.home().to_path_buf();
@@ -588,7 +588,7 @@ fn grok_build_gets_the_global_instructions_and_nothing_twice() {
     assert_eq!(
         fs::read_dir(h.join(".grok/hooks")).unwrap().count(),
         1,
-        "Atlas adds no hook file of its own"
+        "Claude's copy of the hook reaches Grok, so no atlas.json"
     );
     assert_eq!(
         fs::read_to_string(h.join(".grok/hooks/mine.json")).unwrap(),
@@ -604,4 +604,44 @@ fn grok_build_gets_the_global_instructions_and_nothing_twice() {
         (grok.instructions.as_str(), grok.hooks_managed),
         ("linked", 0)
     );
+}
+
+#[test]
+fn grok_build_without_claude_gets_atlas_hooks_in_its_own_file() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let h = w.home().to_path_buf();
+    fs::remove_dir_all(h.join(".claude")).unwrap();
+    let mine = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"mine.sh"}]}]}}"#;
+    write(&h.join(".grok/hooks/mine.json"), mine);
+    let release = signed(&w.manifest(1, &[&key]), &key);
+
+    let pass = w.run(&release, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    let atlas = fs::read_to_string(h.join(".grok/hooks/atlas.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&atlas).unwrap();
+    let command = json["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(command.ends_with("# atlas:guard"), "{atlas}");
+    assert_eq!(json["hooks"]["PreToolUse"][0]["matcher"], "Bash", "{atlas}");
+    assert_eq!(
+        fs::read_to_string(h.join(".grok/hooks/mine.json")).unwrap(),
+        mine,
+        "the owner's hook file is untouched"
+    );
+    let grok = pass
+        .report
+        .harnesses
+        .iter()
+        .find(|r| r.kind == HarnessKind::Grok)
+        .unwrap();
+    assert_eq!(grok.hooks_managed, 1);
+
+    // Claude Code arrives: its copy now reaches Grok, so Atlas's Grok file goes.
+    fs::create_dir_all(h.join(".claude")).unwrap();
+    let again = w.run(&release, false);
+    assert!(!again.failed, "{:?}", again.problems);
+    assert!(!h.join(".grok/hooks/atlas.json").exists());
+    assert!(h.join(".grok/hooks/mine.json").exists());
 }
