@@ -1612,6 +1612,51 @@ mod tests {
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
     }
 
+    /// Settings shows when each CLI token was last used; using one records it at most
+    /// once a minute.
+    #[tokio::test]
+    async fn a_cli_token_records_its_last_use_at_most_once_a_minute() {
+        let hub = SendHub::new();
+        let token = mint_cli_token(&hub, "desk");
+        let file = hub.home.join("state/cli-tokens.json");
+        let set_last_used = |secs: u64| {
+            let mut list: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            list[0]["last_used"] = secs.into();
+            std::fs::write(&file, list.to_string()).unwrap();
+        };
+        let last_used = || -> u64 {
+            let list: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            list[0]["last_used"].as_u64().unwrap()
+        };
+        let use_it = || {
+            admin_req(Request::get("/api/admin/machines"), &token)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let now = crate::clients::now();
+
+        set_last_used(now - 30);
+        assert_eq!(call(&hub.app, use_it()).await.0, StatusCode::OK);
+        assert_eq!(
+            last_used(),
+            now - 30,
+            "used within the minute: not written again"
+        );
+
+        set_last_used(1_795_737_600);
+        let (_, page) = call(&hub.app, hub.get("/settings")).await;
+        assert!(page.contains("last used 2026-11-27"), "{page}");
+        assert_eq!(call(&hub.app, use_it()).await.0, StatusCode::OK);
+        assert!(last_used() >= now, "an older use is replaced");
+        let (_, page) = call(&hub.app, hub.get("/settings")).await;
+        assert!(
+            page.contains(&format!("last used {}", crate::edit::day(now))),
+            "{page}"
+        );
+    }
+
     #[tokio::test]
     async fn admin_cli_api_manages_machines_behind_cli_tokens() {
         let hub = SendHub::new();

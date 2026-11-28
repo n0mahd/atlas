@@ -9,6 +9,9 @@ use std::sync::Mutex;
 use axum::http::{HeaderMap, header};
 use serde::{Deserialize, Serialize};
 
+/// Seconds between writes of a token's last use.
+const LAST_USED_EVERY: u64 = 60;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CliToken {
     pub id: String,
@@ -125,10 +128,19 @@ impl CliTokens {
         let found = list
             .iter_mut()
             .find(|t| crate::auth::same_secret(&t.token_hash, &hash))?;
-        found.last_used = Some(crate::clients::now());
-        let record = found.clone();
-        let _ = self.save(&list);
-        Some(record)
+        // Recorded on use, at most once a minute per token, so a busy CLI doesn't
+        // rewrite the file on every call.
+        let now = crate::clients::now();
+        if found
+            .last_used
+            .is_none_or(|t| now.saturating_sub(t) >= LAST_USED_EVERY)
+        {
+            found.last_used = Some(now);
+            let record = found.clone();
+            let _ = self.save(&list);
+            return Some(record);
+        }
+        Some(found.clone())
     }
 
     /// Revokes a CLI token by id.
