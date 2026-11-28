@@ -70,12 +70,24 @@ fn an_unwanted_reader_with_a_setting_is_switched_off() {
     let switches = plan_now(&w).switches;
     assert_eq!(switches.len(), 1, "{switches:?}");
     assert_eq!(switches[0].kind, HarnessKind::OpenCode);
-    assert_eq!(switches[0].file, h.join(".config/opencode/opencode.json"));
+    let file = h.join(".config/opencode/opencode.jsonc");
+    assert_eq!(switches[0].file, file);
     assert_eq!(
         switches[0].off.get("alpha"),
         Some(&h.join(".claude/skills/alpha")),
         "the folder OpenCode loads it from"
     );
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains("\"alpha\": \"deny\"") && text.contains("// atlas:alpha"),
+        "{text}"
+    );
+
+    // On again: Atlas's entry goes, and so does the file it created.
+    w.change_knowledge(&[("atlas/placements.toml", None)]);
+    w.apply(2, &key);
+    assert!(!exists(&file), "{:?}", fs::read_to_string(&file));
+    assert!(exists(&h.join(".agents/skills/alpha")));
 }
 
 #[test]

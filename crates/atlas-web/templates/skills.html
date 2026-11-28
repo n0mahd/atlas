@@ -7,6 +7,7 @@
   <label class="sr" for="skill-search">Filter skills</label>
   <input id="skill-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Filter skills…" autocomplete="off">
 </form>
+{% if page.signed_in %}{% include "updates_button.html" %}{% endif %}
 
 <div id="results" class="sections">
   {% for s in v.sections %}
@@ -19,21 +20,27 @@
     <ul class="rows">
       {% for r in s.rows %}
       <li>
-        <details class="row">
+        {% let place_row = place.row(r.href.as_deref()) %}
+        <details class="row"{% if place.is_open(r.href.as_deref()) %} open{% endif %}>
           <summary>
             <span class="row-main">
               <span class="row-name">{{ r.name }}</span>
               <span class="row-desc">{{ r.description }}</span>
             </span>
             {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
+            {% if let Some(p) = place_row %}{% if let Some(b) = p.badge %}<span class="row-meta place-badge">{{ b }}</span>{% endif %}{% endif %}
             {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
             <span class="marks{% if r.all %} all{% endif %}">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
             <span class="chev" aria-hidden="true"></span>
           </summary>
           <div class="drawer">
+            {% if let Some(p) = place_row %}
+            {% include "skill_place.html" %}
+            {% else %}
             <ul class="agent-states">
               {% for a in r.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
             </ul>
+            {% endif %}
             <div class="drawer-foot">
               {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files > 0 %} · {{ r.files }} more files{% endif %}</span>{% endif %}
               {% if let Some(href) = r.href %}<a class="link-cap" href="{{ href }}">Read the skill</a>{% endif %}

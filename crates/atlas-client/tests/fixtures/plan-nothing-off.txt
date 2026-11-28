@@ -83,5 +83,5 @@ link ~/.grok/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
 conflict: ~/.claude/skills/alpha is your own folder or file, so Atlas didn't link its skill alpha there
 conflict: ~/.claude/skills/beta links to /opt/elsewhere/beta, which Atlas doesn't manage, so it was left alone
 conflict: ~/.pi/agent/skills is a link to another folder; Atlas leaves it and its skills alone
-conflict: ~/.config/opencode/AGENTS.md is your own file, so Atlas didn't link the global instructions there
+conflict: ~/.config/opencode/AGENTS.md has text that isn't in the global instructions, so Atlas kept it and didn't link them there (Use Global instead on the hub's Instructions page adds it to them first)
 conflict: ~/.gemini/config/AGENTS.md links to /opt/dotfiles/AGENTS.md, which Atlas doesn't manage, so it was left alone

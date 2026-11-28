@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use atlas_core::kernel::Slug;
 use atlas_core::release::{ProjectRef, remote_key};
+use atlas_harness::instructions::{EXCLUDE_BEGIN, EXCLUDE_END, exclude_with};
 
 /// At most this many entries are looked at across all project roots.
 pub const MAX_SCAN: usize = 500;
@@ -259,18 +260,17 @@ fn parse_index(b: &[u8], hash_len: usize) -> Result<BTreeSet<String>, String> {
     Ok(out)
 }
 
-const BEGIN: &str = "# atlas:begin";
-const END: &str = "# atlas:end";
-
-/// The lines of `.git/info/exclude` between Atlas's markers, as paths in the checkout.
+/// The lines of Atlas's block in `.git/info/exclude` (between
+/// [`EXCLUDE_BEGIN`] and [`EXCLUDE_END`]) that name paths, as paths in the checkout.
+/// The block is shared: the hub puts `/CLAUDE.local.md` there too.
 #[must_use]
 pub fn listed(exclude: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut inside = false;
     for line in exclude.lines() {
         match line.trim_end() {
-            BEGIN => inside = true,
-            END => inside = false,
+            EXCLUDE_BEGIN => inside = true,
+            EXCLUDE_END => inside = false,
             l if inside => {
                 if let Some(p) = l.strip_prefix('/') {
                     out.insert(p.to_owned());
@@ -282,45 +282,21 @@ pub fn listed(exclude: &str) -> BTreeSet<String> {
     out
 }
 
-/// `exclude` with Atlas's block listing exactly `paths` (anchored to the checkout's top);
-/// no block when `paths` is empty. Every other line stays as it is. None when nothing
-/// changes.
+/// `exclude` with `paths` added to Atlas's block ([`exclude_with`]: add-only, every other
+/// line kept), or None when the block already lists them all.
 #[must_use]
-pub fn render_exclude(exclude: &str, paths: &BTreeSet<String>) -> Option<String> {
-    let mut block = String::new();
-    if !paths.is_empty() {
-        block.push_str(BEGIN);
-        block.push_str("\n# Links atlasd made in this checkout, kept out of git status.\n");
-        for p in paths {
-            block.push('/');
-            block.push_str(p);
-            block.push('\n');
-        }
-        block.push_str(END);
-        block.push('\n');
+pub fn with_paths(exclude: &str, paths: &BTreeSet<String>) -> Option<String> {
+    let have = listed(exclude);
+    let add: Vec<String> = paths
+        .iter()
+        .filter(|p| !have.contains(*p))
+        .map(|p| format!("/{p}"))
+        .collect();
+    if add.is_empty() {
+        return None;
     }
-    let mut out = String::new();
-    let mut placed = false;
-    let mut inside = false;
-    for line in exclude.split_inclusive('\n') {
-        match line.trim_end() {
-            BEGIN if !placed => {
-                inside = true;
-                out.push_str(&block);
-                placed = true;
-            }
-            END if inside => inside = false,
-            _ if inside => {}
-            _ => out.push_str(line),
-        }
-    }
-    if !placed && !block.is_empty() {
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&block);
-    }
-    (out != exclude).then_some(out)
+    let add: Vec<&str> = add.iter().map(String::as_str).collect();
+    Some(exclude_with(exclude, &add))
 }
 
 /// The current `.git/info/exclude`, or why Atlas won't edit it.
@@ -451,33 +427,28 @@ mod tests {
     }
 
     #[test]
-    fn the_exclude_block_is_atlas_s_and_nothing_else_is_touched() {
+    fn links_are_added_to_the_shared_block_and_nothing_is_rewritten() {
         let mine = "# my own\n*.log\n";
         let paths: BTreeSet<String> =
             [".claude/skills/a".to_owned(), ".claude/skills/b".to_owned()]
                 .into_iter()
                 .collect();
-        let with = render_exclude(mine, &paths).unwrap();
+        let with = with_paths(mine, &paths).unwrap();
         assert!(with.starts_with(mine), "{with}");
         assert_eq!(listed(&with), paths);
-        assert_eq!(render_exclude(&with, &paths), None, "idempotent");
+        assert_eq!(with_paths(&with, &paths), None, "idempotent");
 
-        let after = format!("{with}build/\n");
+        // The hub's own entry stays, and a link that is gone isn't pruned.
+        let shared = format!("{EXCLUDE_BEGIN}\n/CLAUDE.local.md\n{EXCLUDE_END}\nbuild/\n");
         let one: BTreeSet<String> = [".claude/skills/a".to_owned()].into_iter().collect();
-        let fewer = render_exclude(&after, &one).unwrap();
-        assert!(
-            fewer.starts_with(mine) && fewer.ends_with("build/\n"),
-            "{fewer}"
-        );
-        assert_eq!(listed(&fewer), one);
+        let added = with_paths(&shared, &one).unwrap();
         assert_eq!(
-            render_exclude(&fewer, &BTreeSet::new()).unwrap(),
-            format!("{mine}build/\n"),
-            "no paths, no block"
+            added,
+            format!(
+                "{EXCLUDE_BEGIN}\n/CLAUDE.local.md\n/.claude/skills/a\n{EXCLUDE_END}\nbuild/\n"
+            )
         );
-        assert_eq!(
-            render_exclude("no newline", &one).unwrap().lines().nth(1),
-            Some(BEGIN)
-        );
+        assert_eq!(with_paths(&added, &BTreeSet::new()), None);
+        assert!(listed(&added).contains("CLAUDE.local.md"));
     }
 }

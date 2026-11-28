@@ -91,7 +91,7 @@ fn render(plan: &Plan, home: &Path, root: &Path) -> String {
     for a in &plan.actions {
         out.push_str(&a.describe(home));
         out.push('\n');
-        if let Action::WriteFile { bytes, .. } = a {
+        if let Action::WriteFile { bytes, .. } | Action::WriteInstruction { bytes, .. } = a {
             for line in String::from_utf8_lossy(bytes).lines() {
                 out.push_str("    | ");
                 out.push_str(line);

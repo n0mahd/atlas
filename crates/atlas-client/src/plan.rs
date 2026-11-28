@@ -7,10 +7,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use atlas_core::catalog::ClaudeAgentsMd;
 use atlas_core::kernel::HarnessKind;
 use atlas_harness::hooks::{ManagedHook, antigravity_hooks, claude_settings, codex_hooks};
 use atlas_harness::instructions::{
-    InstructionAction, InstructionConflict, InstructionFile, plan_claude_md, plan_instruction_link,
+    InstructionAction, InstructionConflict, InstructionFile, claude_agents_md_setting,
+    plan_claude_md, plan_instruction_link,
 };
 use atlas_harness::placement::Reach;
 use atlas_harness::skills::{
@@ -59,6 +61,24 @@ pub enum Action {
         target: PathBuf,
         digest: String,
     },
+    /// An instruction file planned from `was` (`None`: there was none) gets `bytes`. When
+    /// the new text drops some of `was` (Claude's `CLAUDE.md` becoming just the import),
+    /// `kept_in` names the store file that must still hold every dropped line when this
+    /// is applied.
+    WriteInstruction {
+        path: PathBuf,
+        was: Option<Vec<u8>>,
+        bytes: Vec<u8>,
+        kept_in: Option<PathBuf>,
+        why: &'static str,
+    },
+    /// An agent's own instruction file whose every line is in `target` becomes a link to
+    /// it, if it still holds `was` and `target` still holds every line of it.
+    FileToLink {
+        path: PathBuf,
+        was: Vec<u8>,
+        target: PathBuf,
+    },
 }
 
 impl Action {
@@ -75,12 +95,19 @@ impl Action {
             Self::RemoveLink { path, target } => {
                 format!("remove link {} (it pointed at {})", d(path), d(target))
             }
-            Self::WriteFile { path, why, .. } => format!("write {} ({why})", d(path)),
+            Self::WriteFile { path, why, .. } | Self::WriteInstruction { path, why, .. } => {
+                format!("write {} ({why})", d(path))
+            }
             Self::RemoveFile { path } => {
                 format!("remove {} (Atlas's entries were all it held)", d(path))
             }
             Self::AdoptDir { path, target, .. } => format!(
                 "replace folder {}, a copy of what Atlas holds, with a link to {}",
+                d(path),
+                d(target)
+            ),
+            Self::FileToLink { path, target, .. } => format!(
+                "replace {} with a link to {} (all its text is there)",
                 d(path),
                 d(target)
             ),
@@ -306,6 +333,10 @@ fn harness_files(
     digests: &mut Digests,
 ) {
     let claude = harnesses.iter().any(|l| l.kind == HarnessKind::ClaudeCode);
+    let store_text = desired
+        .instructions
+        .as_deref()
+        .map(|s| read_store_text(plan, home, s));
     for layout in harnesses {
         // Subagents: only Claude Code's format is known so far (HARNESSES.md).
         if let Some(dir) = layout.agent_dir {
@@ -319,9 +350,16 @@ fn harness_files(
                 "subagent",
             );
         }
-        if let Some(store) = &desired.instructions {
+        if let (Some(store), Some(text)) = (&desired.instructions, &store_text) {
             for file in layout.instruction_files {
-                instruction(plan, home, layout.kind, &home.join(file), store, managed);
+                instruction(
+                    plan,
+                    home,
+                    layout.kind,
+                    &home.join(file),
+                    (store, text),
+                    managed,
+                );
             }
         }
         if let Some(config) = layout.hook_config {
@@ -334,9 +372,15 @@ fn harness_files(
             }
             let file = hook_file(layout.kind, &home.join(config));
             let mut steps: Vec<Step> = hook_step(layout.kind, wanted).into_iter().collect();
-            // Claude Code keeps its switches beside its hooks: both edit the same bytes.
+            // Claude Code keeps its switches and its AGENTS.md option beside its hooks:
+            // all three edit the same bytes, in this order, for one write.
             if let Some(slot) = slots.0.remove(&file) {
                 steps.push(slot.step(plan, &file));
+            }
+            if layout.kind == HarnessKind::ClaudeCode
+                && let Some(choice) = desired.claude_agents_md
+            {
+                steps.push(agents_md_step(choice));
             }
             edit_config(plan, home, &file, &steps);
         }
@@ -705,12 +749,28 @@ fn read_instruction(file: &Path) -> Result<InstructionFile, String> {
     }
 }
 
+/// The store's `AGENTS.md` text, read once per plan. Unreadable counts as empty, so only
+/// empty files can be swapped for the link.
+fn read_store_text(plan: &mut Plan, home: &Path, store: &Path) -> String {
+    match read_instruction(store) {
+        Ok(InstructionFile::File(text)) => text,
+        Ok(_) => String::new(),
+        Err(e) => {
+            plan.conflicts.push(format!(
+                "can't read {}: {e}; only empty instruction files will be linked",
+                display(home, store)
+            ));
+            String::new()
+        }
+    }
+}
+
 fn instruction(
     plan: &mut Plan,
     home: &Path,
     kind: HarnessKind,
     file: &Path,
-    store: &Path,
+    (store, store_text): (&Path, &str),
     roots: &[PathBuf],
 ) {
     let shown = display(home, file);
@@ -722,9 +782,13 @@ fn instruction(
         }
     };
     let action = if kind == HarnessKind::ClaudeCode {
-        plan_claude_md(file, &current, store, roots, home)
+        plan_claude_md(file, &current, store, store_text, roots, home)
     } else {
-        plan_instruction_link(file, &current, store, roots)
+        plan_instruction_link(file, &current, store, store_text, roots)
+    };
+    let was = match &current {
+        InstructionFile::File(text) => Some(text.clone().into_bytes()),
+        _ => None,
     };
     let parent = file.parent().unwrap_or(home);
     match action {
@@ -743,15 +807,36 @@ fn instruction(
         }),
         InstructionAction::Write(bytes) => {
             plan.ensure_dir(parent);
-            plan.actions.push(Action::WriteFile {
-                path: file.to_path_buf(),
-                bytes,
-                why: "add the import of the global instructions",
+            // Every line the old text had and the new one lacks must be in the store.
+            let drops = was.as_ref().is_some_and(|w| {
+                let w = String::from_utf8_lossy(w);
+                let b = String::from_utf8_lossy(&bytes);
+                !atlas_harness::instructions::contained(&w, &b, |_| false)
             });
+            plan.actions.push(Action::WriteInstruction {
+                path: file.to_path_buf(),
+                was,
+                kept_in: drops.then(|| store.to_path_buf()),
+                why: if drops {
+                    "its own text is all in the global instructions now, so just the import stays"
+                } else {
+                    "add the import of the global instructions"
+                },
+                bytes,
+            });
+        }
+        InstructionAction::ReplaceFileWithLink { target } => {
+            if let Some(was) = was {
+                plan.actions.push(Action::FileToLink {
+                    path: file.to_path_buf(),
+                    was,
+                    target,
+                });
+            }
         }
         InstructionAction::Conflict(c) => plan.conflicts.push(match c {
             InstructionConflict::UserFile => format!(
-                "{shown} is your own file, so Atlas didn't link the global instructions there"
+                "{shown} has text that isn't in the global instructions, so Atlas kept it and didn't link them there (Use Global instead on the hub's Instructions page adds it to them first)"
             ),
             InstructionConflict::ForeignLink { target } => format!(
                 "{shown} links to {}, which Atlas doesn't manage, so it was left alone",
@@ -774,6 +859,16 @@ pub(crate) struct Step {
     /// Atlas has entries to put there, so a link at the path is worth reporting.
     wanted: bool,
     render: Render,
+}
+
+/// Claude Code's option for reading a project's `AGENTS.md` (decision 0029), set in
+/// `~/.claude/settings.json` after Atlas's hooks and switches.
+fn agents_md_step(choice: ClaudeAgentsMd) -> Step {
+    Step {
+        what: "Claude Code's AGENTS.md option",
+        wanted: true,
+        render: Box::new(move |current| claude_agents_md_setting(current, choice)),
+    }
 }
 
 /// Atlas writes hooks only in these formats; other harnesses' hook files are only read.
@@ -808,6 +903,24 @@ fn switch_step(kind: HarnessKind, reach: Reach, off: BTreeMap<String, PathBuf>) 
                 off.get(n).cloned()
             })
         }),
+    }
+}
+
+/// Why a config file is written, from the parts that changed in it.
+fn why(changed: &[&str]) -> &'static str {
+    let has = |w: &str| changed.contains(&w);
+    match (
+        has("hooks"),
+        has("skill switches"),
+        has("Claude Code's AGENTS.md option"),
+    ) {
+        (true, false, false) => "update Atlas's hooks",
+        (false, true, false) => "update Atlas's skill switches",
+        (false, false, true) => "set Claude Code's AGENTS.md option",
+        (true, true, false) => "update Atlas's hooks and skill switches",
+        (true, false, true) => "update Atlas's hooks and Claude Code's AGENTS.md option",
+        (false, true, true) => "update Atlas's skill switches and Claude Code's AGENTS.md option",
+        _ => "update Atlas's hooks, skill switches and Claude Code's AGENTS.md option",
     }
 }
 
@@ -875,11 +988,7 @@ pub(crate) fn edit_config(plan: &mut Plan, home: &Path, config: &Path, steps: &[
             plan.actions.push(Action::WriteFile {
                 path: config.to_path_buf(),
                 bytes,
-                why: match changed.as_slice() {
-                    ["hooks"] => "update Atlas's hooks",
-                    ["skill switches"] => "update Atlas's skill switches",
-                    _ => "update Atlas's hooks and skill switches",
-                },
+                why: why(&changed),
             });
         }
         None => plan.actions.push(Action::RemoveFile {

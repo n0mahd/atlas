@@ -3,7 +3,7 @@
 //! inside the repo; Atlas's block in `.git/info/exclude`, so the owner's `git status`
 //! stays clean; and Claude Code's memory folder for the repo, linked into the owner's
 //! knowledge checkout. Atlas never writes a path git tracks, and in a checkout removes
-//! only links it listed in its block.
+//! only links its block lists.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -265,8 +265,9 @@ pub(crate) fn links(
             keep.insert(format!("{folder}/{name}"));
         }
     }
-    // The block first, so a new link never shows in `git status`.
-    if let Some(text) = checkout::render_exclude(&exclude, &keep) {
+    // The block first, so a new link never shows in `git status`. Entries are only ever
+    // added: the hub keeps its own there, and a line for a link that is gone is harmless.
+    if let Some(text) = checkout::with_paths(&exclude, &keep) {
         let info = co.root.join(".git/info");
         plan.ensure_dir(&info);
         plan.actions.push(Action::WriteFile {

@@ -215,12 +215,15 @@ fn an_exact_copy_is_replaced_by_the_link_and_anything_else_stays() {
 }
 
 const AGENTS: &str = "/srv/knowledge/AGENTS.md";
+/// The store's `AGENTS.md` text in these tests.
+const GLOBAL_TEXT: &str = "# Global\nBe brief.\n";
 
 fn link_plan(current: &InstructionFile) -> InstructionAction {
     plan_instruction_link(
         Path::new("/u/.codex/AGENTS.md"),
         current,
         Path::new(AGENTS),
+        GLOBAL_TEXT,
         &[p(STORE)],
     )
 }
@@ -263,6 +266,7 @@ fn claude_plan(current: &InstructionFile) -> InstructionAction {
         Path::new("/u/.claude/CLAUDE.md"),
         current,
         Path::new(AGENTS),
+        GLOBAL_TEXT,
         &[],
         Path::new("/u"),
     )
@@ -324,6 +328,7 @@ fn claude_md_cases() {
             Path::new("/u/.claude/CLAUDE.md"),
             &InstructionFile::Missing,
             Path::new("/srv/my knowledge/AGENTS.md"),
+            GLOBAL_TEXT,
             &[],
             Path::new("/u"),
         ),
@@ -339,6 +344,7 @@ fn claude_md_repoints_an_import_from_an_adopted_folder() {
             Path::new("/u/.claude/CLAUDE.md"),
             &InstructionFile::File(text.to_owned()),
             Path::new(AGENTS),
+            GLOBAL_TEXT,
             &[p("/u/Knowledge")],
             Path::new("/u"),
         )

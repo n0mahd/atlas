@@ -196,6 +196,22 @@ pub fn same_secret(a: &str, b: &str) -> bool {
 
 /// A safe place to go after signing in: a local path only.
 #[must_use]
+/// The sign-in page's address that comes back to `next` (kept on this site) afterwards,
+/// with `next` encoded so its own query string survives the trip.
+pub fn signin_href(next: &str) -> String {
+    let next = safe_next(next);
+    let mut out = String::from("/signin?next=");
+    for b in next.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            out.push(char::from(b));
+        } else {
+            use std::fmt::Write as _;
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
+}
+
 pub fn safe_next(next: &str) -> String {
     let ok = next.starts_with('/') && !next.starts_with("//") && !next.contains(['\\', '\r', '\n']);
     if ok { next.to_owned() } else { "/".to_owned() }
@@ -217,6 +233,16 @@ mod tests {
         assert!(auth.session(&headers).is_some());
         auth.sign_out(&headers);
         assert!(auth.session(&headers).is_none());
+    }
+
+    #[test]
+    fn signin_links_keep_the_whole_next_address() {
+        assert_eq!(signin_href("/settings"), "/signin?next=/settings");
+        assert_eq!(
+            signin_href("/skills/updates?scope=x&open=a"),
+            "/signin?next=/skills/updates%3Fscope%3Dx%26open%3Da"
+        );
+        assert_eq!(signin_href("//evil.test"), "/signin?next=/");
     }
 
     #[test]

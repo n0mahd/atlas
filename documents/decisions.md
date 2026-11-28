@@ -319,3 +319,29 @@ carry `agents_from_atlas` per harness (absent from older clients, read as 0). Th
 manifest needs no change: it already pins the whole knowledge tree. This replaces the
 subagent part of `link-agents`, which must stop linking `~/.claude/agents` on machines
 running atlasd.
+
+## 0029 · 2026-11-27 · Instruction files: who reads what, Use Global instead
+Atlas matches the owner's T3 Code instructions work (skills series part 3). One table in
+`atlas_harness::readers` says which project and home files each agent reads and how it
+picks among them; the Instructions page applies it to the hub's machine. "Use Global
+instead" appends an agent's own text to Global; atlasd replaces that agent's file with the
+link or import only when every non-blank line is already in Global, re-checked at apply
+time, so nothing is lost (0027's exact-copy rule for files). Text moved between files is
+appended under an HTML comment `<!-- atlas: from <where> -->` (invisible when rendered,
+says where it came from) and skipped when the target already holds every line. Claude
+Code's AGENTS.md option (`pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`)
+is the owner's choice in `atlas/placements.toml [instructions]`, written by atlasd only
+when set. A new `CLAUDE.local.md` is kept out of git through Atlas's `.git/info/exclude`
+block, the only write Atlas makes inside `.git`.
+
+## 0030 · 2026-11-27 · Checking skills from GitHub for updates
+The hub compares skills installed with the `skills` CLI (`npx skills`) against their GitHub
+source only when the owner presses **Check for updates**, never on a timer. It reads
+GitHub's public trees and blobs API without signing in, using `reqwest` with rustls (atlasd
+already depends on it), with timeouts, size caps, same-host redirects only, and every file
+checked against its git SHA; archive paths are sanitised and links refused. Keeping the
+owner's edits is a three-way line merge with `diffy` (MIT/Apache, no default
+dependencies); clashing files are the owner's choice. The CLI's lock is updated only when
+it sits in a repo Atlas commits; a global lock outside every repo is left alone, so an
+edited global skill shows as updatable again (the preview says so). One lock reader,
+`atlas_fs::lock`, serves updates and the skill library.

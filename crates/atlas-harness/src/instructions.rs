@@ -1,10 +1,19 @@
 //! A harness's global instruction file: a link to the store's `AGENTS.md`, or, for
 //! Claude Code's `CLAUDE.md`, an `@<path>` import line. Atlas never overwrites a file
-//! with content of its own.
+//! with content of its own, except one whose every non-blank line is already in the
+//! store's file ([`contained`]), so nothing is lost.
+//!
+//! Also the pure text rules the hub uses to move instruction text between files
+//! ([`append_section`]), Claude Code's AGENTS.md setting ([`claude_agents_md_setting`]) and
+//! Atlas's block in a repo's `.git/info/exclude` ([`exclude_with`]).
 
 use std::path::{Path, PathBuf};
 
+use atlas_core::catalog::ClaudeAgentsMd;
+use serde_json::{Map, Value};
+
 use crate::skills::normalize;
+use crate::{Change, FormatError};
 
 /// What sits at the harness's instruction file path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,14 +38,19 @@ pub enum InstructionAction {
         from: PathBuf,
         to: PathBuf,
     },
-    /// Claude Code only: write these contents (the file with the import appended).
+    /// Claude Code only: write these contents (the file with the import appended, or,
+    /// when all its own text is already in the store's file, just the import).
     Write(Vec<u8>),
+    /// The agent's own file holds nothing the store's file doesn't: replace it with a link.
+    ReplaceFileWithLink {
+        target: PathBuf,
+    },
     Conflict(InstructionConflict),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstructionConflict {
-    /// A regular file with the user's own content is in the way.
+    /// A regular file with text that isn't in the store's file is in the way.
     UserFile,
     /// A link points somewhere Atlas doesn't manage.
     ForeignLink { target: PathBuf },
@@ -48,18 +62,27 @@ pub enum InstructionConflict {
 /// the instruction file should be a link to `store`.
 ///
 /// `file` is the instruction file's own path, used to resolve relative link targets.
-/// A link into one of `managed_roots` is Atlas's and may be repointed.
+/// A link into one of `managed_roots` is Atlas's and may be repointed. A regular file is
+/// replaced by the link only when every non-blank line of it is in `store_text` (the
+/// store file's text); otherwise it is the user's and reported.
 #[must_use]
 pub fn plan_instruction_link(
     file: &Path,
     current: &InstructionFile,
     store: &Path,
+    store_text: &str,
     managed_roots: &[PathBuf],
 ) -> InstructionAction {
     let store = normalize(store);
     match current {
         InstructionFile::Missing => InstructionAction::CreateLink { target: store },
-        InstructionFile::File(_) => InstructionAction::Conflict(InstructionConflict::UserFile),
+        InstructionFile::File(text) => {
+            if contained(text, store_text, |_| false) {
+                InstructionAction::ReplaceFileWithLink { target: store }
+            } else {
+                InstructionAction::Conflict(InstructionConflict::UserFile)
+            }
+        }
         InstructionFile::Link(t) => {
             let target = resolve(file, t);
             if target == store {
@@ -90,13 +113,17 @@ pub fn claude_import(store: &Path) -> String {
 /// that points into one of `managed_roots` (an older Atlas path, or a folder Atlas has
 /// adopted from earlier scripts, such as `@~/Knowledge/AGENTS.md`) is replaced in place
 /// rather than duplicated, so Claude Code doesn't load the instructions twice; otherwise
-/// the line is appended. Nothing else changes. A link is left alone unless it already
-/// points at `store`, because writing would go through it. `home` expands `@~/` imports.
+/// the line is appended. Nothing else changes, unless every other non-blank line is
+/// already in `store_text` (the store file's text, after "Use Global instead"): then the
+/// file becomes just the import, so Claude doesn't read that text twice. A link is left
+/// alone unless it already points at `store`, because writing would go through it.
+/// `home` expands `@~/` imports.
 #[must_use]
 pub fn plan_claude_md(
     file: &Path,
     current: &InstructionFile,
     store: &Path,
+    store_text: &str,
     managed_roots: &[PathBuf],
     home: &Path,
 ) -> InstructionAction {
@@ -129,6 +156,14 @@ pub fn plan_claude_md(
                 })
             };
             let managed = |p: &Path| managed_roots.iter().any(|r| p.starts_with(normalize(r)));
+            let is_atlas_import =
+                |line: &str| imported(line).is_some_and(|p| p == store || managed(&p));
+            let has_own = text
+                .lines()
+                .any(|l| !l.trim().is_empty() && !is_atlas_import(l));
+            if has_own && contained(text, store_text, is_atlas_import) {
+                return InstructionAction::Write(format!("{import}\n").into_bytes());
+            }
             let mut placed = false;
             let mut lines: Vec<String> = Vec::new();
             for line in text.lines() {
@@ -164,4 +199,229 @@ pub fn plan_claude_md(
 
 fn resolve(file: &Path, target: &Path) -> PathBuf {
     normalize(&file.parent().unwrap_or(Path::new("/")).join(target))
+}
+
+/// A line as compared: without its line ending (`\r` included) and trailing spaces.
+fn line_key(line: &str) -> &str {
+    line.trim_end()
+}
+
+/// Whether every non-blank line of `text` (except those `skip` says to ignore) is a line of
+/// `global`. Exact per line, apart from trailing whitespace, so a file this says yes to
+/// can be replaced by a link or import of `global` without losing anything it says.
+#[must_use]
+pub fn contained(text: &str, global: &str, skip: impl Fn(&str) -> bool) -> bool {
+    let have: std::collections::HashSet<&str> = global.lines().map(line_key).collect();
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !skip(l))
+        .all(|l| have.contains(line_key(l)))
+}
+
+/// The marker line [`append_section`] puts before text it adds: an HTML comment, so it
+/// doesn't show when the file is rendered, naming where the text came from.
+#[must_use]
+pub fn section_marker(from: &str) -> String {
+    let from = from.replace("--", "-").replace(['\n', '\r'], " ");
+    format!("<!-- atlas: from {from} -->")
+}
+
+/// `into` with `text` added at its end, for moving instructions between files: a blank
+/// line, [`section_marker`]`(from)`, a blank line, then `text` without its leading and
+/// trailing blank lines. Nothing is added when `text` is blank or every non-blank line of
+/// it is in `into` already ([`contained`]), so running it twice changes nothing.
+/// Deterministic: the same inputs always give the same bytes.
+#[must_use]
+pub fn append_section(into: &str, from: &str, text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.iter().position(|l| !l.trim().is_empty());
+    let end = lines.iter().rposition(|l| !l.trim().is_empty());
+    let (Some(start), Some(end)) = (start, end) else {
+        return into.to_owned();
+    };
+    if contained(text, into, |_| false) {
+        return into.to_owned();
+    }
+    let body = lines[start..=end].join("\n");
+    let mut out = String::new();
+    if !into.trim().is_empty() {
+        out.push_str(into);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str(&section_marker(from));
+    out.push_str("\n\n");
+    out.push_str(&body);
+    out.push('\n');
+    out
+}
+
+/// `text` without its lines that import `target` with an `@` line by themselves. `dir` is
+/// the importing file's folder (relative imports resolve there), `home` expands `@~/`.
+#[must_use]
+pub fn without_imports_of(text: &str, target: &Path, dir: &Path, home: &Path) -> String {
+    let target = normalize(target);
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| imports_path(l, dir, home).is_none_or(|p| p != target))
+        .collect();
+    let mut out = kept.join("\n");
+    if !out.is_empty() && text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// The path a line imports, if it is an `@<path>` line by itself.
+#[must_use]
+pub fn imports_path(line: &str, dir: &Path, home: &Path) -> Option<PathBuf> {
+    let path = line.trim().strip_prefix('@')?;
+    if path.is_empty() || path.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let path = match path.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None => dir.join(path),
+    };
+    Some(normalize(&path))
+}
+
+// ---------------------------------------------------------------- Claude's AGENTS.md setting
+
+/// The plugin entry in `~/.claude/settings.json` that holds Claude Code's AGENTS.md
+/// option (Claude Code 2.1.277 and later).
+pub const CLAUDE_AGENTS_MD_PLUGIN: &str = "cc-plugin-agents-md@builtin";
+/// Its id before Claude Code 2.1.285, which later versions still read.
+pub const CLAUDE_AGENTS_MD_LEGACY_PLUGIN: &str = "agents-md@builtin";
+/// The option's key under `pluginConfigs.<plugin>.options`.
+pub const CLAUDE_AGENTS_MD_OPTION: &str = "instructionFiles";
+
+/// Claude Code's own word for a choice.
+#[must_use]
+pub const fn claude_value(choice: ClaudeAgentsMd) -> &'static str {
+    match choice {
+        ClaudeAgentsMd::WhenNoClaudeMd => "claude-md-or-agents-md",
+        ClaudeAgentsMd::Alongside => "claude-md-and-agents-md",
+        ClaudeAgentsMd::Never => "claude-md",
+    }
+}
+
+/// What Claude Code's setting says in `settings.json`, as Claude Code's own word
+/// (`managed-only` included), or `None` when it isn't set or the file can't be read.
+#[must_use]
+pub fn read_claude_agents_md(current: Option<&[u8]>) -> Option<String> {
+    let map = crate::hooks::parse_object(current).ok()?;
+    [CLAUDE_AGENTS_MD_PLUGIN, CLAUDE_AGENTS_MD_LEGACY_PLUGIN]
+        .iter()
+        .find_map(|id| {
+            map.get("pluginConfigs")?
+                .get(id)?
+                .get("options")?
+                .get(CLAUDE_AGENTS_MD_OPTION)?
+                .as_str()
+                .map(str::to_owned)
+        })
+}
+
+/// The choice a Claude Code word stands for; `None` for `managed-only` and unknown words.
+#[must_use]
+pub fn claude_choice(value: &str) -> Option<ClaudeAgentsMd> {
+    ClaudeAgentsMd::ALL
+        .into_iter()
+        .find(|c| claude_value(*c) == value)
+}
+
+/// Sets Claude Code's AGENTS.md option in `settings.json` to `choice`:
+/// `pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`, and the legacy
+/// `agents-md@builtin` entry too when it already has a value, so the two can't disagree.
+/// Every other key (Atlas's hooks, skill switches, the owner's settings) stays as it is,
+/// so this composes with the other formats that write the same file: pass it their
+/// output as `current`.
+///
+/// # Errors
+/// The file isn't JSON, or `pluginConfigs`, the plugin's entry or its `options` exist but
+/// aren't objects; Atlas then leaves the file alone.
+pub fn claude_agents_md_setting(
+    current: Option<&[u8]>,
+    choice: ClaudeAgentsMd,
+) -> Result<Change, FormatError> {
+    let original = crate::hooks::parse_object(current)?;
+    let mut edited = original.clone();
+    let value = Value::from(claude_value(choice));
+    let configs = object_at(&mut edited, "pluginConfigs", "pluginConfigs")?;
+    let legacy_set = configs
+        .get(CLAUDE_AGENTS_MD_LEGACY_PLUGIN)
+        .and_then(|p| p.get("options"))
+        .and_then(|o| o.get(CLAUDE_AGENTS_MD_OPTION))
+        .is_some();
+    let mut ids = vec![CLAUDE_AGENTS_MD_PLUGIN];
+    if legacy_set {
+        ids.push(CLAUDE_AGENTS_MD_LEGACY_PLUGIN);
+    }
+    for id in ids {
+        let at = format!("pluginConfigs.{id}");
+        let plugin = object_at(configs, id, &at)?;
+        let options = object_at(plugin, "options", &format!("{at}.options"))?;
+        options.insert(CLAUDE_AGENTS_MD_OPTION.to_owned(), value.clone());
+    }
+    crate::hooks::finish(&original, &edited)
+}
+
+/// The object under `key`, created when missing.
+fn object_at<'a>(
+    map: &'a mut Map<String, Value>,
+    key: &str,
+    at: &str,
+) -> Result<&'a mut Map<String, Value>, FormatError> {
+    map.entry(key.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| FormatError::UnexpectedShape {
+            at: at.to_owned(),
+            expected: "an object",
+        })
+}
+
+// ---------------------------------------------------------------- .git/info/exclude
+
+/// The lines that open and close Atlas's block in a repo's `.git/info/exclude`.
+pub const EXCLUDE_BEGIN: &str = "# atlas:begin";
+pub const EXCLUDE_END: &str = "# atlas:end";
+
+/// `current` (a `.git/info/exclude`) with `add` (patterns such as `/CLAUDE.local.md`) in
+/// Atlas's block, which is created at the end when missing. Lines outside the block are
+/// never touched; entries already in the block stay, in their order, and new ones follow.
+/// Shared by every Atlas entry in the file.
+#[must_use]
+pub fn exclude_with(current: &str, add: &[&str]) -> String {
+    let lines: Vec<&str> = current.lines().collect();
+    let begin = lines.iter().position(|l| l.trim_end() == EXCLUDE_BEGIN);
+    let end = begin.and_then(|b| {
+        lines[b..]
+            .iter()
+            .position(|l| l.trim_end() == EXCLUDE_END)
+            .map(|e| b + e)
+    });
+    let (before, mut block, after): (Vec<&str>, Vec<&str>, Vec<&str>) = match (begin, end) {
+        (Some(b), Some(e)) => (
+            lines[..b].to_vec(),
+            lines[b + 1..e].to_vec(),
+            lines[e + 1..].to_vec(),
+        ),
+        _ => (lines.clone(), Vec::new(), Vec::new()),
+    };
+    for a in add {
+        if !block.iter().any(|l| l.trim_end() == *a) {
+            block.push(a);
+        }
+    }
+    let mut out: Vec<&str> = before;
+    out.push(EXCLUDE_BEGIN);
+    out.extend(block);
+    out.push(EXCLUDE_END);
+    out.extend(after);
+    let mut text = out.join("\n");
+    text.push('\n');
+    text
 }

@@ -43,16 +43,23 @@ made since it was read).
 
 ### Per-agent switches
 
-`atlas_harness::placement::solve` picks the folders for one skill: for each wanted agent,
-the first folder it reads that no unwanted agent reads; else one whose unwanted readers can
-switch the skill off by their own setting; else its first folder, reporting the unwanted
-readers as `stuck_on`. With nothing off it picks exactly what atlasd picked before.
+`atlas_harness::placement::solve` picks the best set of folders for one skill: fewest
+agents left seeing a skill they shouldn't (`stuck_on`), then fewest switched off by their
+own setting, then fewest wanted agents seeing it twice, then fewest links. When the simple
+choice (each wanted agent's first folder that no unwanted agent reads) is already best, it
+is kept, so with nothing off the links are exactly what atlasd made before.
 
-Agents with a setting (`atlas_harness::switches`): Claude Code `skillOverrides`
-(`~/.claude/settings.json`; in a repo `.claude/settings.local.json`, kept out of git),
-Codex `[[skills.config]]` in `~/.codex/config.toml`, OpenCode `permission.skill` in
-`opencode.json(c)` (comments kept), Pi its settings file. Atlas writes only entries it
-manages and keeps the owner's. Others have no switch; the UI says so and why.
+A global skill limited to some projects is solved as linked into each project, not the
+home folders, so the page's reasons match where the links really go. Turning a skill off
+for two or more agents at once asks first.
+
+Agents with a setting (`atlas_harness::switches`; formats and sources in
+`crates/atlas-harness/HARNESSES.md`): Claude Code `skillOverrides` (`~/.claude/settings.json`;
+in a repo `.claude/settings.local.json`), Codex `[[skills.config]]` in `~/.codex/config.toml`
+for home and project skills alike (keyed by the skill's path), OpenCode `permission.skill`
+in the home `opencode.json` or `opencode.jsonc` (`.jsonc` is created when neither exists),
+Pi `skills` in `~/.pi/agent/settings.json`. Atlas marks its own entries and never changes
+the owner's. Others have no switch; the UI says so and why.
 
 ## Projects on each machine
 
@@ -80,8 +87,21 @@ owner's rule: after an import the original is gone and agents read Atlas's copy.
 - **Skills**: real folders and links to folders outside Atlas. Links into folders a tool
   installed (`/usr/share/...`, a tool's own home such as `~/.cua-driver`) and agents' own
   built-in and plugin skills are listed under **Built in and plugins** and never imported.
-- **Instructions**: an agent's own home file offers **Use Global instead** (its text is
-  added to Global first); a project's `CLAUDE.md` can move or merge into `AGENTS.md`.
+- **Instructions**: the page shows, for each file, which agents read it directly,
+  through a link, through Claude's `@` import or through Claude's AGENTS.md option, and
+  why the others don't (`atlas_harness::readers`, sourced in `HARNESSES.md`; computed for
+  the hub's own machine). An agent's own home file offers **Use Global instead**: its text
+  is appended to Global and committed; atlasd then swaps the file for the link (Claude's
+  `CLAUDE.md` for just the import) on each machine only where every non-blank line of it
+  is in Global (`instructions::contained`, re-checked when applied). A project's
+  `CLAUDE.md` can become `AGENTS.md` or merge into it, and the same confirmation offers
+  Claude's option when Claude would still skip `AGENTS.md`; **Move to Global** and **Copy
+  to this project** move text the other ways. Moved text is appended after a blank line
+  and `<!-- atlas: from <where> -->`, and nothing is added that the target already holds.
+  A new `CLAUDE.local.md` goes in Atlas's block of `.git/info/exclude`, so it is never
+  committed (and git can't undo it; the confirmation says so). Claude's choice lives in
+  `atlas/placements.toml` as `[instructions] claude-reads-agents-md = "when-no-claude-md" |
+  "alongside" | "never"`; without it atlasd leaves Claude's setting alone.
 - **Memory**: Claude Code's `~/.claude/projects/<repo>/memory/*.md` become
   `<knowledge>/memory/projects/<project>/<note>.md` with `metadata.host` and
   `metadata.project`; then atlasd makes the per-repo folder a link to that store folder, so
@@ -98,6 +118,28 @@ installed with `npx skills`), select with bulk on/off, move and delete, a **Conf
 for same-named skills with different text, a **Needs attention** filter with a plain reason,
 the folder's file tree with a read-only viewer, and **Check for updates** for skills
 installed from GitHub (preview, keep-your-edits merge, the `skills` CLI's lock updated).
+
+## Updates
+
+**Check for updates** (Skills page, signed in; never automatic) compares each store skill
+that has a `skills` CLI lock record from GitHub with its source (`atlas-web::updates`,
+records from `atlas_fs::lock`). Global skills (knowledge, public) use the global lock
+(`$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json`), project
+skills their repo's `skills-lock.json`. A check lists each source repo's tree once through
+GitHub's API without signing in (at most 20 repos, four at a time, 10 s and size limits);
+the listings stay in memory for the hub's run and nothing is written. When GitHub's limit is
+used up the page says when to try again and nothing more is asked until then. **Preview**
+shows each changed file as a diff before anything is written. With the installed version
+(the record's baseline) a file only the source changed takes theirs, one only the owner
+changed keeps theirs, one both changed is merged line by line, and clashing lines are the
+owner's choice per file (keep mine or take theirs). A global record's baseline is a git tree
+SHA, fetched again from GitHub; a project record holds only a hash of the files, so for an
+edited project skill every difference is the owner's choice. **Update** is one change
+(`change::commit_change`): the folder is rewritten (execute bits kept) and the lock record
+gets what `npx skills update` would write, so the CLI then sees the skill as current. A lock
+that isn't inside a repo Atlas commits (the global one usually isn't) is left alone and the
+preview says so. Links, submodules and unsafe names in a source are refused; fetched files
+are never run; everything is checked against its git SHA and shown escaped.
 
 ## What is not here yet
 
