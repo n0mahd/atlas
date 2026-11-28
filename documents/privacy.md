@@ -24,7 +24,7 @@ All on the hub, under its state folder (default `~/.local/state/atlas-hub`) unle
 | Passkey public keys, names, who added them | `passkeys.json` | Passkey sign-in and signing updates | Signed-in owner (Settings) | Until removed | Settings → remove key |
 | Paired machines: machine name, OS user name, paired / last-seen times, last status report (harnesses found, counts, problems) | `clients.json`, `machines.json` | Machines page, sending updates | Signed-in owner | Until unpaired | Machines → remove |
 | Client and CLI tokens | `clients.json`, `cli-tokens.json` | Authenticate atlasd and the CLI | Nobody: stored only as SHA-256 hashes (0600); each CLI token's last use, at most once a minute | Until removed | Unpair / remove token |
-| One-time codes and recent wrong pairing attempts | `setup-links.json`, `pairing-codes.json` (0600, SHA-256 only; times of wrong codes in the last minute, a count since the last issue) | Setup links, pairing, the wrong-code limit (the pairing-codes decision (00XX)) | Nobody | Until used, expired or voided | Use, expiry, issuing a new code |
+| One-time codes and recent wrong pairing attempts | `setup-links.json`, `pairing-codes.json` (0600, SHA-256 only; times of wrong codes in the last minute, a count since the last issue) | Setup links, pairing, the wrong-code limit (decision 0039) | Nobody | Until used, expired or voided | Use, expiry, issuing a new code |
 | Skills, instructions, memory, projects | The owner's git repos | The product itself | Owner; the repos' own visibility applies | Git history | Git |
 | SSH targets (`user@host`) typed for an SSH install | Request only; logged (see Logs) | Install atlasd from the hub | Hub owner | Journal retention | journald |
 

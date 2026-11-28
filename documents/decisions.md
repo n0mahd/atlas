@@ -417,7 +417,7 @@ native with a warning that it suits only similar systems; other CPUs stay a manu
 cross-build. `deploy/test-install.sh` runs the script in throwaway homes with stand-in
 system tools, so it can be checked without touching the machine.
 
-## 00XX · 2026-11-28 · Passkey-confirmed actions, enrolment authority and sessions tied to keys
+## 0038 · 2026-11-28 · Passkey-confirmed actions, enrolment authority and sessions tied to keys
 Changes that decide who can act on the hub now ask for more than a session.
 - **A fresh tap for sensitive actions.** Once a passkey exists, adding another, removing
   one and creating a CLI token each take a tap from an enrolled passkey first. The page
@@ -447,7 +447,7 @@ Changes that decide who can act on the hub now ask for more than a session.
 - **Return paths.** After sign-in the hub returns only to a local path made of plain URL
   characters that still begins with a single `/` once percent-escapes are decoded.
 
-## 00XX · 2026-11-28 · Short pairing codes with a hub-wide limit
+## 0039 · 2026-11-28 · Short pairing codes with a hub-wide limit
 Pairing codes are typed by hand, so they are now 10 Crockford base32 characters (50
 random bits), shown as `K7QF-9XMR2D`. Redeeming ignores case, hyphens and spaces and reads
 O as 0 and I or L as 1; the state folder keeps only the SHA-256 of that normal form. The
