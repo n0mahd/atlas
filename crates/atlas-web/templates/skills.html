@@ -9,6 +9,7 @@
 </form>
 
 <div id="results" class="sections">
+  {% if outside.tidy > 0 %}<p class="marginalia tidy-offer">{% if outside.tidy == 1 %}One thing{% else %}{{ outside.tidy }} things{% endif %} about your skills could be tidier. <a class="link-cap" href="/skills/tidy">Tidy up</a></p>{% endif %}
   {% for s in v.sections %}
   <section class="section" id="{{ s.id }}">
     <div class="section-head"><span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2><span class="count">{{ s.rows.len() }}</span></div>
@@ -46,5 +47,6 @@
     {% endif %}
   </section>
   {% endfor %}
+  {% include "outside_skills.html" %}
 </div>
 {% endblock %}

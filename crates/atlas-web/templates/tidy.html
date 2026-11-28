@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+{% if v.is_empty() %}
+<p class="empty">Nothing to tidy: every skill here is in Atlas and where agents find it. <a class="link-cap" href="/skills">Back to skills</a></p>
+{% else %}
+<form class="tidy" method="post" action="/skills/tidy" data-send-on-save>
+  <input type="hidden" name="csrf" value="{{ page.csrf }}">
+  <div class="sections">
+    {% if !v.outside.is_empty() || !v.differs.is_empty() %}
+    <section class="section">
+      <div class="section-head"><span class="num">I</span><h2>Outside Atlas</h2><span class="count">{{ v.outside.len() + v.differs.len() }}</span></div>
+      <p class="marginalia">Brought in, a skill is copied to Global and committed; atlasd then swaps each exact copy on your machines for Atlas's link.</p>
+      <ul class="rows">
+        {% for o in v.outside %}
+        <li><fieldset class="row static choice-row">
+          <legend class="row-main"><span class="row-name">{{ o.name }}</span><span class="row-desc mono">{{ o.source }}</span></legend>
+          <span class="choices">
+            <label class="tab"><input type="radio" name="{{ o.field }}" value="bring:{{ o.key }}" checked><span>Bring in</span></label>
+            <label class="tab"><input type="radio" name="{{ o.field }}" value="leave:{{ o.key }}"><span>Leave outside</span></label>
+            <label class="tab"><input type="radio" name="{{ o.field }}" value=""><span>Later</span></label>
+          </span>
+          {% if !o.left_out.is_empty() %}<span class="choice-note warn">Leaves out {{ o.left_out }}; delete the original by hand after.</span>{% endif %}
+        </fieldset></li>
+        {% endfor %}
+        {% for (name, href) in v.differs %}
+        <li><div class="row static"><span class="row-main"><span class="row-name">{{ name }}</span><span class="row-desc">Atlas has another copy; choose which to keep.</span></span><a class="link-cap" href="{{ href }}">Compare</a></div></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% for p in v.projects %}
+    <section class="section">
+      <div class="section-head"><span class="num">{{ loop.index + 1 }}</span><h2>{{ p.name }}</h2></div>
+      <ul class="rows">
+        {% for c in p.duplicates %}
+        <li><div class="row static choice-row">
+          <label class="choice"><input type="checkbox" name="drop" value="{{ c.id }}"><span class="row-main"><span class="row-name">Drop {{ c.name }} here, keep Global's</span><span class="row-desc">{{ c.note }}</span></span></label>
+          {% if let Some(href) = c.compare %}<a class="link-cap" href="{{ href }}">Compare</a>{% endif %}
+        </div></li>
+        {% endfor %}
+        {% for c in p.claude_only %}
+        <li><div class="row static choice-row">
+          <label class="choice"><input type="checkbox" name="share" value="{{ c.id }}"{% if c.disabled %} disabled{% else %} checked{% endif %}><span class="row-main"><span class="row-name">Move {{ c.name }} to .agents/skills</span><span class="row-desc">{{ c.note }}</span></span></label>
+        </div></li>
+        {% endfor %}
+        {% for c in p.switched_off %}
+        <li><div class="row static choice-row">
+          <label class="choice"><input type="checkbox" name="on" value="{{ c.id }}"><span class="row-main"><span class="row-name">Turn {{ c.name }} back on</span><span class="row-desc">{{ c.note }}</span></span></label>
+        </div></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+  </div>
+  <div class="tidy-bar">
+    {% if page.signed_in %}
+    <button class="button-ink" type="submit">Tidy up</button>
+    <span class="editor-note">Nothing changes until you press it. Each repo gets one commit, which git can undo.</span>
+    {% else if page.can_sign_in %}
+    <a class="link-cap" href="/signin?next=/skills/tidy">Sign in to tidy up</a>
+    {% endif %}
+  </div>
+</form>
+{% endif %}
+{% endblock %}

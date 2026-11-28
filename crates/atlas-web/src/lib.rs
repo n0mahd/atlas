@@ -12,10 +12,12 @@ pub mod clients;
 mod distribute;
 mod edit;
 mod icons;
+mod import;
 mod install;
 mod markdown;
 pub mod release;
 pub mod remote;
+mod tidy;
 // Stubs until the library and placement work lands (decision 0027).
 #[allow(dead_code, clippy::unused_async)]
 mod skill_ops;
@@ -101,10 +103,21 @@ impl AppState {
             return Ok(Arc::clone(snap));
         }
         let sources = Arc::clone(&self.sources);
-        let snap = tokio::task::spawn_blocking(move || Snapshot {
-            catalog: atlas_fs::load_catalog(&sources),
-            harnesses: atlas_fs::scan_harnesses(&sources),
-            projects: atlas_fs::scan_projects(&sources),
+        let snap = tokio::task::spawn_blocking(move || {
+            let catalog = atlas_fs::load_catalog(&sources);
+            let harnesses = atlas_fs::scan_harnesses(&sources);
+            let outside = atlas_fs::outside::scan(
+                &sources,
+                &catalog,
+                &harnesses,
+                &atlas_fs::outside::Rules::default(),
+            );
+            Snapshot {
+                catalog,
+                harnesses,
+                projects: atlas_fs::scan_projects(&sources),
+                outside,
+            }
         })
         .await
         .map(Arc::new)
@@ -139,6 +152,7 @@ pub fn router(state: AppState, access: Access) -> Router {
     Router::new()
         .route("/", get(overview))
         .route("/skills", get(skills))
+        .route("/skills/tidy", get(tidy::page).post(tidy::run))
         .route("/skills/{home}/{name}", get(skill_detail))
         .route("/instructions", get(instructions))
         .route("/instructions/{scope}/{file}", get(instruction_detail))
@@ -182,6 +196,16 @@ pub fn router(state: AppState, access: Access) -> Router {
             "/instructions/{scope}/{file}/edit",
             get(edit::edit_instructions).post(edit::save_instructions),
         )
+        .route("/import/skill", post(import::bring_skill))
+        .route("/import/skill/theirs", post(import::take_theirs))
+        .route("/import/skills", post(import::bring_all_skills))
+        .route("/import/note", post(import::bring_note))
+        .route("/import/notes", post(import::bring_all_notes))
+        .route("/import/hook", post(import::bring_hook))
+        .route("/import/hooks", post(import::bring_all_hooks))
+        .route("/import/keep", post(import::keep))
+        .route("/import/compare", get(import::compare))
+        .route("/import/compare-copies", get(tidy::compare_copies))
         .route("/static/{*path}", get(static_file))
         .fallback(not_found)
         .with_state(state)
@@ -286,6 +310,7 @@ struct OverviewPage {
 struct SkillsPage {
     page: Page,
     v: views::SkillsList,
+    outside: import::SkillsOutside,
 }
 
 #[derive(Template)]
@@ -314,6 +339,7 @@ struct InstructionPage {
 struct MemoryPage {
     page: Page,
     v: views::MemoryList,
+    outside: import::MemoryOutside,
 }
 
 #[derive(Template)]
@@ -328,6 +354,7 @@ struct MemoryDetailPage {
 struct HooksPage {
     page: Page,
     v: views::Hooks,
+    outside: import::HooksOutside,
 }
 
 #[derive(Template)]
@@ -381,6 +408,9 @@ struct ListQuery {
     sent: Option<String>,
     #[serde(default)]
     notsent: Option<String>,
+    /// After bringing something into Atlas: what to add to the notice (`import::done_text`).
+    #[serde(default)]
+    done: String,
 }
 
 impl ListQuery {
@@ -425,7 +455,14 @@ impl ListQuery {
     }
 
     fn apply(&self, page: &mut Page) {
-        let (text, send) = self.flash();
+        let (mut text, send) = self.flash();
+        if let Some(extra) = import::done_text(&self.done) {
+            text = if text.is_empty() {
+                extra
+            } else {
+                format!("{text} {extra}")
+            };
+        }
         page.flash = text;
         page.flash_action = send.then_some("Send");
     }
@@ -462,7 +499,8 @@ async fn skills(
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page);
-    Ok(Html(SkillsPage { page, v }.render()?))
+    let outside = import::skills_outside(&snap, &scope, &q.q);
+    Ok(Html(SkillsPage { page, v, outside }.render()?))
 }
 
 async fn skill_detail(
@@ -545,7 +583,8 @@ async fn memory(
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
     q.apply(&mut page);
-    Ok(Html(MemoryPage { page, v }.render()?))
+    let outside = import::memory_outside(&snap, &scope);
+    Ok(Html(MemoryPage { page, v, outside }.render()?))
 }
 
 async fn memory_detail(
@@ -575,7 +614,8 @@ async fn hooks(
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
     q.apply(&mut page);
-    Ok(Html(HooksPage { page, v }.render()?))
+    let outside = import::hooks_outside(&snap);
+    Ok(Html(HooksPage { page, v, outside }.render()?))
 }
 
 async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {

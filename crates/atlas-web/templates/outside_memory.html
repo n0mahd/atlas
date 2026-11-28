@@ -1,0 +1,55 @@
+{# Outside Atlas part of the Memory page: Claude Code's own per-repo notes (import::memory_outside). #}
+{% if !outside.groups.is_empty() || !outside.stray.is_empty() %}
+<section class="section" id="outside">
+  <div class="section-head"><span class="num">§</span><h2>Outside Atlas</h2><span class="count">{{ outside.new }}</span>
+    {% if page.signed_in && outside.new > 0 %}
+    <form class="head-action" method="post" action="/import/notes" data-send-on-save>
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <input type="hidden" name="scope" value="{{ outside.project }}">
+      <button class="button-plain button-small" type="submit">Bring all in</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="marginalia">Claude Code keeps these notes beside each repo. Once Atlas has every one, atlasd links Claude Code's folder to <span class="mono">memory/projects/&lt;project&gt;</span>, so new notes go straight to git.</p>
+  {% for g in outside.groups %}
+  <h3 class="sub-head">{{ g.project }} <span class="mono muted">{{ g.folder }}</span></h3>
+  {% if let Some(p) = g.problem %}<p class="marginalia warn-note">{{ p }}</p>{% endif %}
+  <ul class="rows">
+    {% for n in g.rows %}
+    <li><div class="row static">
+      <span class="row-main"><span class="row-name mono-name">{{ n.file }}</span></span>
+      <span class="row-kind{% if n.state == "differs" %} warn{% endif %}">{{ n.label }}</span>
+      {% if page.signed_in && n.state != "same" %}
+      <form class="inline-form" method="post" action="/import/note" data-send-on-save>
+        <input type="hidden" name="csrf" value="{{ page.csrf }}">
+        <input type="hidden" name="key" value="{{ n.key }}">
+        <input type="hidden" name="scope" value="{{ outside.project }}">
+        {% if n.state == "differs" %}<input type="hidden" name="replace" value="1">
+        <button class="button-plain button-small" type="submit" aria-label="Use this machine's {{ n.file }}">Use this copy</button>
+        {% else %}
+        <button class="button-ink button-small" type="submit" aria-label="Bring {{ n.file }} into Atlas">Bring in</button>
+        {% endif %}
+      </form>
+      <form class="inline-form" method="post" action="/import/keep" data-send-on-save>
+        <input type="hidden" name="csrf" value="{{ page.csrf }}">
+        <input type="hidden" name="key" value="{{ n.key }}">
+        <input type="hidden" name="scope" value="{{ outside.project }}">
+        <button class="icon-button" type="submit" title="Leave it outside" aria-label="Leave {{ n.file }} outside">×</button>
+      </form>
+      {% endif %}
+    </div></li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+  {% if !outside.stray.is_empty() %}
+  <h3 class="sub-head">Repos Atlas doesn't know</h3>
+  <p class="marginalia">Register the repo as a project to bring these in.</p>
+  <ul class="rows">
+    {% for (key, n) in outside.stray %}
+    <li><div class="row static"><span class="row-main"><span class="row-name mono-name">{{ key }}</span></span><span class="row-meta">{{ n }} {% if *n == 1 %}note{% else %}notes{% endif %}</span></div></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if !page.signed_in && page.can_sign_in && outside.new > 0 %}<p><a class="link-cap" href="/signin?next=/memory">Sign in to bring them in</a></p>{% endif %}
+</section>
+{% endif %}
