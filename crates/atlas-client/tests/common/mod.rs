@@ -86,9 +86,14 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
+/// Writes a file; `*.sh` files are made executable, as hook scripts are committed.
 pub fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
+    if path.extension().is_some_and(|e| e == "sh") {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }
 
 /// The release source for `dir` at its HEAD.

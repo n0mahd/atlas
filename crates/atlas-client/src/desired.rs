@@ -145,6 +145,16 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
     let script = dir.join(run);
     atlas_fs::library::installable_file(&script, dir)
         .map_err(|why| format!("its script {run}: {why}"))?;
+    // Agents run the script as a command, so without an execute bit every run would fail.
+    let executable = {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::metadata(&script).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    };
+    if !executable {
+        return Err(format!(
+            "its script {run} isn't executable; make it executable in the knowledge repo (git update-index --chmod=+x)"
+        ));
+    }
     Ok(HookSpec {
         hook: ManagedHook {
             name: slug,

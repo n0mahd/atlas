@@ -37,6 +37,12 @@ fn skills_hooks_and_subagents_that_link_out_of_their_folder_are_skipped_and_repo
         "description = \"x\"\nevent = \"stop\"\nrun = \"run.sh\"\n",
     );
     symlink("/bin/true", k.join("hooks/sneaky/run.sh")).unwrap();
+    // A hook whose script lacks the execute bit: agents would fail to run it.
+    write(
+        &k.join("hooks/plain/hook.toml"),
+        "description = \"x\"\nevent = \"stop\"\nrun = \"check.sh\"\n",
+    );
+    std::fs::write(k.join("hooks/plain/check.sh"), "#!/bin/sh\nexit 0\n").unwrap();
     std::fs::create_dir_all(k.join("agents")).unwrap();
     symlink("/etc/hostname", k.join("agents/spy.md")).unwrap();
     w.change_knowledge(&[]);
@@ -75,6 +81,14 @@ fn skills_hooks_and_subagents_that_link_out_of_their_folder_are_skipped_and_repo
     assert!(said(
         "subagent spy.md skipped: it is a link to somewhere else"
     ));
+    assert!(said(
+        "hook plain skipped: its script check.sh isn't executable"
+    ));
     let settings = std::fs::read_to_string(h.join(".claude/settings.json")).unwrap_or_default();
     assert!(!settings.contains("atlas:sneaky"), "{settings}");
+    assert!(!settings.contains("atlas:plain"), "{settings}");
+    assert!(
+        settings.contains("atlas:guard"),
+        "the executable hook still installs"
+    );
 }

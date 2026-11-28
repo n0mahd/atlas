@@ -162,6 +162,10 @@ fn claudes_agents_md_option_is_written_beside_atlas_hooks() {
     )
     .unwrap();
     fs::write(hook.join("run.sh"), "#!/bin/sh\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(hook.join("run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
     h.write(".claude/settings.json", "{\n  \"model\": \"opus\"\n}\n");
 
     let d = h.desired();
