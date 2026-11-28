@@ -387,13 +387,10 @@ impl Write {
             }
             Self::File { rel, bytes } => library::write_file(root, rel, bytes).map_err(fail),
             Self::Remove { rel } => library::remove_tree(root, rel).map_err(fail),
-            Self::Placements(edit) => {
-                let (mut placements, expected) = library::read_placements(root).map_err(fail)?;
-                edit(&mut placements);
-                library::write_placements(root, &placements, &expected)
-                    .map(|_| ())
-                    .map_err(fail)
-            }
+            Self::Placements(edit) => crate::change::rewrite_placements(root, |p| {
+                edit(p);
+                Ok(())
+            }),
         }
     }
 }
