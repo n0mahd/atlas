@@ -18,6 +18,19 @@ pub struct Client {
     pub paired: u64,
     pub last_seen: Option<u64>,
     pub report: Option<Report>,
+    /// The `last_seen` in `clients.json` now; the one above can be newer, in memory only.
+    #[serde(skip)]
+    saved_seen: Option<u64>,
+}
+
+/// A client checking in with nothing new rewrites `clients.json` at most this often
+/// (seconds), so atlasd's every-minute run isn't a disk write on the hub each time. A
+/// hub restart can lose up to this much of `last_seen`.
+const SEEN_EVERY: u64 = 60;
+
+/// The same report apart from when it was made.
+fn same_report(a: &Report, b: &Report) -> bool {
+    a.release == b.release && a.harnesses == b.harnesses && a.problems == b.problems
 }
 
 #[derive(Debug)]
@@ -46,10 +59,13 @@ impl Clients {
     #[must_use]
     pub fn open(state_dir: &std::path::Path) -> Self {
         let path = state_dir.join("clients.json");
-        let list = std::fs::read(&path)
+        let mut list: Vec<Client> = std::fs::read(&path)
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        for c in &mut list {
+            c.saved_seen = c.last_seen;
+        }
         Self {
             path,
             list: Mutex::new(list),
@@ -62,10 +78,10 @@ impl Clients {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn save(&self, list: &[Client]) -> Result<(), String> {
+    fn save(&self, list: &mut [Client]) -> Result<(), String> {
         use std::io::Write as _;
         use std::os::unix::fs::OpenOptionsExt as _;
-        let bytes = serde_json::to_vec_pretty(list).map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec_pretty(&*list).map_err(|e| e.to_string())?;
         let tmp = self.path.with_extension("json.tmp");
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -77,7 +93,11 @@ impl Clients {
         f.write_all(&bytes)
             .and_then(|()| f.sync_all())
             .map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())?;
+        for c in list {
+            c.saved_seen = c.last_seen;
+        }
+        Ok(())
     }
 
     /// Registers a machine and returns its id and token. Pairing again from the same
@@ -103,8 +123,9 @@ impl Clients {
             paired: now(),
             last_seen: None,
             report: None,
+            saved_seen: None,
         });
-        self.save(&list)?;
+        self.save(&mut list)?;
         Ok((id, token))
     }
 
@@ -127,20 +148,38 @@ impl Clients {
             .cloned()
     }
 
-    /// Records a client's report (and that it was seen).
+    /// Records a client's report (and that it was seen). When nothing but the time moved
+    /// (no report, or the same one again), `clients.json` is rewritten at most once a
+    /// minute per client; the newer time stays in memory in between.
     ///
     /// # Errors
     /// If the list can't be saved.
     pub fn record(&self, id: &str, report: Option<Report>) -> Result<(), String> {
+        self.record_at(id, report, now())
+    }
+
+    fn record_at(&self, id: &str, report: Option<Report>, now: u64) -> Result<(), String> {
         let mut list = self.lock();
         let Some(client) = list.iter_mut().find(|c| c.id == id) else {
             return Err("unknown client".to_owned());
         };
-        client.last_seen = Some(now());
+        let news = report.as_ref().is_some_and(|r| {
+            client
+                .report
+                .as_ref()
+                .is_none_or(|old| !same_report(old, r))
+        });
+        client.last_seen = Some(now);
         if report.is_some() {
             client.report = report;
         }
-        self.save(&list)
+        let recent = client
+            .saved_seen
+            .is_some_and(|t| now.saturating_sub(t) < SEEN_EVERY);
+        if !news && recent {
+            return Ok(());
+        }
+        self.save(&mut list)
     }
 
     /// Forgets a machine; its token stops working.
@@ -150,7 +189,7 @@ impl Clients {
     pub fn remove(&self, id: &str) -> Result<(), String> {
         let mut list = self.lock();
         list.retain(|c| c.id != id);
-        self.save(&list)
+        self.save(&mut list)
     }
 
     /// Forgets every paired client on `machine` (case-insensitive); their tokens stop working.
@@ -164,7 +203,7 @@ impl Clients {
         list.retain(|c| !c.machine.eq_ignore_ascii_case(machine));
         let removed = before - list.len();
         if removed > 0 {
-            self.save(&list)?;
+            self.save(&mut list)?;
         }
         Ok(removed)
     }
@@ -359,6 +398,50 @@ mod tests {
         assert_eq!(Clients::open(tmp.path()).list().len(), 1);
         assert_eq!(clients.remove_machine("BOX").unwrap(), 1);
         assert!(clients.list().is_empty());
+    }
+
+    #[test]
+    fn checking_in_with_nothing_new_writes_at_most_once_a_minute() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clients = Clients::open(tmp.path());
+        let (id, _) = clients.pair("box", "me").unwrap();
+        let on_disk = || Clients::open(tmp.path()).list()[0].clone();
+        let report = |at, problems: &[&str]| Report {
+            release: Some(1),
+            at,
+            harnesses: Vec::new(),
+            problems: problems.iter().map(|p| (*p).to_owned()).collect(),
+        };
+        let t = 1_000_000;
+
+        // Two release GETs within a minute: one write. The second time is still seen.
+        clients.record_at(&id, None, t).unwrap();
+        clients.record_at(&id, None, t + 30).unwrap();
+        assert_eq!(on_disk().last_seen, Some(t));
+        assert_eq!(clients.list()[0].last_seen, Some(t + 30));
+
+        // A first report is news; the same report a little later isn't.
+        clients
+            .record_at(&id, Some(report(t + 31, &[])), t + 31)
+            .unwrap();
+        assert_eq!(on_disk().last_seen, Some(t + 31));
+        clients
+            .record_at(&id, Some(report(t + 40, &[])), t + 40)
+            .unwrap();
+        assert_eq!(on_disk().last_seen, Some(t + 31));
+        assert_eq!(clients.list()[0].report.as_ref().unwrap().at, t + 40);
+
+        // A report that says something new is written at once.
+        clients
+            .record_at(&id, Some(report(t + 45, &["broken"])), t + 45)
+            .unwrap();
+        assert_eq!(on_disk().report.unwrap().problems, ["broken"]);
+
+        // A minute after the last write, the time is written again.
+        clients.record_at(&id, None, t + 104).unwrap();
+        assert_eq!(on_disk().last_seen, Some(t + 45));
+        clients.record_at(&id, None, t + 105).unwrap();
+        assert_eq!(on_disk().last_seen, Some(t + 105));
     }
 
     #[test]
