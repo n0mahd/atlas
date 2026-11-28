@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use atlas_fs::lock::{GitHubSource, is_ignored_path, is_safe_rel};
+use atlas_fs::lock::{GitHubSource, TreeItem, git_tree_sha, is_ignored_path, is_safe_rel};
 
 use super::github::{Entry, RepoTree};
 
@@ -65,6 +65,29 @@ pub(crate) fn find_folder(
     candidates.sort_by_key(|d| (d.split('/').count(), d.to_string()));
     let folder = candidates.first()?.to_string();
     sha_of(&folder).map(|sha| (folder, sha))
+}
+
+/// Whether `sha` is the tree SHA of everything a whole (not cut-off) listing has under
+/// `folder` (`""` for the top), so a folder SHA the listing claims is trusted only when
+/// its entries add up to it.
+pub(crate) fn folder_sha_holds(entries: &[Entry], folder: &str, sha: &str) -> bool {
+    let prefix = if folder.is_empty() {
+        String::new()
+    } else {
+        format!("{folder}/")
+    };
+    let items: Vec<TreeItem> = entries
+        .iter()
+        .filter(|e| e.kind != "tree")
+        .filter_map(|e| {
+            Some(TreeItem {
+                path: e.path.strip_prefix(&prefix)?.to_owned(),
+                mode: e.mode.clone(),
+                sha: e.sha.clone(),
+            })
+        })
+        .collect();
+    !items.is_empty() && git_tree_sha(&items) == sha
 }
 
 /// The entries under `folder` (relative to it) as an upstream version with tree SHA `sha`.
@@ -443,6 +466,35 @@ mod tests {
             assert!(up.unsupported, "{:?}", bad.path);
             assert!(up.files.keys().all(|p| is_safe_rel(p)));
         }
+    }
+
+    #[test]
+    fn a_folder_sha_must_add_up() {
+        let file = |path: &str| Entry {
+            sha: git_blob(path),
+            ..entry(path, "blob", "100644")
+        };
+        let entries = [file("x/SKILL.md"), file("x/a.md"), file("y/SKILL.md")];
+        let items = |paths: &[&str]| -> Vec<TreeItem> {
+            paths
+                .iter()
+                .map(|p| TreeItem {
+                    path: (*p).to_owned(),
+                    mode: "100644".to_owned(),
+                    sha: git_blob(&format!("x/{p}")),
+                })
+                .collect()
+        };
+        let right = git_tree_sha(&items(&["SKILL.md", "a.md"]));
+        assert!(folder_sha_holds(&entries, "x", &right));
+        // A listing claiming another version's SHA for the folder isn't trusted.
+        let other = git_tree_sha(&items(&["SKILL.md"]));
+        assert!(!folder_sha_holds(&entries, "x", &other));
+        assert!(!folder_sha_holds(&entries, "gone", &right));
+    }
+
+    fn git_blob(text: &str) -> String {
+        atlas_fs::lock::git_blob_sha(text.as_bytes())
     }
 
     #[test]

@@ -529,19 +529,22 @@ pub fn git_tree_sha(items: &[TreeItem]) -> String {
     hex(&object_sha("tree", &encode(&root)))
 }
 
+/// Whether [`computed_hash`] leaves this path out: it is under a `.git` or
+/// `node_modules` folder.
+#[must_use]
+pub fn is_unhashed_path(path: &str) -> bool {
+    let mut parts: Vec<&str> = path.split('/').collect();
+    parts.pop();
+    parts.iter().any(|d| *d == ".git" || *d == "node_modules")
+}
+
 /// The CLI's `computeSkillFolderHash`: SHA-256 over each regular file's path and bytes,
 /// ordered as JavaScript's `localeCompare` orders the paths, leaving out `.git` and
 /// `node_modules`. `files` are `(path relative to the folder, bytes)`.
 #[must_use]
 pub fn computed_hash(files: &[(&str, &[u8])]) -> String {
-    let mut kept: Vec<&(&str, &[u8])> = files
-        .iter()
-        .filter(|(p, _)| {
-            let mut parts: Vec<&str> = p.split('/').collect();
-            parts.pop();
-            !parts.iter().any(|d| *d == ".git" || *d == "node_modules")
-        })
-        .collect();
+    let mut kept: Vec<&(&str, &[u8])> =
+        files.iter().filter(|(p, _)| !is_unhashed_path(p)).collect();
     kept.sort_by(|a, b| locale_cmp(a.0, b.0));
     let mut h = <sha2::Sha256 as sha2::Digest>::new();
     for (p, bytes) in kept {

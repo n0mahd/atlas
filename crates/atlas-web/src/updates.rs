@@ -4,8 +4,10 @@
 //! version installed (the baseline).
 //!
 //! - **Check** (a button, never automatic) lists each source repository's tree once, at
-//!   most [`MAX_REPOS`] of them, four at a time, without signing in. The listings are
-//!   kept in memory for the hub's run; nothing is written.
+//!   most [`MAX_REPOS`] of them (never listed first, then the oldest), four at a time,
+//!   without signing in, plus what a cut-off listing or an edited project skill needs. The
+//!   listings merge with earlier checks' and are kept in memory for the hub's run; nothing
+//!   is written, and the pages showing them never ask GitHub.
 //! - **Preview** shows what updating does to each file, as a diff, before anything is
 //!   written. With the baseline a difference is the source's change, yours, or both: only
 //!   theirs takes theirs, only yours keeps yours, both is merged line by line, and clashing
@@ -47,7 +49,8 @@ use crate::{AppError, AppState};
 use github::{GitHub, Problem, RepoTree};
 use plan::{Change, Outcome, Side, UpFile, Upstream};
 
-/// Source repositories one check lists; the rest wait for the next.
+/// Source repositories one check lists: those never listed first, then the oldest
+/// listings; the rest wait for the next check.
 pub(crate) const MAX_REPOS: usize = 20;
 const CONCURRENCY: usize = 4;
 /// Files a check may fetch to tell whether an edited project skill's source moved.
@@ -63,13 +66,47 @@ pub(crate) struct Updates {
     last: tokio::sync::Mutex<Option<Arc<Check>>>,
 }
 
-/// One check: each repository's listing (or why it couldn't be read).
+/// The checks so far, merged: each repository's latest listing (or why it couldn't be
+/// read). Pages read only this; only a check asks GitHub for listings.
 #[derive(Debug)]
 struct Check {
+    /// When the latest check ran.
     at: SystemTime,
-    repos: HashMap<String, Result<Arc<RepoTree>, Problem>>,
-    /// Repositories over [`MAX_REPOS`], not listed.
-    left_out: usize,
+    /// Counts checks, so the oldest listings are asked for again first.
+    round: u64,
+    repos: HashMap<String, Listed>,
+}
+
+/// One repository's listing, from the check numbered `round`.
+#[derive(Clone, Debug)]
+struct Listed {
+    round: u64,
+    tree: Result<Arc<RepoTree>, Problem>,
+    /// For a cut-off listing: each locked skill's folder listed on its own (checked
+    /// against its SHA) by that check, by the folder's tree SHA.
+    folders: HashMap<String, Result<Option<Arc<RepoTree>>, Problem>>,
+}
+
+/// How many requests working out a skill's standing may make.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Asks {
+    /// None: a page shown from the last check.
+    Nothing,
+    /// A few file downloads, during a check, for an edited project skill.
+    Few,
+    /// Whatever a preview or the update needs.
+    All,
+}
+
+/// Where a record's folder is in a check's listing.
+#[derive(Debug)]
+enum Found {
+    Here(Upstream),
+    /// The source no longer has it.
+    Gone,
+    /// A cut-off listing's folder the check didn't list on its own (a skill added since),
+    /// with its tree SHA.
+    Unlisted(String),
 }
 
 impl Updates {
@@ -394,24 +431,21 @@ impl Updates {
         self.github.blob(&l.src.owner, &l.src.repo, sha).await
     }
 
-    /// The source's folder for a record, from its repository's listing.
-    async fn upstream(&self, l: &Locked, tree: &RepoTree) -> Result<Option<Upstream>, Problem> {
-        let Some((folder, sha)) = plan::find_folder(tree, &l.src, l.name.as_str()) else {
-            return if tree.truncated {
-                Err(Problem::TooBig)
-            } else {
-                Ok(None)
-            };
-        };
-        // A cut-off listing may miss some of the folder's files; its own listing has them.
-        if tree.truncated {
-            let own = self
-                .github
-                .tree_by_sha(&l.src.owner, &l.src.repo, &sha)
-                .await?;
-            return Ok(own.map(|t| plan::upstream_of(&t.tree, "", &sha)));
+    /// The source's folder for a record, from the check's listing of its repository, or
+    /// (with `Asks::All`) from GitHub when the check didn't list it on its own.
+    async fn upstream(&self, l: &Locked, listed: &Listed, asks: Asks) -> Result<Found, Problem> {
+        match find_upstream(l, listed)? {
+            Found::Unlisted(sha) if asks == Asks::All => {
+                let own = self
+                    .github
+                    .tree_by_sha(&l.src.owner, &l.src.repo, &sha)
+                    .await?;
+                Ok(own.map_or(Found::Gone, |t| {
+                    Found::Here(plan::upstream_of(&t.tree, "", &sha))
+                }))
+            }
+            found => Ok(found),
         }
-        Ok(Some(plan::upstream_of(&tree.tree, &folder, &sha)))
     }
 
     /// The CLI's `computedHash` of the source's files: as it hashes a download (with the
@@ -424,17 +458,22 @@ impl Updates {
         local: &Local,
         budget: Option<usize>,
     ) -> Result<Option<[String; 2]>, Problem> {
-        let missing = up
+        // The CLI's hash leaves `.git` and `node_modules` out, so they are never fetched.
+        let hashed: Vec<(&String, &UpFile)> = up
             .files
-            .values()
-            .filter(|f| local.by_sha(&f.sha).is_none() && self.github.cached(&f.sha).is_none())
+            .iter()
+            .filter(|(p, _)| !lock::is_unhashed_path(p))
+            .collect();
+        let missing = hashed
+            .iter()
+            .filter(|(_, f)| local.by_sha(&f.sha).is_none() && self.github.cached(&f.sha).is_none())
             .count();
-        if budget.is_some_and(|b| missing > b) || up.files.len() > MAX_FILES {
+        if budget.is_some_and(|b| missing > b) || hashed.len() > MAX_FILES {
             return Ok(None);
         }
-        let mut files = Vec::with_capacity(up.files.len());
+        let mut files = Vec::with_capacity(hashed.len());
         let mut total = 0_u64;
-        for (path, f) in &up.files {
+        for (path, f) in hashed {
             let bytes = self.bytes_of(l, local, &f.sha).await?;
             total += bytes.len() as u64;
             if total > MAX_BYTES {
@@ -455,14 +494,14 @@ impl Updates {
     }
 
     /// Tells the source's changes from the owner's, and the version both started from when
-    /// it is known. `full` allows the downloads a preview needs; a check makes at most a
-    /// few for an edited project skill.
+    /// it is known. `Asks::All` allows the downloads a preview needs; a check makes at most
+    /// a few for an edited project skill, and a page shown from the check none.
     async fn compare(
         &self,
         l: &Locked,
         local: &Local,
         up: &Upstream,
-        full: bool,
+        asks: Asks,
     ) -> Result<(Standing, Option<Side>), Problem> {
         if local.side == up.side {
             return Ok((Standing::Current, Some(up.side.clone())));
@@ -489,7 +528,7 @@ impl Updates {
                 if &local.raw_sha == base || &lock::git_tree_sha(&with_left_out) == base {
                     return Ok((Standing::Update { edited: false }, Some(local.side.clone())));
                 }
-                if !full {
+                if asks != Asks::All {
                     return Ok((Standing::Update { edited: true }, None));
                 }
                 let found = self
@@ -509,7 +548,11 @@ impl Updates {
                 if &local.content_hash == hash {
                     return Ok((Standing::Update { edited: false }, Some(local.side.clone())));
                 }
-                let budget = (!full).then_some(CHECK_DOWNLOADS);
+                let budget = match asks {
+                    Asks::Nothing => Some(0),
+                    Asks::Few => Some(CHECK_DOWNLOADS),
+                    Asks::All => None,
+                };
                 match self.upstream_hashes(l, up, local, budget).await? {
                     None => Ok((Standing::Differs, None)),
                     Some(h) if h.contains(hash) => {
@@ -521,37 +564,107 @@ impl Updates {
         }
     }
 
-    /// The last check's listing of this skill's repository.
-    async fn listing(&self, l: &Locked) -> Option<Result<Arc<RepoTree>, Problem>> {
+    /// The checks' listing of this skill's repository.
+    async fn listing(&self, l: &Locked) -> Option<Listed> {
         let last = self.last.lock().await.clone()?;
         last.repos.get(&repo_key(&l.src)).cloned()
     }
 
-    /// Where one skill stands, from the last check's listing (no new listing request).
-    async fn state_of(&self, l: &Locked, local: Result<Local, String>) -> Standing {
-        let Some(listing) = self.listing(l).await else {
+    /// Where one skill stands, from the checks' listings. A page asks for
+    /// `Asks::Nothing`, so showing it never calls GitHub.
+    async fn state_of(&self, l: &Locked, local: Result<Local, String>, asks: Asks) -> Standing {
+        let Some(listed) = self.listing(l).await else {
             return Standing::NotChecked;
         };
         let local = match local {
             Ok(local) => local,
             Err(why) => return Standing::Unknown(why),
         };
-        let tree = match listing {
-            Ok(tree) => tree,
-            Err(p) => return Standing::Unknown(p.sentence()),
-        };
-        match self.upstream(l, &tree).await {
+        match self.upstream(l, &listed, asks).await {
             Err(p) => Standing::Unknown(p.sentence()),
-            Ok(None) => Standing::Removed,
-            Ok(Some(up)) if up.unsupported => Standing::Unknown(
+            Ok(Found::Gone) => Standing::Removed,
+            Ok(Found::Unlisted(_)) => Standing::NotChecked,
+            Ok(Found::Here(up)) if up.unsupported => Standing::Unknown(
                 "Its source has links, submodules or file names Atlas doesn't update.".to_owned(),
             ),
-            Ok(Some(up)) => match self.compare(l, &local, &up, false).await {
+            Ok(Found::Here(up)) => match self.compare(l, &local, &up, asks).await {
                 Ok((state, _)) => state,
                 Err(p) => Standing::Unknown(p.sentence()),
             },
         }
     }
+}
+
+impl Updates {
+    /// Lists one repository for a check: its whole tree once and, when GitHub cut the
+    /// listing off, each of these skills' folders on its own, so pages never need to.
+    async fn list_repo(&self, skills: &[Locked], round: u64) -> Listed {
+        let src = &skills[0].src;
+        let tree = self
+            .github
+            .repo_tree(&src.owner, &src.repo, src.git_ref.as_deref())
+            .await
+            .map(Arc::new);
+        let mut folders = HashMap::new();
+        if let Ok(tree) = &tree
+            && tree.truncated
+        {
+            for l in skills {
+                let Some((_, sha)) = plan::find_folder(tree, &l.src, l.name.as_str()) else {
+                    continue;
+                };
+                if folders.contains_key(&sha) {
+                    continue;
+                }
+                let own = self
+                    .github
+                    .tree_by_sha(&src.owner, &src.repo, &sha)
+                    .await
+                    .map(|t| t.map(Arc::new));
+                folders.insert(sha, own);
+            }
+        }
+        Listed {
+            round,
+            tree,
+            folders,
+        }
+    }
+}
+
+/// Source repositories of these skills no check has listed yet.
+fn unchecked(locked: &[Locked], last: Option<&Check>) -> usize {
+    let keys: std::collections::BTreeSet<String> =
+        locked.iter().map(|l| repo_key(&l.src)).collect();
+    keys.iter()
+        .filter(|k| last.is_none_or(|c| !c.repos.contains_key(*k)))
+        .count()
+}
+
+/// The record's folder in a check's listing, never asking GitHub. In a whole listing the
+/// folder's SHA is trusted only once its entries add up to it; a cut-off listing's folder
+/// comes from the check's own listing of it, already checked against its SHA.
+fn find_upstream(l: &Locked, listed: &Listed) -> Result<Found, Problem> {
+    let tree = listed.tree.as_ref().map_err(Clone::clone)?;
+    let Some((folder, sha)) = plan::find_folder(tree, &l.src, l.name.as_str()) else {
+        return if tree.truncated {
+            Err(Problem::TooBig)
+        } else {
+            Ok(Found::Gone)
+        };
+    };
+    if tree.truncated {
+        return match listed.folders.get(&sha) {
+            None => Ok(Found::Unlisted(sha)),
+            Some(Err(p)) => Err(p.clone()),
+            Some(Ok(None)) => Ok(Found::Gone),
+            Some(Ok(Some(own))) => Ok(Found::Here(plan::upstream_of(&own.tree, "", &sha))),
+        };
+    }
+    if !plan::folder_sha_holds(&tree.tree, &folder, &sha) {
+        return Err(Problem::Unavailable);
+    }
+    Ok(Found::Here(plan::upstream_of(&tree.tree, &folder, &sha)))
 }
 
 // ---------------------------------------------------------------- the plan
@@ -586,17 +699,19 @@ struct Prepared {
 }
 
 impl Updates {
-    async fn prepare(&self, l: &Locked, tree: &RepoTree) -> Result<Prepared, String> {
+    async fn prepare(&self, l: &Locked, listed: &Listed) -> Result<Prepared, String> {
         let folder = l.folder();
         let local = tokio::task::spawn_blocking(move || read_local(&folder))
             .await
             .map_err(|_| "Reading the skill stopped unexpectedly.".to_owned())??;
         let sentence = |p: Problem| p.sentence();
-        let up = self
-            .upstream(l, tree)
+        let Found::Here(up) = self
+            .upstream(l, listed, Asks::All)
             .await
             .map_err(sentence)?
-            .ok_or_else(|| "The skill is no longer in its source.".to_owned())?;
+        else {
+            return Err("The skill is no longer in its source.".to_owned());
+        };
         if up.unsupported {
             return Err(
                 "Its source has links, submodules or file names Atlas doesn't update.".to_owned(),
@@ -605,7 +720,10 @@ impl Updates {
         if up.files.len() > MAX_FILES {
             return Err("Its source is too big to update.".to_owned());
         }
-        let (state, base) = self.compare(l, &local, &up, true).await.map_err(sentence)?;
+        let (state, base) = self
+            .compare(l, &local, &up, Asks::All)
+            .await
+            .map_err(sentence)?;
         let mut files = Vec::new();
         if state.updatable() {
             let mut total = 0_u64;
@@ -784,7 +902,7 @@ pub(crate) async fn list(
                 let local = tokio::task::spawn_blocking(move || read_local(&folder))
                     .await
                     .unwrap_or_else(|_| Err("Reading the skill stopped.".to_owned()));
-                s.updates.state_of(&l, local).await
+                s.updates.state_of(&l, local, Asks::Nothing).await
             }) as std::pin::Pin<Box<dyn Future<Output = Standing> + Send>>
         })
         .collect();
@@ -811,8 +929,8 @@ pub(crate) async fn list(
     if q.checked.is_some() {
         let problems: Vec<String> = last
             .iter()
-            .flat_map(|c| c.repos.values())
-            .filter_map(|r| r.as_ref().err().map(Problem::sentence))
+            .flat_map(|c| c.repos.values().filter(|r| r.round == c.round))
+            .filter_map(|r| r.tree.as_ref().err().map(Problem::sentence))
             .collect();
         page.flash = problems
             .iter()
@@ -827,7 +945,7 @@ pub(crate) async fn list(
             checked: last
                 .as_ref()
                 .map_or_else(String::new, |c| github::clock(c.at)),
-            left_out: last.as_ref().map_or(0, |c| c.left_out),
+            left_out: unchecked(&locked, last.as_deref()),
         }
         .render()?,
     )
@@ -853,35 +971,74 @@ pub(crate) async fn check(
         ));
     }
     let locked = locate(&s).await?;
-    let mut repos: BTreeMap<String, GitHubSource> = BTreeMap::new();
+    let mut repos: BTreeMap<String, Vec<Locked>> = BTreeMap::new();
     for l in &locked {
-        repos
-            .entry(repo_key(&l.src))
-            .or_insert_with(|| l.src.clone());
+        repos.entry(repo_key(&l.src)).or_default().push(l.clone());
     }
-    let left_out = repos.len().saturating_sub(MAX_REPOS);
-    let picked: Vec<(String, GitHubSource)> = repos.into_iter().take(MAX_REPOS).collect();
+    let prev = s.updates.last.lock().await.clone();
+    let round = prev.as_ref().map_or(1, |c| c.round + 1);
+    // Never listed (or not read last time) first, then the oldest listings.
+    let since = |key: &String| {
+        prev.as_ref()
+            .and_then(|c| c.repos.get(key))
+            .filter(|r| r.tree.is_ok())
+            .map_or(0, |r| r.round)
+    };
+    let mut order: Vec<&String> = repos.keys().collect();
+    order.sort_by_key(|k| (since(k), (*k).clone()));
+    let picked: Vec<(String, Vec<Locked>)> = order
+        .into_iter()
+        .take(MAX_REPOS)
+        .map(|k| (k.clone(), repos[k].clone()))
+        .collect();
     let jobs = picked
         .iter()
-        .map(|(_, src)| {
-            let (s, src) = (s.clone(), src.clone());
-            Box::pin(async move {
-                s.updates
-                    .github
-                    .repo_tree(&src.owner, &src.repo, src.git_ref.as_deref())
-                    .await
-                    .map(Arc::new)
-            })
-                as std::pin::Pin<Box<dyn Future<Output = Result<Arc<RepoTree>, Problem>> + Send>>
+        .map(|(_, skills)| {
+            let (s, skills) = (s.clone(), skills.clone());
+            Box::pin(async move { s.updates.list_repo(&skills, round).await })
+                as std::pin::Pin<Box<dyn Future<Output = Listed> + Send>>
         })
         .collect();
-    let trees = bounded(jobs).await;
-    let check = Check {
+    let listed = bounded(jobs).await;
+    // Merged into the checks before, keeping only repositories still locked.
+    let mut merged: HashMap<String, Listed> = prev
+        .iter()
+        .flat_map(|c| c.repos.iter())
+        .filter(|(k, _)| repos.contains_key(*k))
+        .map(|(k, r)| (k.clone(), r.clone()))
+        .collect();
+    merged.extend(picked.iter().map(|(k, _)| k.clone()).zip(listed));
+    *s.updates.last.lock().await = Some(Arc::new(Check {
         at: SystemTime::now(),
-        repos: picked.into_iter().map(|(k, _)| k).zip(trees).collect(),
-        left_out,
-    };
-    *s.updates.last.lock().await = Some(Arc::new(check));
+        round,
+        repos: merged,
+    }));
+    // An edited project skill's standing may need a few files; the check fetches them
+    // now (they stay cached), so the page it leads to asks GitHub nothing.
+    let edited_projects: Vec<Locked> = picked
+        .into_iter()
+        .flat_map(|(_, skills)| skills)
+        .filter(|l| matches!(l.baseline, Some(Baseline::Content(_))))
+        .collect();
+    let jobs = edited_projects
+        .into_iter()
+        .map(|l| {
+            let s = s.clone();
+            Box::pin(async move {
+                let folder = l.folder();
+                let local = tokio::task::spawn_blocking(move || read_local(&folder))
+                    .await
+                    .unwrap_or_else(|_| Err("Reading the skill stopped.".to_owned()));
+                if local
+                    .as_ref()
+                    .is_ok_and(|x| l.baseline != Some(Baseline::Content(x.content_hash.clone())))
+                {
+                    s.updates.state_of(&l, local, Asks::Few).await;
+                }
+            }) as std::pin::Pin<Box<dyn Future<Output = ()> + Send>>
+        })
+        .collect();
+    bounded(jobs).await;
     Ok(Redirect::to("/skills/updates?checked=1").into_response())
 }
 
@@ -1009,13 +1166,13 @@ pub(crate) async fn preview(
     };
     match s.updates.listing(&l).await {
         None => {}
-        Some(Err(p)) => {
+        Some(Listed { tree: Err(p), .. }) => {
             view.checked = true;
             view.state = p.sentence();
         }
-        Some(Ok(tree)) => {
+        Some(listed) => {
             view.checked = true;
-            match s.updates.prepare(&l, &tree).await {
+            match s.updates.prepare(&l, &listed).await {
                 Err(why) => view.state = why,
                 Ok(p) => {
                     view.state = p.state.words();
@@ -1147,12 +1304,12 @@ async fn plan_change(
     skill: &Locked,
     fields: &[(String, String)],
 ) -> Result<(Vec<RepoChange>, change::Apply), String> {
-    let Some(Ok(tree)) = s.updates.listing(skill).await else {
+    let Some(listed) = s.updates.listing(skill).await.filter(|l| l.tree.is_ok()) else {
         return Err("Check for updates first; nothing changed.".to_owned());
     };
     let prepared = s
         .updates
-        .prepare(skill, &tree)
+        .prepare(skill, &listed)
         .await
         .map_err(|why| format!("{why} Nothing changed."))?;
     if !prepared.state.updatable() {
