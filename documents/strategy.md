@@ -91,11 +91,16 @@ Then the standing items:
 - Atlas adds an `@` import to Claude's `CLAUDE.md` but has no way yet to remove it when a
   machine stops being managed.
 - Machines install atlasd with `curl <hub>/install | sh -s -- <code>`; the hub serves
-  builds it keeps in `<state>/dist/`, checked by SHA-256 in the script. `deploy/install.sh`
-  makes the one for the hub's own CPU (static when the musl target is installed); other
-  CPUs need `cargo zigbuild` by hand. They aren't signed yet: signed release builds from CI are the
-  fix. macOS builds are made on a Mac (the TLS stack links Apple's Security framework) and
-  run from a launchd agent instead of a systemd timer (decision 0033).
+  builds it keeps in `<state>/dist/`, checked by SHA-256 in the script.
+  `.github/workflows/release.yml` builds static Linux musl binaries (`atlas-hub` and
+  `atlasd`, x86_64 and aarch64) and macOS `atlasd` binaries (x86_64 and aarch64, built on
+  GitHub's macOS runners because the TLS stack links Apple's Security framework) with
+  `SHA256SUMS` and GitHub build-provenance attestations. `deploy/get.sh` and
+  `deploy/install.sh` download and check `SHA256SUMS` from the same release (falling back
+  to compiling from source when no release is available). Builds aren't signed with a
+  separate owner signing key yet, and the installers don't check attestations
+  automatically. macOS clients run from a launchd agent instead of a systemd timer
+  (decision 0033).
 - Installing over SSH from the Machines page (decision 0025) runs inside the request, up to
   3 minutes, with no progress until it ends. A Tailscale SSH policy in `check` mode wants
   a browser sign-in that BatchMode can't give, so it only times out. A background job with

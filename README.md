@@ -19,7 +19,8 @@ changes between versions. Not yet built: the desktop app and MCP servers.
 ## You need
 
 - A Linux machine with systemd for the hub, usually on.
-- The Rust toolchain ([rustup](https://rustup.rs)) and `git`.
+- `git` and `curl` (and the Rust toolchain from [rustup](https://rustup.rs) only if you want
+  to build from source).
 - A [Tailscale](https://tailscale.com) account, with HTTPS certificates turned on (admin
   console, DNS page). Passkeys only work over HTTPS.
 - A browser that can use passkeys.
@@ -28,13 +29,21 @@ changes between versions. Not yet built: the desktop app and MCP servers.
 
 ## Quick start
 
-Clone the repo on the machine that will be the hub, then:
+On the Linux machine that will be the hub, pick its Tailscale address and a port (such as
+`https://hub.example.ts.net:7443`):
 
-1. Run `deploy/install.sh` with the address the hub will have, such as
-   `https://hub.example.ts.net:7443` (that machine's Tailscale name). It checks what's
-   missing before building, says what it will create, sets up a starter knowledge repo
-   if you have none, and prints a link to create your passkey. Then give the knowledge
-   repo a remote and push it, as the script says.
+```sh
+curl -fsSL https://raw.githubusercontent.com/n0mahd/atlas/main/deploy/get.sh \
+  | sh -s -- https://hub.example.ts.net:7443
+```
+
+1. That downloads the latest GitHub release (`atlas-hub` and all four `atlasd` client
+   builds, checked against `SHA256SUMS`), sets up a starter knowledge repo if you have
+   none, starts the user service, puts it on your tailnet, and prints a link to create
+   your passkey. Then give the knowledge repo a remote and push it, as the script says.
+   From a clone, `deploy/install.sh https://hub.example.ts.net:7443` downloads the latest
+   release by default (falling back to building from source if none is published yet);
+   pass `--build` to compile your checkout instead.
 2. On every machine whose agents Atlas should manage, the hub's own machine included:
    **Machines → Pair** in the hub, then run the command it shows.
 3. Edit a skill in the hub and press Save. Your machines have it within a minute.

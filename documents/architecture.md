@@ -176,11 +176,14 @@ Machines without a built-in passkey sign with a phone (hybrid QR) or a hardware 
 Enrol at least two authenticators.
 
 ## Supply chain
-Built: a committed `Cargo.lock`, a pinned toolchain (`rust-toolchain.toml`), and CI
-(`.github/workflows/ci.yml`) that runs fmt, clippy and the tests on every push, with its
-actions pinned by commit.
-Planned: cargo-deny, and release binaries built and signed by CI (today the owner builds
-them and the hub hands them out).
+Built: a committed `Cargo.lock`, a pinned toolchain (`rust-toolchain.toml`), CI
+(`.github/workflows/ci.yml`) that runs fmt, clippy and the tests on every push, and a
+release workflow (`.github/workflows/release.yml`) that builds static Linux musl and macOS
+binaries with `SHA256SUMS` and GitHub build-provenance attestations; every workflow action
+is pinned by commit. `deploy/get.sh` and `deploy/install.sh` verify `SHA256SUMS` from the
+same release before installing anything.
+Planned: cargo-deny, signing release binaries with a separate owner key, and verifying
+signatures/attestations automatically in the installers.
 
 ## Threats
 | Threat | Mitigation |
@@ -193,7 +196,7 @@ them and the hub hands them out).
 | Bad client writes | Pure plans, dry runs, managed entries only, atomic writes. |
 | Replay of an old release | Release numbers must increase. |
 | Tampering in transit or at GitHub | Signature and tree-hash checks in atlasd. |
-| Supply chain | Locked dependencies, pinned toolchain, CI with pinned actions. Planned: cargo-deny and signed binaries. |
+| Supply chain | Locked dependencies, pinned toolchain, CI and release builds with pinned actions, `SHA256SUMS`, and GitHub build-provenance attestations. Planned: cargo-deny and a separate owner signing key checked by the installers. |
 
 ## Verification
 `e2e/` (Playwright, dev-only) runs the real hub and atlasd in throwaway worlds and drives

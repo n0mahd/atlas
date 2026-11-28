@@ -81,8 +81,15 @@ its token stops working.
 
 - Anything running as your account on the hub machine can reach the hub's local socket.
   Keep that machine's account to yourself.
-- The atlasd builds the hub hands out are checked by SHA-256 against the hub's own
-  checksum, but not yet signed. Signed builds are planned.
+- **Prebuilt releases and verification.** `deploy/get.sh` and `deploy/install.sh` check
+  every downloaded file (the deploy archive, `atlas-hub` and each `atlasd` build) against
+  `SHA256SUMS` from the same GitHub release. That catches truncated downloads or tampering
+  in transit, not a compromised GitHub release itself. Each release file also carries a
+  GitHub build-provenance attestation tying it to the commit and workflow that built it
+  (`gh attestation verify <file> -R n0mahd/atlas`); the installers do not verify
+  attestations automatically, and there is no separate owner signing key yet.
+- The `atlasd` builds the hub hands out are checked by SHA-256 against the hub's own
+  checksum, not signed with a separate key yet.
 - Nothing yet scans skills, memory or hooks for risky instructions. Atlas shows them
   safely in its pages, but what they tell an agent to do is up to you to check.
 - Add a second passkey, so losing one device doesn't lock you out.

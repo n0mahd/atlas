@@ -580,3 +580,32 @@ fails when a route isn't in it. Update acceptance gets a bounded model check
 small and the real `release::check` can be explored exhaustively. Real harness binaries are
 checked only through offline commands, never with the owner's logins copied into a sandbox.
 Node is a dev-only dependency for `e2e/` and is never part of the hub or atlasd.
+
+## 00XX · 2026-11-28 · Prebuilt release binaries and download-first hub install
+Requiring a Rust toolchain and a multi-minute compile to try Atlas adds friction for new
+hubs and leaves `dist/` with only the hub's own architecture until the owner cross-builds
+the rest by hand.
+
+- **Release workflow (`.github/workflows/release.yml`).** On `v*` tags and
+  `workflow_dispatch`, GitHub Actions builds `--locked` static musl binaries for Linux
+  x86_64 and aarch64 (`atlas-hub-linux-<arch>`, `atlasd-linux-<arch>`) on native
+  `ubuntu-24.04` and `ubuntu-24.04-arm` runners, and macOS x86_64 and aarch64 `atlasd`
+  binaries (`atlasd-macos-<arch>`) on `macos-15` (so Apple's Security framework links
+  natively). A packaging job checks that the Linux binaries are statically linked, packs
+  `atlas-deploy.tar.gz` (`deploy/install.sh`, `deploy/atlas-hub.service`,
+  `deploy/hub.example.toml`), writes `SHA256SUMS`, records GitHub build-provenance
+  attestations (`actions/attest-build-provenance`), and uploads a workflow artifact. On
+  `v*` tags a separate job with `contents: write` creates a **draft** GitHub release so a
+  person reviews and publishes it. Every action is pinned by full commit SHA.
+- **Download-first installer (`deploy/install.sh`) and bootstrap (`deploy/get.sh`).**
+  `deploy/install.sh` now defaults to downloading the latest GitHub release (`atlas-hub`
+  plus every `atlasd` build listed in `SHA256SUMS`), verifying every checksum before
+  installing anything, and skipping `cargo`. If no release is reachable it explains why in
+  one sentence and falls back to compiling from the checkout; `--download` requires a
+  release and `--build` always compiles from source. People without a clone can run
+  `deploy/get.sh` (POSIX `sh`), which downloads and verifies `atlas-deploy.tar.gz` and
+  hands off to `deploy/install.sh --download` so the install logic lives in one place.
+- **Verification boundary.** Checksums from the same release catch corruption and transit
+  tampering, and GitHub build-provenance attestations let anyone verify what commit and
+  workflow produced a file (`gh attestation verify`). A separate owner signing key verified
+  by the installers remains planned debt.

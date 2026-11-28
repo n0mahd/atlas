@@ -14,8 +14,9 @@ machine that is usually on. You do this once.
   every save is a commit.
 - A git remote for your knowledge repo that every machine can fetch from, such as a
   private GitHub repo. Your machines fetch updates from there, not from the hub.
-- The Rust toolchain ([rustup](https://rustup.rs)). The repo pins the version in
-  `rust-toolchain.toml`.
+- `curl` (and `tar`, `sha256sum`) to download prebuilt releases. The Rust toolchain
+  ([rustup](https://rustup.rs)) is only needed if you want to build from source; the repo
+  pins the version in `rust-toolchain.toml`.
 - A browser that can use passkeys.
 
 ## The knowledge repo
@@ -47,22 +48,37 @@ instructions.
 
 ## The quick way
 
-From a clone of the Atlas repo, pick a port and run:
+Without cloning the repo, pick a port and run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/n0mahd/atlas/main/deploy/get.sh \
+  | sh -s -- https://hub.example.ts.net:7443
+```
+
+Or from a clone of the Atlas repo:
 
 ```sh
 deploy/install.sh https://hub.example.ts.net:7443
 ```
 
-Use your hub's own Tailscale name; run the script without an address and it suggests
-one. Before building anything, it checks for cargo, git, a signed-in Tailscale and
+Use your hub's own Tailscale name; run `deploy/install.sh` without an address and it
+suggests one. By default it downloads the latest GitHub release (no Rust toolchain
+needed) and falls back to building from source if no release is reachable. Pass
+`--download` to require a release, or `--build` to compile from your checkout instead.
+
+Before downloading or building anything, it checks for git, a signed-in Tailscale and
 systemd user services, and says in one sentence what's missing. Then it lists what it
 will create and, when you run it from a terminal, asks once before going on.
 
 It then:
 
-1. builds the hub and installs it as `~/.local/bin/atlas-hub`,
-2. builds atlasd for this machine's kind of CPU and puts it where the hub hands it out
-   (see [atlasd builds](#give-the-hub-atlasd-builds-to-hand-out)),
+1. downloads `atlas-hub` for this CPU from the latest release, checks its SHA-256 against
+   `SHA256SUMS`, and installs it as `~/.local/bin/atlas-hub` (or builds it with `cargo`
+   when building from source),
+2. downloads all four `atlasd` client builds (`linux-x86_64`, `linux-aarch64`,
+   `macos-x86_64`, `macos-aarch64`), checks their SHA-256 sums, and puts them where the
+   hub hands them out (see [atlasd builds](#give-the-hub-atlasd-builds-to-hand-out); when
+   building from source it builds only this machine's CPU),
 3. makes the starter knowledge repo, if `~/Knowledge` doesn't exist,
 4. writes `~/.config/atlas/hub.toml`, if there isn't one, letting in your Tailscale
    login,
@@ -72,11 +88,11 @@ It then:
 
 If Tailscale prints a link to turn on HTTPS or Serve, open it and approve; the script
 goes on once you have. Running the script again is safe: it keeps your config and your
-knowledge repo as they are, rebuilds, and restarts the hub.
+knowledge repo as they are, updates the binaries, and restarts the hub.
 
-The steps below do the same by hand.
+The steps below do the same by hand from source.
 
-## By hand
+## By hand (from source)
 
 ### 1. Build
 
@@ -154,7 +170,12 @@ in the config changes it), named `atlasd-<os>-<cpu>`: `atlasd-linux-x86_64`,
 `atlasd-linux-aarch64`, `atlasd-macos-x86_64`, `atlasd-macos-aarch64`. You only need the
 ones for the machines you use.
 
-The install script makes the one for the hub's own CPU. When the musl target is installed
+When you install from a GitHub release (the default in `deploy/get.sh` and
+`deploy/install.sh`), all four builds are downloaded, checked against `SHA256SUMS`, and
+placed in `dist/` automatically.
+
+When building from source (`deploy/install.sh --build`), the install script makes the one
+for the hub's own CPU. When the musl target is installed
 (`rustup target add x86_64-unknown-linux-musl`, and `cargo-zigbuild` with `zig` if a
 plain build doesn't link), that build is static and runs on any Linux machine with that
 CPU. Otherwise it's built for the hub's own system and suits only machines with the same
