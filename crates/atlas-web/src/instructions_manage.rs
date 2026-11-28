@@ -965,9 +965,9 @@ pub(crate) async fn confirm(
         return Err(AppError::NotFound);
     }
     if !page.signed_in {
-        return Ok(Redirect::to(&format!(
-            "/signin?next=/instructions/{scope}/{file}/{action}"
-        ))
+        return Ok(Redirect::to(&crate::auth::signin_href(&format!(
+            "/instructions/{scope}/{file}/{action}"
+        )))
         .into_response());
     }
     let p = planned(&s, op, String::new()).await?;

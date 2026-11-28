@@ -594,3 +594,18 @@ async fn nothing_is_read_or_planned_before_the_session_is_checked() {
     assert_eq!(read(&h.project.join("CLAUDE.md")), "Rules.\n");
     assert_eq!((commits(&h.project), commits(&h.knowledge)), (1, 1));
 }
+
+#[tokio::test]
+async fn a_confirmation_without_a_session_goes_to_sign_in() {
+    let h = hub(&[("CLAUDE.md", "Rules.\n")]);
+    let req = Request::get("/instructions/shop/CLAUDE.md/to-agents")
+        .header("tailscale-user-login", LOGIN)
+        .body(Body::empty())
+        .unwrap();
+    let res = send(&h, req).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location,
+        "/signin?next=/instructions/shop/CLAUDE.md/to-agents"
+    );
+}
