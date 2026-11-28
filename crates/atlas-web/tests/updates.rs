@@ -509,6 +509,13 @@ async fn unedited_merged_and_clashing_skills_end_current() {
     );
     assert_eq!(lock["dismissed"]["findSkillsPrompt"], true);
 
+    // A cancelled passkey tap offers Send again.
+    let (_, done) = hub.get(&format!("{location}&notsent=1")).await;
+    assert!(
+        done.contains("Saved. Not on your machines yet") && done.contains("data-action=\"send\""),
+        "{done}"
+    );
+
     // Edited apart: merged, both edits kept.
     let (_, preview) = hub.get("/skills/private/beta/update").await;
     assert!(preview.contains("Merged with your edits"), "{preview}");
@@ -626,8 +633,16 @@ async fn project_locks_are_written_and_outside_locks_left_alone() {
         preview.contains("skills-lock.json) is updated in the same change"),
         "{preview}"
     );
-    let (status, _, body) = hub.update("shop", "stock", &[]).await;
+    assert!(
+        !preview.contains("data-send-on-save"),
+        "a project update sends nothing to machines"
+    );
+    let (status, location, body) = hub.update("shop", "stock", &[]).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    // The flash `change::respond` asks for, as on every other page.
+    assert!(location.contains("saved="), "{location}");
+    let (_, done) = hub.get(&location).await;
+    assert!(done.contains("Saved and committed as "), "{done}");
     let lock_text = fs::read_to_string(hub.project.join("skills-lock.json")).unwrap();
     let v2_hashed: Vec<(&str, &[u8])> = v2.iter().map(|(p, t, _)| (*p, t.as_bytes())).collect();
     assert!(

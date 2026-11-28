@@ -710,6 +710,8 @@ struct UpdatePage {
     upstream_pin: String,
     can_apply: bool,
     checked: bool,
+    /// Updating commits to the knowledge repo and the owner sends on save.
+    send_on_save: bool,
 }
 
 /// Reading these pages fetches from GitHub, so they need a passkey session: its cookie is
@@ -960,22 +962,12 @@ fn views(files: &[Prep]) -> Vec<FileView> {
         .collect()
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct DoneQuery {
-    #[serde(default)]
-    changed: Option<String>,
-    #[serde(default)]
-    unchanged: Option<String>,
-    #[serde(default)]
-    sent: Option<String>,
-}
-
 /// `GET /skills/{home}/{name}/update`: the preview.
 pub(crate) async fn preview(
     State(s): State<AppState>,
     headers: HeaderMap,
     UrlPath((home, name)): UrlPath<(String, String)>,
-    Query(q): Query<DoneQuery>,
+    Query(q): Query<crate::ListQuery>,
 ) -> Result<Response, AppError> {
     let here = format!("/skills/{home}/{name}/update");
     if let Some(r) = require_session(&s, &headers, &here) {
@@ -991,11 +983,17 @@ pub(crate) async fn preview(
         &l.home.scope(),
         false,
     );
-    if q.changed.is_some() || q.sent.is_some() {
-        "Updated.".clone_into(&mut page.flash);
-    } else if q.unchanged.is_some() {
-        "Nothing changed, so nothing was committed.".clone_into(&mut page.flash);
-    }
+    // `apply` answers through `change::respond`, as every other change does.
+    q.apply(&mut page);
+    let sends = l.kind == RepoKind::Knowledge
+        || matches!(
+            &l.place,
+            LockPlace::Repo {
+                kind: RepoKind::Knowledge,
+                ..
+            }
+        );
+    let send_on_save = sends && s.writer.as_ref().is_some_and(|w| w.settings().send_on_save);
     let mut view = UpdatePage {
         page,
         action: here,
@@ -1007,6 +1005,7 @@ pub(crate) async fn preview(
         upstream_pin: String::new(),
         can_apply: false,
         checked: false,
+        send_on_save,
     };
     match s.updates.listing(&l).await {
         None => {}

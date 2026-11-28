@@ -8,7 +8,7 @@
 <p class="marginalia">Not checked yet.</p>
 {% include "updates_button.html" %}
 {% else if can_apply %}
-<form class="update-form" method="post" action="{{ action }}" data-send-on-save>
+<form class="update-form" method="post" action="{{ action }}"{% if send_on_save %} data-send-on-save{% endif %}>
   <input type="hidden" name="csrf" value="{{ page.csrf }}">
   <input type="hidden" name="local" value="{{ local_pin }}">
   <input type="hidden" name="upstream" value="{{ upstream_pin }}">
