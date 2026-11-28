@@ -546,13 +546,7 @@ fn is_md(name: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
-fn is_real_dir(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
-}
-
-fn has_skill_md(folder: &Path) -> bool {
-    fs::symlink_metadata(folder.join("SKILL.md")).is_ok_and(|m| m.is_file())
-}
+use crate::library::{has_skill_md, is_real_dir};
 
 fn store_homes(sources: &Sources) -> Vec<PathBuf> {
     let mut homes = vec![sources.knowledge.join("skills")];
@@ -780,7 +774,7 @@ fn built_in(ctx: &Ctx, out: &mut Outside) {
                 continue;
             }
             for (name, folder) in list_dir(&skills) {
-                if name.starts_with('.') || !folder.is_dir() || !folder.join("SKILL.md").is_file() {
+                if name.starts_with('.') || !is_real_dir(&folder) || !has_skill_md(&folder) {
                     continue;
                 }
                 let item = BuiltIn {
@@ -862,6 +856,12 @@ pub fn hook_owner(home: &Path, rules: &Rules, command: &str) -> HookOwner {
         let Some(path) = word_path(home, word) else {
             continue;
         };
+        // Outside the home, a path marks a tool's hook only under a known tool root:
+        // `/`, `/dev/null`, `/bin/sh` or `/tmp/x` in a command are just arguments.
+        let in_home = path.starts_with(home);
+        if !in_home && !rules.tool_roots.iter().any(|r| path.starts_with(r)) {
+            continue;
+        }
         match place_of(home, rules, &path) {
             Place::Owner => {}
             Place::Tool(Some(t)) => return HookOwner::Tool(t),
@@ -1262,6 +1262,15 @@ mod tests {
             HookOwner::Owner
         );
         assert_eq!(who("echo done"), HookOwner::Owner);
+        // System paths in a hand-made command are arguments, not a tool's install.
+        assert_eq!(
+            who("grep -q 'rm -rf /' && exit 2 || exit 0"),
+            HookOwner::Owner
+        );
+        assert_eq!(
+            who("/bin/sh -c 'cargo fmt >/dev/null 2>&1; cp x /tmp/y'"),
+            HookOwner::Owner
+        );
         assert_eq!(
             who("/home/u/.claude/hooks/herdr-agent-state.sh"),
             HookOwner::Tool("Herdr".into())

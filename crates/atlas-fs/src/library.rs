@@ -66,6 +66,19 @@ fn open(root: &Path) -> Result<Dir, LibraryError> {
     Ok(Dir::open_ambient_dir(root, ambient_authority())?)
 }
 
+/// Whether `path` is a real folder, not a link to one (the link itself is looked at).
+/// The one test for "a skill folder Atlas may read or count" everywhere.
+#[must_use]
+pub fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
+/// Whether `folder` holds a `SKILL.md` that is a regular file (not a link).
+#[must_use]
+pub fn has_skill_md(folder: &Path) -> bool {
+    std::fs::symlink_metadata(folder.join("SKILL.md")).is_ok_and(|m| m.is_file())
+}
+
 /// One regular file of a folder, relative to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeFile {

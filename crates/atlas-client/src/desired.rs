@@ -71,8 +71,8 @@ pub(crate) fn skills_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<Stri
         };
         let path = entry.path();
         // Only real folders: a link in a repo could point anywhere.
-        let is_dir = fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
-        if name.starts_with('.') || !is_dir || !path.join("SKILL.md").is_file() {
+        let real = atlas_fs::library::is_real_dir(&path);
+        if name.starts_with('.') || !real || !atlas_fs::library::has_skill_md(&path) {
             continue;
         }
         if Slug::new(name.as_str()).is_err() {

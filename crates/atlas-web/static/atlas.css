@@ -148,6 +148,8 @@ h1 { margin: 0; font-family: var(--display); font-weight: 900; font-size: 28px; 
 /* ------------------------------------------------------------ sections and rows */
 
 .sections { display: flex; flex-direction: column; gap: 20px; }
+/* The polled machine list keeps the ledgers spaced as direct children of .sections. */
+.machine-list { display: contents; }
 .section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 4px; border-bottom: 3px double var(--ink); }
 .section-head .num { font-family: var(--display); font-weight: 700; font-size: 15px; color: var(--gilt); min-width: 18px; }
 .section-head .mark { align-self: center; }
