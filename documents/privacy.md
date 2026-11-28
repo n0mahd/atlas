@@ -63,7 +63,7 @@ None. Atlas counts nothing and reports no errors anywhere except its own logs.
 | MCP API keys (phase 4) | Hub keystore (age-encrypted) | Provider compromise or a hub leak |
 | Keystore key | Hub, plus the owner's offline backup | Hub compromise |
 | Client / CLI tokens | Hashes on the hub; plaintext only on each client (`~/.config/atlas`) | Unpairing or a lost machine |
-| Session key | Hub memory | Restart |
+| Passkey sessions | `sessions.json` on the hub (0600, SHA-256 of each id), 12 h | Sign-out, expiry |
 
 ## Open findings
 

@@ -5,8 +5,11 @@
 //! token per session, and a request whose Origin is the hub's own.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use sha2::{Digest as _, Sha256};
 
 use atlas_signer::{PasskeyAuthentication, PasskeyRegistration};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -26,10 +29,29 @@ pub fn token() -> String {
 }
 
 /// A signed-in session.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Session {
     pub csrf: String,
-    expires: Instant,
+    /// Unix seconds. Wall-clock, not `Instant`, so a session outlives a hub restart.
+    expires: u64,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Sessions are kept under the SHA-256 of their cookie token, so the file on disk can't
+/// be replayed as a cookie.
+fn session_key(id: &str) -> String {
+    Sha256::digest(id.as_bytes())
+        .iter()
+        .fold(String::with_capacity(64), |mut out, b| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{b:02x}");
+            out
+        })
 }
 
 /// A passkey ceremony in progress, between its start and finish requests.
@@ -57,11 +79,13 @@ struct PendingFlow {
     expires: Instant,
 }
 
-/// Sessions and passkey ceremonies. All in memory: a restart signs
-/// the owner out, which is fine for one person.
+/// Sessions and passkey ceremonies. Sessions are saved to `sessions.json` in the hub's
+/// state folder (0600, hashed ids) so restarting or redeploying the hub doesn't sign the
+/// owner out; ceremonies stay in memory, since they last minutes.
 pub struct Auth {
     sessions: Mutex<HashMap<String, Session>>,
     flows: Mutex<HashMap<String, PendingFlow>>,
+    path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Auth {
@@ -77,11 +101,55 @@ impl Default for Auth {
 }
 
 impl Auth {
+    /// Sessions in memory only.
     #[must_use]
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             flows: Mutex::new(HashMap::new()),
+            path: None,
+        }
+    }
+
+    /// Sessions saved in `state_dir/sessions.json`, loading any still live.
+    #[must_use]
+    pub fn open(state_dir: &Path) -> Self {
+        let path = state_dir.join("sessions.json");
+        let now = now_secs();
+        let mut sessions: HashMap<String, Session> = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        sessions.retain(|_, s| s.expires > now);
+        Self {
+            sessions: Mutex::new(sessions),
+            flows: Mutex::new(HashMap::new()),
+            path: Some(path),
+        }
+    }
+
+    fn save(&self, sessions: &HashMap<String, Session>) {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let Some(path) = &self.path else { return };
+        let result = (|| -> std::io::Result<()> {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            let bytes = serde_json::to_vec(sessions).map_err(std::io::Error::other)?;
+            let tmp = path.with_extension("json.tmp");
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(&bytes)?;
+            f.sync_all()?;
+            std::fs::rename(&tmp, path)
+        })();
+        if let Err(e) = result {
+            tracing::warn!("couldn't save sessions: {e}");
         }
     }
 
@@ -112,22 +180,25 @@ impl Auth {
     pub fn sign_in(&self) -> String {
         let id = token();
         if let Ok(mut sessions) = self.sessions.lock() {
-            let now = Instant::now();
+            let now = now_secs();
             sessions.retain(|_, s| s.expires > now);
             sessions.insert(
-                id.clone(),
+                session_key(&id),
                 Session {
                     csrf: token(),
-                    expires: now + SESSION_TTL,
+                    expires: now + SESSION_TTL.as_secs(),
                 },
             );
+            self.save(&sessions);
         }
         id
     }
 
     pub fn sign_out(&self, headers: &HeaderMap) {
-        if let (Some(id), Ok(mut sessions)) = (cookie(headers), self.sessions.lock()) {
-            sessions.remove(&id);
+        if let (Some(id), Ok(mut sessions)) = (cookie(headers), self.sessions.lock())
+            && sessions.remove(&session_key(&id)).is_some()
+        {
+            self.save(&sessions);
         }
     }
 
@@ -137,8 +208,8 @@ impl Auth {
         let id = cookie(headers)?;
         let sessions = self.sessions.lock().ok()?;
         sessions
-            .get(&id)
-            .filter(|s| s.expires > Instant::now())
+            .get(&session_key(&id))
+            .filter(|s| s.expires > now_secs())
             .cloned()
     }
 }
@@ -217,6 +288,35 @@ mod tests {
         assert!(auth.session(&headers).is_some());
         auth.sign_out(&headers);
         assert!(auth.session(&headers).is_none());
+    }
+
+    /// Redeploying the hub restarts it; that must not sign the owner out.
+    #[test]
+    fn sessions_survive_a_restart_and_are_stored_hashed() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let id = Auth::open(dir.path()).sign_in();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!("{COOKIE}={id}")).unwrap(),
+        );
+
+        let file = dir.path().join("sessions.json");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            !text.contains(&id),
+            "the raw session id must not be on disk"
+        );
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let restarted = Auth::open(dir.path());
+        assert!(restarted.session(&headers).is_some());
+        restarted.sign_out(&headers);
+        assert!(Auth::open(dir.path()).session(&headers).is_none());
     }
 
     #[test]
