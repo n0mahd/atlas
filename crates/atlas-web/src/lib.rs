@@ -639,11 +639,6 @@ const STATIC: &[(&str, &str, &[u8])] = &[
         include_bytes!("../static/passkey.js"),
     ),
     (
-        "antigravity.png",
-        "image/png",
-        include_bytes!("../static/antigravity.png"),
-    ),
-    (
         "logo.png",
         "image/png",
         include_bytes!("../static/logo.png"),

@@ -51,7 +51,6 @@
     --grain-opacity: 0.08;
     color-scheme: dark;
   }
-  .agent-img { filter: grayscale(1) invert(1) brightness(1.4); }
 }
 
 * { box-sizing: border-box; }
@@ -185,7 +184,6 @@ h2 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 15px; 
 .mark { display: inline-flex; width: 16px; height: 16px; }
 .mark.lead { color: var(--icon); }
 .agent-icon { width: 16px; height: 16px; display: block; }
-.agent-img { filter: grayscale(1) brightness(0.35); }
 .chev { flex: none; width: 14px; height: 14px; position: relative; color: var(--muted); }
 .chev::before { content: ""; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.12s; }
 details[open] > summary .chev::before { transform: rotate(45deg); }

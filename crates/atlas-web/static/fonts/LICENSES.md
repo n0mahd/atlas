@@ -13,9 +13,11 @@ Files come from Fontsource 5.2.6 (latin subset).
 
 ## Agent marks
 
-`../antigravity.png` and the Claude, OpenAI (Codex) and OpenCode paths in
+The Claude, OpenAI (Codex) and OpenCode paths in
 `src/icons.rs` come from T3 Code (MIT, © T3 Tools Inc., `apps/web/src/components/Icons.tsx`
-and `apps/marketing/public/harnesses/`). The Amp, Muse and Grok Build paths are their icons
+and `apps/marketing/public/harnesses/`); the T3 Code mark is from the same repo
+(`apps/mobile/assets/widget/T3Mark.svg`). The Pi, Antigravity, Amp, Muse and Grok Build paths are their icons
 in the Agent Client Protocol registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/`
-`amp-acp.svg`, `muse-code.svg` and `grok-build.svg`). The sparkles mark is lucide's (ISC). The marks
+`pi-acp.svg`, `antigravity-acp.svg`, `amp-acp.svg`, `muse-code.svg` and `grok-build.svg`). The Herdr ram is
+`assets/logo.svg` from `github.com/herdrdev/herdr`, without its background tile. The sparkles mark is lucide's (ISC). The marks
 themselves belong to their owners and identify each agent; they imply no endorsement.
