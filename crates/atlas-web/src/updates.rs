@@ -1083,17 +1083,24 @@ fn resolve(prepared: &Prepared, fields: &[(String, String)]) -> Result<(NewFiles
                 false
             }
             Fate::Clash => {
+                let choice = field(fields, &format!("c{n}"));
+                if choice.is_empty() {
+                    return Err(format!(
+                        "Choose keep mine or take theirs for {}; nothing changed.",
+                        f.path
+                    ));
+                }
                 if field(fields, &format!("p{n}")) != f.path {
                     return Err("The preview's files don't match the update now. Open it again; nothing changed.".to_owned());
                 }
-                match field(fields, &format!("c{n}")) {
+                match choice {
                     "mine" => false,
                     "theirs" => true,
                     _ => {
-                        return Err(format!(
-                            "Choose keep mine or take theirs for {}; nothing changed.",
-                            f.path
-                        ));
+                        return Err(
+                            "That choice isn't keep mine or take theirs; nothing changed."
+                                .to_owned(),
+                        );
                     }
                 }
             }
