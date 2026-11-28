@@ -416,3 +416,21 @@ hub's own CPU into `<state>/dist/`, static (musl) when that target is installed,
 native with a warning that it suits only similar systems; other CPUs stay a manual
 cross-build. `deploy/test-install.sh` runs the script in throwaway homes with stand-in
 system tools, so it can be checked without touching the machine.
+
+## 00XX · 2026-11-28 · The install script runs the first pass in the foreground
+The served install script now runs `atlasd run --summary` itself, after pairing and before
+it starts the timer (or the launchd agent), so the person sees what happened in two or
+three lines: what was linked for which agents, and that nothing of theirs was deleted, or
+which older links were replaced. This replaces 0036's `systemctl --user start --no-block
+atlasd.service`: that first run was invisible and gave no summary. The cost is that the
+first run is outside the unit's sandbox settings; it is the same binary and user, and every
+later run is under systemd again. The summary comes from the actions the pass carried out,
+not a second count. The script checks for systemd user services (`systemctl --user
+show-environment`; `launchctl print` on macOS) before it downloads or pairs, so WSL or a
+container stops with one sentence and no paired machine that never reports. It no longer
+passes `--adopt "$HOME/Knowledge" "$HOME/Skills"`, which came from the owner's old setup;
+`atlasd pair --adopt` stays. Downloads use `curl -w '%{http_code}'` and print the hub's
+message on a refusal. With no builds in `<state>/dist/` the Machines page, the CLI's
+pair-code and `atlas-hub pair-code` issue no code and say how to add a build, and
+`/install` answers with a script that says the same and exits 1, served with status 200
+because the documented `curl -fsSL` would otherwise show only "error: 400".
