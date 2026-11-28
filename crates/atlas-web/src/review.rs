@@ -669,12 +669,13 @@ fn line_diff(old: &str, new: &str) -> Vec<DiffLine> {
             out.push(line("ctx", ' ', a[i]));
             i += 1;
             j += 1;
-        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] >= lcs[i + 1][j]) {
-            out.push(line("add", '+', b[j]));
-            j += 1;
-        } else {
+        } else if i < a.len() && (j == b.len() || lcs[i + 1][j] >= lcs[i][j + 1]) {
+            // Removed lines first, as git shows them.
             out.push(line("del", '-', a[i]));
             i += 1;
+        } else {
+            out.push(line("add", '+', b[j]));
+            j += 1;
         }
     }
     out
@@ -834,8 +835,8 @@ mod tests {
             got,
             vec![
                 ("ctx", " a"),
-                ("add", "+B"),
                 ("del", "-b"),
+                ("add", "+B"),
                 ("ctx", " c"),
                 ("add", "+d"),
             ]
