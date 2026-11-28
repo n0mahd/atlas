@@ -303,21 +303,21 @@ pub(crate) async fn confirm(
     headers: HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, AppError> {
-    let w = writer(&s)?;
+    let owner = writer(&s)?;
     let query = query.unwrap_or_default();
-    if w.auth.session(&headers).is_none() {
+    if owner.auth.session(&headers).is_none() {
         let next = format!("/skills/confirm?{query}");
         return Ok(Redirect::to(&format!("/signin?next={}", pct(&next))).into_response());
     }
-    let b = Bulk::parse(&query);
-    let back = safe_back(&b.back);
-    let asked = check(&s, &b).map_err(AppError::Bad)?;
-    let n = asked.skills.len();
+    let bulk = Bulk::parse(&query);
+    let back = safe_back(&bulk.back);
+    let asked = check(&s, &bulk).map_err(AppError::Bad)?;
+    let count = asked.skills.len();
     let names = || {
         asked
             .skills
             .iter()
-            .map(|(h, n)| format!("{}/{n}", h.key()))
+            .map(|(home, name)| format!("{}/{name}", home.key()))
             .collect::<Vec<_>>()
     };
     let agent_words = asked
@@ -331,7 +331,7 @@ pub(crate) async fn confirm(
                 "off"
             };
             (
-                format!("Turn {} {verb} for {agent_words}?", plural(n, "skill")),
+                format!("Turn {} {verb} for {agent_words}?", plural(count, "skill")),
                 format!("Turn {verb}"),
                 Ok(skill_ops::Preview {
                     lines: names(),
@@ -347,15 +347,15 @@ pub(crate) async fn confirm(
                 _ => "Global".to_owned(),
             };
             (
-                format!("Move {} to {words}?", plural(n, "skill")),
+                format!("Move {} to {words}?", plural(count, "skill")),
                 "Move".to_owned(),
                 skill_ops::preview_move(&s, asked.skills.clone(), to).await,
                 false,
             )
         }
         Action::Delete => (
-            format!("Delete {}?", plural(n, "skill")),
-            format!("Delete {}", plural(n, "skill")),
+            format!("Delete {}?", plural(count, "skill")),
+            format!("Delete {}", plural(count, "skill")),
             skill_ops::preview_delete(&s, asked.skills.clone()).await,
             true,
         ),
@@ -380,14 +380,14 @@ pub(crate) async fn confirm(
             notes,
             error,
             button,
-            action: b.action.clone(),
+            action: bulk.action.clone(),
             skills: asked
                 .skills
                 .iter()
-                .map(|(h, n)| format!("{}/{n}", h.key()))
+                .map(|(home, name)| format!("{}/{name}", home.key()))
                 .collect(),
-            agent: b.agent.clone(),
-            to: b.to.clone(),
+            agent: bulk.agent.clone(),
+            to: bulk.to.clone(),
             back,
             danger,
         }
@@ -429,7 +429,7 @@ pub(crate) struct NewForm {
     place: String,
 }
 
-async fn new_page(
+fn new_page(
     s: &AppState,
     headers: &HeaderMap,
     snap: &Snapshot,
@@ -491,7 +491,6 @@ pub(crate) async fn new_form(
         project,
         String::new(),
     )
-    .await
 }
 
 /// POST /skills/new: writes `SKILL.md`, on for every agent, then opens the skill.
@@ -521,21 +520,18 @@ pub(crate) async fn new_save(
         if json {
             Ok(ChangeError::Refused(msg).into_response(&headers))
         } else {
-            new_page(&s, &headers, &snap, &f, project.clone(), msg).await
+            new_page(&s, &headers, &snap, &f, project.clone(), msg)
         }
     };
     let Some(home) = home else {
         return fail("Pick Global or a registered project.".to_owned()).await;
     };
-    let name = match Slug::new(f.name.trim()) {
-        Ok(n) => n,
-        Err(_) => {
-            return fail(
-                "Name it with lowercase letters, digits and single hyphens, such as pdf-tools (at most 64)."
-                    .to_owned(),
-            )
-            .await;
-        }
+    let Ok(name) = Slug::new(f.name.trim()) else {
+        return fail(
+            "Name it with lowercase letters, digits and single hyphens, such as pdf-tools (at most 64)."
+                .to_owned(),
+        )
+        .await;
     };
     let next = format!("/skills/{}/{name}", home.key());
     match skill_ops::create_skill(&s, &headers, &f.csrf, home, name, f.description.clone()).await {
@@ -643,7 +639,7 @@ struct FilePage {
     shown: String,
     html: String,
     text: String,
-    notice: String,
+    notice: &'static str,
     script: bool,
 }
 
@@ -677,7 +673,7 @@ pub(crate) async fn file_view(
     })
     .await
     .map_err(|_| AppError::Internal)?;
-    let (mut html, mut text, mut notice) = (String::new(), String::new(), String::new());
+    let (mut html, mut text, mut notice) = (String::new(), String::new(), "");
     match read {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(t) if !t.contains('\0') => {
@@ -696,10 +692,10 @@ pub(crate) async fn file_view(
                     text = t;
                 }
             }
-            _ => notice = "This file isn't text, so Atlas doesn't show it.".to_owned(),
+            _ => notice = "This file isn't text, so Atlas doesn't show it.",
         },
         Err(atlas_fs::skill_folder::ViewError::TooBig) => {
-            notice = "This file is larger than 256 KB; open it in an editor to read it.".to_owned();
+            notice = "This file is larger than 256 KB; open it in an editor to read it.";
         }
         Err(atlas_fs::skill_folder::ViewError::Link) => {
             return Err(AppError::Bad(

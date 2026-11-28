@@ -35,8 +35,7 @@ impl Index {
         let read = |path: &Path, kind| {
             lock::read_lock(path, kind)
                 .found()
-                .map(|l| l.sources().into_iter().collect::<HashMap<_, _>>())
-                .unwrap_or_default()
+                .map_or_else(HashMap::new, |l| l.sources().into_iter().collect())
         };
         Self {
             global_sources: read(global_lock, LockKind::Global),

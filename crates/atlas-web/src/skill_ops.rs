@@ -918,6 +918,115 @@ mod tests {
         assert!(text.contains("\n# pdf\n"));
     }
 
+    fn state(home: &Path) -> AppState {
+        let mk = |p: &Path| {
+            std::fs::create_dir_all(p).unwrap();
+        };
+        mk(&home.join("Knowledge/skills/pdf"));
+        std::fs::write(home.join("Knowledge/skills/pdf/SKILL.md"), "x").unwrap();
+        mk(&home.join("shop/.agents/skills/stock"));
+        std::fs::write(home.join("shop/.agents/skills/stock/SKILL.md"), "x").unwrap();
+        let sources = atlas_fs::Sources {
+            home: home.to_path_buf(),
+            knowledge: home.join("Knowledge"),
+            public_skills: None,
+            projects: vec![atlas_fs::Project {
+                name: Slug::new("shop").unwrap(),
+                root: home.join("shop"),
+            }],
+        };
+        AppState::new(sources, "hub", Vec::new(), None)
+            .with_global_skill_lock(home.join("outside/.skill-lock.json"))
+    }
+
+    #[test]
+    fn a_move_commits_the_destination_first_and_placements_last() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let shop = SkillHome::Project(Slug::new("shop").unwrap());
+        let pdf = Slug::new("pdf").unwrap();
+        let plan = plan_move(&s, &[(SkillHome::Private, pdf.clone())], &shop).unwrap();
+        let kinds: Vec<&RepoKind> = plan.repos.iter().map(|r| &r.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                &RepoKind::Project(Slug::new("shop").unwrap()),
+                &RepoKind::Knowledge
+            ]
+        );
+        assert_eq!(
+            plan.repos[1].paths,
+            [PathBuf::from("skills/pdf"), PathBuf::from(PLACEMENTS_FILE)]
+        );
+        let stock = Slug::new("stock").unwrap();
+        let back = plan_move(&s, &[(shop.clone(), stock)], &SkillHome::Private).unwrap();
+        let kinds: Vec<&RepoKind> = back.repos.iter().map(|r| &r.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                &RepoKind::Knowledge,
+                &RepoKind::Project(Slug::new("shop").unwrap())
+            ]
+        );
+        // Into the same home, or onto a taken name, is refused.
+        assert!(
+            plan_move(
+                &s,
+                &[(SkillHome::Private, pdf.clone())],
+                &SkillHome::Private
+            )
+            .is_err()
+        );
+        std::fs::create_dir_all(tmp.path().join("shop/.agents/skills/pdf")).unwrap();
+        assert!(plan_move(&s, &[(SkillHome::Private, pdf)], &shop).is_err());
+    }
+
+    #[test]
+    fn placements_follow_the_rules_of_one_global_namespace() {
+        use atlas_core::kernel::HarnessKind;
+        let name = Slug::new("pdf").unwrap();
+        let shop = SkillHome::Project(Slug::new("shop").unwrap());
+        let mut off = Placement::default();
+        off.off.insert(HarnessKind::Codex);
+        off.only_projects = Some(std::collections::BTreeSet::from([
+            Slug::new("shop").unwrap()
+        ]));
+        let mut p = Placements::default();
+        p.set(&SkillHome::Private, &name, off);
+        let mut moved = p.clone();
+        PlacementOp::Carry {
+            from: SkillHome::Private,
+            to: shop.clone(),
+            name: name.clone(),
+            keep: false,
+        }
+        .apply(&mut moved);
+        assert!(moved.global.is_empty());
+        let carried = moved.of(&shop, &name);
+        assert!(!carried.wants(HarnessKind::Codex));
+        assert!(
+            carried.only_projects.is_none(),
+            "only-projects is dropped for a project skill"
+        );
+        let mut shared = p.clone();
+        PlacementOp::ForgetUnlessShared {
+            home: SkillHome::Private,
+            name: name.clone(),
+            keep: true,
+        }
+        .apply(&mut shared);
+        assert_eq!(shared, p, "a public skill of the same name keeps the entry");
+        let mut between = p.clone();
+        PlacementOp::Carry {
+            from: SkillHome::Private,
+            to: SkillHome::Public,
+            name,
+            keep: false,
+        }
+        .apply(&mut between);
+        assert_eq!(between, p, "private and public share the entry");
+    }
+
     #[test]
     fn names_read_as_a_list() {
         assert_eq!(list_names(&["a"]), "a");

@@ -44,3 +44,22 @@
     if (toggle) toggle.setAttribute("aria-expanded", root.getAttribute("data-rail") === "collapsed" ? "false" : "true");
   });
 })();
+
+// "Copy path" buttons (hidden until this script can use the clipboard).
+(function () {
+  if (!navigator.clipboard) return;
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("button[data-copy]").forEach(function (b) { b.hidden = false; });
+  });
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("button[data-copy]");
+    if (!button) return;
+    var label = button.textContent;
+    navigator.clipboard.writeText(button.getAttribute("data-copy")).then(function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = label; }, 1600);
+    }, function () {
+      button.textContent = "Couldn't copy";
+    });
+  });
+})();

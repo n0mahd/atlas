@@ -140,14 +140,14 @@ pub fn same_named(
     harnesses: &[HarnessView],
 ) -> BTreeMap<String, Vec<Copy>> {
     use atlas_core::distribution::InstalledSkill;
-    // name -> (shown, absolute SKILL.md, in store)
+    // name -> (shown, folder, in store)
     let mut places: BTreeMap<String, Vec<(String, PathBuf, bool)>> = BTreeMap::new();
     for s in &catalog.skills {
         if let Some((root, rel)) = locate(sources, &s.home, s.name.as_str()) {
-            let md = root.join(&rel).join("SKILL.md");
+            let folder = root.join(rel);
             places.entry(s.name.to_string()).or_default().push((
-                sources.display(&root.join(rel)),
-                md,
+                sources.display(&folder),
+                folder,
                 true,
             ));
         }
@@ -224,6 +224,30 @@ mod tests {
         std::os::unix::fs::symlink("/etc/passwd", a.path().join("skills/y/leak")).unwrap();
         assert!(move_folder(a.path(), "skills/y", b.path(), "y").is_err());
         assert!(a.path().join("skills/y").exists() && !b.path().join("y").exists());
+    }
+
+    #[test]
+    fn same_named_copies_are_fingerprinted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let k = home.join("Knowledge");
+        fs::create_dir_all(k.join("skills/keep")).unwrap();
+        fs::write(k.join("skills/keep/SKILL.md"), "---\ndescription: a\n---\n").unwrap();
+        fs::create_dir_all(home.join(".claude/skills/keep")).unwrap();
+        fs::write(home.join(".claude/skills/keep/SKILL.md"), "other").unwrap();
+        let sources = crate::Sources {
+            home: home.to_path_buf(),
+            knowledge: k,
+            public_skills: None,
+            projects: vec![],
+        };
+        let catalog = crate::load_catalog(&sources);
+        let harnesses = crate::scan_harnesses(&sources);
+        let got = same_named(&sources, &catalog, &harnesses);
+        let keep = &got["keep"];
+        assert_eq!(keep.len(), 2);
+        assert!(keep.iter().all(|c| c.digest.is_some()));
+        assert_ne!(keep[0].digest, keep[1].digest);
     }
 
     #[test]
