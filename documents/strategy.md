@@ -58,7 +58,7 @@ skills work about to land):
    and restore on failure. One should remain.
 4. One concept, several homes: the SSH target check (`atlas-web` and `atlas-client`),
    eight temp-file-and-rename writers, the owner-key type and its converter, and the
-   session check (and, for sensitive actions, the grant check of decision 0037) that
+   session check (and, for sensitive actions, the grant check of the passkey-actions decision (00XX)) that
    handlers call by hand instead of through an extractor.
 5. `atlas-hub` has no tests (configuration, socket, first run), and the passkey
    ceremonies are tested only through the hub's pages.
@@ -70,12 +70,12 @@ Then the standing items:
   writes need a passkey (0016). Any process running as the hub's user can reach the socket.
 - Passkey ceremonies, confirmation grants and a just-created CLI token waiting to be
   shown live in memory, so a hub restart in the middle of one means starting it again.
-  Sessions are kept on disk (decision 0034) and name the passkey that opened them (0037).
+  Sessions are kept on disk (decision 0034) and name the passkey that opened them (the passkey-actions decision, 00XX).
 - Pages share one read of the store for 3 seconds (saves through Atlas clear it), so a
   change made outside Atlas can take that long to show. A file watcher would remove the
   delay if it ever matters.
 - The first-run window trusts any allowed Tailscale login while no passkey exists
-  (decision 0018); finishing re-checks it (0037), and the local app's first-run wizard
+  (decision 0018); finishing re-checks it (the passkey-actions decision, 00XX), and the local app's first-run wizard
   takes onboarding over in phase 3.
 - Saving runs `git` in project repos the owner also works in by hand; a save refuses when
   the file has other uncommitted changes, but can't stop the owner committing meanwhile.
@@ -87,8 +87,9 @@ Then the standing items:
 - Atlas adds an `@` import to Claude's `CLAUDE.md` but has no way yet to remove it when a
   machine stops being managed.
 - Machines install atlasd with `curl <hub>/install | sh -s -- <code>`; the hub serves
-  builds it was given in `<state>/dist/` (static musl builds via `cargo zigbuild`), checked
-  by SHA-256 in the script. They aren't signed yet: signed release builds from CI are the
+  builds it keeps in `<state>/dist/`, checked by SHA-256 in the script. `deploy/install.sh`
+  makes the one for the hub's own CPU (static when the musl target is installed); other
+  CPUs need `cargo zigbuild` by hand. They aren't signed yet: signed release builds from CI are the
   fix. macOS builds are made on a Mac (the TLS stack links Apple's Security framework) and
   run from a launchd agent instead of a systemd timer (decision 0033).
 - Installing over SSH from the Machines page (decision 0025) runs inside the request, up to
