@@ -106,6 +106,24 @@ impl Repo {
         Ok(self.status_of(rel)?.is_empty())
     }
 
+    /// True if git ignores `rel` (`.gitignore`, `.git/info/exclude`, the global excludes
+    /// file). A tracked file is never ignored.
+    ///
+    /// # Errors
+    /// `InvalidPath` for an absolute or escaping path; otherwise git failures.
+    pub fn is_ignored(&self, rel: &Path) -> Result<bool, GitError> {
+        check_rel(rel)?;
+        // check-ignore takes pathnames and refuses --literal-pathspecs; it accepts no
+        // pathspec magic but `:/`, which only means the top folder.
+        let args = [os("check-ignore"), os("-q"), os("--"), rel.as_os_str()];
+        let out = self.run_with(&args, LOCAL_TIMEOUT, false, |_| {})?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(command_error(&args, &out)),
+        }
+    }
+
     /// Like [`Repo::is_clean`], but returns `Dirty` when `rel` has changes.
     ///
     /// # Errors
@@ -545,7 +563,7 @@ impl Repo {
         let batch_ssh = self.config("core.sshCommand")?.is_none()
             && std::env::var_os("GIT_SSH_COMMAND").is_none()
             && std::env::var_os("GIT_SSH").is_none();
-        let out = self.run_with(&args, PUSH_TIMEOUT, |cmd| {
+        let out = self.run_with(&args, PUSH_TIMEOUT, true, |cmd| {
             if batch_ssh {
                 cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
             }
@@ -617,36 +635,41 @@ impl Repo {
     }
 
     fn run<S: AsRef<OsStr>>(&self, args: &[S], timeout: Duration) -> Result<Output, GitError> {
-        self.run_with(args, timeout, |_| {})
+        self.run_with(args, timeout, true, |_| {})
     }
 
+    /// `literal_pathspecs` is off only for commands that refuse it and take plain
+    /// pathnames, not pathspecs (`check-ignore`).
     fn run_with<S: AsRef<OsStr>>(
         &self,
         args: &[S],
         timeout: Duration,
+        literal_pathspecs: bool,
         extra: impl FnOnce(&mut Command),
     ) -> Result<Output, GitError> {
         let mut cmd = Command::new("git");
-        cmd.current_dir(&self.root)
-            .args([
-                "--literal-pathspecs",
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "core.editor=true",
-                "-c",
-                "core.fsmonitor=false",
-            ])
-            .args(args)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_ASKPASS", "")
-            .env("SSH_ASKPASS", "")
-            .env("SSH_ASKPASS_REQUIRE", "never")
-            .env("GCM_INTERACTIVE", "never")
-            .env("LC_ALL", "C")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.current_dir(&self.root);
+        if literal_pathspecs {
+            cmd.arg("--literal-pathspecs");
+        }
+        cmd.args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.editor=true",
+            "-c",
+            "core.fsmonitor=false",
+        ])
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env("GCM_INTERACTIVE", "never")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         for var in CLEARED_ENV {
             cmd.env_remove(var);
         }

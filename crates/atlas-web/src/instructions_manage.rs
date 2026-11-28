@@ -174,6 +174,8 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
     let mut facts = ProjectFacts::default();
     let canonical_root = fs::canonicalize(root).ok();
     let names = atlas_harness::readers::project_names();
+    // Opened only when a local file is there to ask git about.
+    let mut repo: Option<Option<atlas_git::Repo>> = None;
     for name in &names {
         let path = root.join(name);
         let Ok(meta) = fs::symlink_metadata(&path) else {
@@ -210,7 +212,10 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
             }
         }
         if name.contains("local") {
-            f.ignored = git_ignores(root, name);
+            let repo = repo.get_or_insert_with(|| atlas_git::Repo::open(root).ok());
+            f.ignored = repo
+                .as_ref()
+                .is_some_and(|r| r.is_ignored(Path::new(name)).unwrap_or(false));
         }
         if *name == "CLAUDE.md" && f.links_to.as_deref() == Some("AGENTS.md") {
             facts.claude_points_at_agents = true;
@@ -218,15 +223,6 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
         facts.present.insert((*name).to_owned(), f);
     }
     facts
-}
-
-fn git_ignores(root: &Path, name: &str) -> bool {
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["check-ignore", "-q", "--", name])
-        .status()
-        .is_ok_and(|s| s.success())
 }
 
 /// Reads everything the Instructions pages show about this machine. Blocking. `placed`
