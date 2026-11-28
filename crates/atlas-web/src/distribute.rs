@@ -303,10 +303,11 @@ pub(crate) async fn send_start(
             note.unwrap_or_default()
         )));
     }
-    if previous
-        .as_ref()
-        .is_some_and(|p| p.sources == manifest.sources && p.owner_keys == manifest.owner_keys)
-    {
+    if previous.as_ref().is_some_and(|p| {
+        p.sources == manifest.sources
+            && p.owner_keys == manifest.owner_keys
+            && p.projects == manifest.projects
+    }) {
         return Ok(Json(NothingToSend {
             nothing: true,
             next,
@@ -314,12 +315,20 @@ pub(crate) async fn send_start(
         })
         .into_response());
     }
-    let changed: Vec<String> = manifest
+    let mut changed: Vec<String> = manifest
         .sources
         .iter()
         .filter(|src| previous.as_ref().and_then(|p| p.source(&src.id)) != Some(*src))
         .map(|src| release::label(&src.id))
         .collect();
+    if previous
+        .as_ref()
+        .map_or(!manifest.projects.is_empty(), |p| {
+            p.projects != manifest.projects
+        })
+    {
+        changed.push("projects".to_owned());
+    }
     let summary = if changed.is_empty() {
         format!("Update {number} · passkeys")
     } else {

@@ -213,6 +213,7 @@ impl World {
             hub: HUB.into(),
             sources: self.sources.clone(),
             owner_keys: keys.iter().map(|k| k.owner()).collect(),
+            projects: Vec::new(),
         }
     }
 
