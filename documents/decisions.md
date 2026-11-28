@@ -333,3 +333,15 @@ Code's AGENTS.md option (`pluginConfigs["cc-plugin-agents-md@builtin"].options.i
 is the owner's choice in `atlas/placements.toml [instructions]`, written by atlasd only
 when set. A new `CLAUDE.local.md` is kept out of git through Atlas's `.git/info/exclude`
 block, the only write Atlas makes inside `.git`.
+
+## 0030 · 2026-11-27 · Checking skills from GitHub for updates
+The hub compares skills installed with the `skills` CLI (`npx skills`) against their GitHub
+source only when the owner presses **Check for updates**, never on a timer. It reads
+GitHub's public trees and blobs API without signing in, using `reqwest` with rustls (atlasd
+already depends on it), with timeouts, size caps, same-host redirects only, and every file
+checked against its git SHA; archive paths are sanitised and links refused. Keeping the
+owner's edits is a three-way line merge with `diffy` (MIT/Apache, no default
+dependencies); clashing files are the owner's choice. The CLI's lock is updated only when
+it sits in a repo Atlas commits; a global lock outside every repo is left alone, so an
+edited global skill shows as updatable again (the preview says so). One lock reader,
+`atlas_fs::lock`, serves updates and the skill library.

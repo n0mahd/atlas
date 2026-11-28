@@ -69,7 +69,9 @@ Memory skips steps 3–5 by default: agents write it straight to git (decision 0
 ## Trust model
 - The hub proposes; the user's passkey authorises (decision 0007). The hub cannot sign
   releases, so a compromised hub cannot push changes to every machine.
-- GitHub is untrusted storage.
+- GitHub is untrusted storage. The hub also reads public GitHub repos (no sign-in) when the
+  owner checks skills installed with `npx skills` for updates; every file is checked
+  against its git SHA and nothing fetched is run (decision 0030).
 - atlasd runs as a user service, never as root, and never executes content it receives.
   A local stdio MCP server starts, and a hook is installed, only if it arrived in a
   signed release (decisions 0009, 0010).
