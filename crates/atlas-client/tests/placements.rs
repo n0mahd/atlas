@@ -73,9 +73,12 @@ fn an_unwanted_reader_with_a_setting_is_switched_off() {
     let file = h.join(".config/opencode/opencode.jsonc");
     assert_eq!(switches[0].file, file);
     assert_eq!(
-        switches[0].off.get("alpha"),
-        Some(&h.join(".claude/skills/alpha")),
-        "the folder OpenCode loads it from"
+        switches[0].off.iter().collect::<Vec<_>>(),
+        [&atlas_harness::switches::SwitchOff::at(
+            "alpha",
+            h.join(".claude/skills/alpha/SKILL.md")
+        )],
+        "the SKILL.md OpenCode loads it from"
     );
     let text = fs::read_to_string(&file).unwrap();
     assert!(

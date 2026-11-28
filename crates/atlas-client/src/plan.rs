@@ -18,7 +18,7 @@ use atlas_harness::placement::Reach;
 use atlas_harness::skills::{
     Entry, SkillConflict, SkillOp, SkillPlan, plan_skill_links, plan_skill_links_adopting,
 };
-use atlas_harness::switches::{Base, render_switches, switch_file};
+use atlas_harness::switches::{Base, SwitchOff, render_switches, switch_file};
 use atlas_harness::{Change, FormatError, Layout, layouts};
 
 use crate::checkout::Checkout;
@@ -157,8 +157,8 @@ pub struct SwitchIntent {
     pub kind: HarnessKind,
     /// The agent's own settings file.
     pub file: PathBuf,
-    /// Skill name → the folder the agent loads it from.
-    pub off: BTreeMap<String, PathBuf>,
+    /// The skills switched off there, each with the `SKILL.md` the agent loads.
+    pub off: BTreeSet<SwitchOff>,
 }
 
 impl Plan {
@@ -398,8 +398,8 @@ struct Slots(BTreeMap<PathBuf, Slot>);
 struct Slot {
     kind: HarnessKind,
     reach: Reach,
-    /// Skill name → the folder the agent loads it from.
-    off: BTreeMap<String, PathBuf>,
+    /// The skills to switch off, each with the `SKILL.md` the agent loads.
+    off: BTreeSet<SwitchOff>,
     /// For a file inside a checkout: where, and whether git tracks it.
     repo: Option<InRepo>,
 }
@@ -410,13 +410,16 @@ struct InRepo {
     tracked: bool,
 }
 
-/// The first candidate that exists, else the last (the one to create).
-fn resolve(base: &Path, candidates: &[&str]) -> Option<(PathBuf, String)> {
-    let found = candidates
+/// The first candidate that exists (they are in the agent's precedence order), else the
+/// file to create.
+fn resolve(base: &Path, sf: &atlas_harness::switches::SwitchFile) -> (PathBuf, String) {
+    let found = sf
+        .candidates
         .iter()
         .find(|c| fs::symlink_metadata(base.join(c)).is_ok())
-        .or_else(|| candidates.last())?;
-    Some((base.join(found), (*found).to_owned()))
+        .copied()
+        .unwrap_or(sf.create);
+    (base.join(found), found.to_owned())
 }
 
 impl Slots {
@@ -440,32 +443,41 @@ impl Slots {
                 (Base::Repo, Some(co)) => (co.root.as_path(), Reach::Project),
                 (Base::Repo, None) => continue,
             };
-            let Some((file, rel)) = resolve(base, sf.candidates) else {
-                continue;
-            };
+            let (file, rel) = resolve(base, &sf);
             let slot = self.0.entry(file.clone()).or_insert_with(|| Slot {
                 kind: layout.kind,
                 reach: render_reach,
-                off: BTreeMap::new(),
+                off: BTreeSet::new(),
                 repo: checkout.filter(|_| sf.base == Base::Repo).map(|co| InRepo {
                     root: co.root.clone(),
                     tracked: co.tracked.as_ref().is_ok_and(|t| t.covers(&rel)),
                     rel,
                 }),
             });
+            // Codex keys its switches by the skill's path, so same-named skills in
+            // different places are told apart; the other formats go by name alone.
+            let by_path = layout.kind == HarnessKind::Codex;
             for (name, dir) in off.get(&layout.kind).into_iter().flatten() {
-                match slot.off.get(name) {
-                    Some(first) if first != dir => plan.conflicts.push(format!(
+                let target = SwitchOff::at(name.clone(), dir.join("SKILL.md"));
+                let same_name = slot
+                    .off
+                    .iter()
+                    .find(|t| t.name == *name && t.path != target.path);
+                match same_name {
+                    Some(first) if !by_path => plan.conflicts.push(format!(
                         "skill {name} is off for {} at both {} and {}, but {} can switch off \
                          only one skill of a name; only the first is off",
                         layout.kind,
-                        display(home, first),
+                        first
+                            .path
+                            .as_deref()
+                            .and_then(Path::parent)
+                            .map_or_else(String::new, |p| display(home, p)),
                         display(home, dir),
                         display(home, &file)
                     )),
-                    Some(_) => {}
-                    None => {
-                        slot.off.insert(name.clone(), dir.clone());
+                    _ => {
+                        slot.off.insert(target);
                     }
                 }
             }
@@ -894,21 +906,18 @@ fn hook_step(kind: HarnessKind, wanted: Vec<ManagedHook>) -> Option<Step> {
     })
 }
 
-/// Switches `off` (skill name → the folder the agent loads it from) off in `kind`'s own
-/// setting, and Atlas's other switches in that file back on. The formats find Atlas's
-/// earlier entries by their marks in the file, so nothing is kept between passes.
-fn switch_step(kind: HarnessKind, reach: Reach, off: BTreeMap<String, PathBuf>) -> Step {
-    let names: BTreeSet<String> = off.keys().cloned().collect();
+/// Switches `off` off in `kind`'s own setting, and Atlas's other switches in that file
+/// back on. The formats find Atlas's earlier entries by their marks in the file, so
+/// nothing is kept between passes.
+fn switch_step(kind: HarnessKind, reach: Reach, off: BTreeSet<SwitchOff>) -> Step {
     Step {
         what: "skill switches",
-        wanted: !names.is_empty(),
+        wanted: !off.is_empty(),
         render: Box::new(move |current| {
-            if current.is_none() && names.is_empty() {
+            if current.is_none() && off.is_empty() {
                 return Ok(Change::Unchanged);
             }
-            render_switches(kind, reach, current, &names, &BTreeSet::new(), &|n| {
-                off.get(n).cloned()
-            })
+            render_switches(kind, reach, current, &off)
         }),
     }
 }
@@ -1077,7 +1086,7 @@ mod tests {
             timeout: None,
             replaces: None,
         };
-        let off = BTreeMap::from([("pdf".to_owned(), PathBuf::from("/u/.claude/skills/pdf"))]);
+        let off = BTreeSet::from([SwitchOff::at("pdf", "/u/.claude/skills/pdf/SKILL.md")]);
         let mut plan = Plan::default();
         let steps = [
             hook_step(HarnessKind::ClaudeCode, vec![hook]).unwrap(),

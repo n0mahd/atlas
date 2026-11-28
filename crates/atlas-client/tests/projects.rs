@@ -216,8 +216,9 @@ fn project_switches_go_in_codexs_home_file_and_the_repos_local_settings_and_come
 }
 
 #[test]
-fn two_checkouts_with_a_skill_of_one_name_switch_off_only_the_first_in_codex() {
-    // Codex's file names Atlas's switch by skill name, so one name can be off once.
+fn two_checkouts_with_a_skill_of_one_name_are_both_switched_off_in_codex() {
+    // Codex keys Atlas's switches by the SKILL.md path, so the same skill name in two
+    // checkouts (or a project and the home) gets one entry each.
     let key = Key::new(1, "Laptop");
     let mut w = World::with(
         &key,
@@ -242,12 +243,33 @@ fn two_checkouts_with_a_skill_of_one_name_switch_off_only_the_first_in_codex() {
                 .to_string()
         )
     );
-    assert!(!text.contains(&second.display().to_string()), "{text}");
     assert!(
-        pass.problems
+        text.contains(
+            &second
+                .join(".agents/skills/release-notes")
+                .display()
+                .to_string()
+        ),
+        "{text}"
+    );
+    assert_eq!(text.matches("# atlas:release-notes").count(), 2, "{text}");
+    assert!(
+        !pass
+            .problems
             .iter()
-            .any(|p| p.starts_with("skill release-notes is off for Codex at both")),
+            .any(|p| p.contains("is off for Codex at both")),
         "{:?}",
         pass.problems
+    );
+    // A second pass changes nothing.
+    let again = w.apply(2, &key);
+    assert_eq!(
+        fs::read_to_string(w.home().join(".codex/config.toml")).unwrap(),
+        text
+    );
+    assert!(
+        !again.problems.iter().any(|p| p.contains("Codex")),
+        "{:?}",
+        again.problems
     );
 }
