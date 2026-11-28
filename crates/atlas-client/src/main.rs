@@ -1,7 +1,8 @@
 //! atlasd: keeps one login's harnesses in step with the owner's signed releases.
 //!
-//! Runs as the login (a systemd user service and timer), never as root, and never runs
-//! anything it receives.
+//! Runs as the login (a systemd user timer, or a launchd agent on macOS), never as root,
+//! and never runs anything it receives. What it prints calls releases "updates" and
+//! harnesses "agents", as the hub's pages do.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -18,7 +19,9 @@ usage:
                                                   pair this login with the hub; --adopt lets
                                                   atlasd take over links an older script made
                                                   into DIR (such as ~/Knowledge)
-  atlasd run [--dry-run]                          apply the latest signed release
+  atlasd run [--dry-run | --summary]              apply the latest signed update; --dry-run
+                                                  shows what would change, --summary says
+                                                  what changed in two or three lines
   atlasd status                                   show the pairing and the pending plan
   atlasd auth <hub-url> <token>                   save a CLI token from Settings → CLI tokens
   atlasd pair-code                                get a one-time install command from the hub
@@ -51,8 +54,9 @@ fn main() -> ExitCode {
                 }
                 pair(&paths, hub, code, machine, adopt)
             }
-            ["run"] => run(&paths, false),
-            ["run", "--dry-run"] => run(&paths, true),
+            ["run"] => run(&paths, Mode::Full),
+            ["run", "--dry-run"] => run(&paths, Mode::DryRun),
+            ["run", "--summary"] => run(&paths, Mode::Summary),
             ["status"] => status(&paths),
             ["auth", hub, token] => auth(&paths, hub, token),
             ["pair-code"] => pair_code(&paths),
@@ -131,7 +135,7 @@ fn pair(
         ));
     }
     if resp.owner_keys.is_empty() {
-        return Err("the hub has no owner passkey yet, so no release could be trusted".to_owned());
+        return Err("the hub has no owner passkey yet, so no update could be trusted".to_owned());
     }
     // Folders to take over: those given now, plus any from an earlier pairing.
     let mut adopt = Config::load(&paths.config).map_or_else(|_| Vec::new(), |c| c.adopt);
@@ -155,7 +159,7 @@ fn pair(
     }
     .save(&paths.state)?;
     println!(
-        "Paired {} ({}) with {origin}. Run `atlasd run --dry-run` to see what it would change.",
+        "Paired {} ({}) with {origin}.",
         request.machine, request.user
     );
     Ok(ExitCode::SUCCESS)
@@ -169,17 +173,31 @@ fn fetch(config: &Config) -> Fetched {
     }
 }
 
-fn run(paths: &Paths, dry_run: bool) -> Result<ExitCode, String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Full,
+    DryRun,
+    /// Applies like `Full` but prints the pass's two or three summary lines, and leaves
+    /// out the things it left alone (`atlasd status` lists them).
+    Summary,
+}
+
+fn run(paths: &Paths, mode: Mode) -> Result<ExitCode, String> {
+    let dry_run = mode == Mode::DryRun;
     let config = Config::load(&paths.config)?;
     let state = State::load(&paths.state)?;
     let fetched = fetch(&config);
     let reachable = !matches!(fetched, Fetched::Unreachable(_));
     let pass = pass::run(paths, &config, &state, fetched, dry_run, now());
-    for line in &pass.lines {
+    let summary = mode == Mode::Summary;
+    let lines = if summary { &pass.summary } else { &pass.lines };
+    for line in lines {
         println!("{line}");
     }
     for p in &pass.problems {
-        eprintln!("problem: {p}");
+        if !(summary && pass.left_alone.contains(p)) {
+            eprintln!("problem: {p}");
+        }
     }
     if !dry_run {
         if pass.state != state {
@@ -202,14 +220,14 @@ fn status(paths: &Paths) -> Result<ExitCode, String> {
     println!("Hub: {}", config.hub);
     println!("Machine: {}", config.machine);
     println!(
-        "Last applied release: {}",
+        "Last applied update: {}",
         state
             .last_applied
             .map_or_else(|| "none".to_owned(), |n| n.to_string())
     );
     let names: Vec<&str> = state.owner_keys.iter().map(|k| k.name.as_str()).collect();
     println!("Trusted passkeys: {}", names.join(", "));
-    println!("Plan for the hub's latest release:");
+    println!("Plan for the hub's latest update:");
     let pass = pass::run(paths, &config, &state, fetch(&config), true, now());
     for line in &pass.lines {
         println!("  {line}");

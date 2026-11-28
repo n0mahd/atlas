@@ -61,7 +61,7 @@ pub fn release(hub: &str, token: &str) -> Result<Option<SignedRelease>, String> 
         s if s.is_success() => resp
             .json()
             .map(Some)
-            .map_err(|e| format!("the hub's release isn't valid: {e}")),
+            .map_err(|e| format!("the hub's update isn't valid: {e}")),
         _ => Err(refused(resp)),
     }
 }

@@ -314,7 +314,7 @@ fn full_run_installs_everything_and_a_second_run_changes_nothing() {
     let before = snapshot(w.home());
     let again = w.run(&release, false);
     assert!(!again.failed, "{:?}", again.problems);
-    assert_eq!(again.lines, vec!["Release 1 is applied.".to_owned()]);
+    assert_eq!(again.lines, vec!["Update 1 is applied.".to_owned()]);
     assert_eq!(snapshot(w.home()), before, "the second run is idempotent");
 }
 
@@ -355,6 +355,70 @@ fn own_folders_and_foreign_links_stay_and_adopted_links_move() {
         "{:?}",
         pass.problems
     );
+
+    assert_eq!(pass.left_alone.len(), 2, "{:?}", pass.left_alone);
+    assert_eq!(
+        pass.summary,
+        vec![
+            "Applied update 1 for Claude Code and Codex: linked 3 skills, 2 subagents and the global instructions, and updated Atlas's hooks.".to_owned(),
+            format!(
+                "Replaced by links to Atlas's copies: ~/.agents/skills/alpha (was a link to {}). Nothing else of yours was deleted; ~/.claude/CLAUDE.md gained one import line.",
+                w.adopt.join("alpha").display()
+            ),
+            "Left 2 things alone because Atlas doesn't manage them; `atlasd status` lists them."
+                .to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn the_summary_says_what_was_linked_for_which_agents() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    write(&w.home().join(".claude/CLAUDE.md"), "# Mine\n");
+    let release = signed(&w.manifest(1, &[&key]), &key);
+
+    let pass = w.run(&release, false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert_eq!(
+        pass.summary,
+        vec![
+            "Applied update 1 for Claude Code and Codex: linked 3 skills, 2 subagents and the global instructions, and updated Atlas's hooks.",
+            "Nothing of yours was deleted or replaced; ~/.claude/CLAUDE.md gained one import line.",
+        ]
+    );
+
+    let again = w.run(&release, false);
+    assert_eq!(
+        again.summary,
+        vec![
+            "Applied update 1 for Claude Code and Codex: everything was already in place.",
+            "Nothing of yours was deleted or replaced.",
+        ]
+    );
+
+    let nothing = pass::run(&w.paths, &w.config, &w.state, Fetched::Nothing, false, 2);
+    assert_eq!(
+        nothing.summary,
+        vec!["The hub has no signed update yet, so there is nothing to link."]
+    );
+}
+
+#[test]
+fn the_summary_says_when_no_agent_is_set_up() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    for marker in [".claude", ".codex"] {
+        fs::remove_dir_all(w.home().join(marker)).unwrap();
+    }
+    let pass = w.run(&signed(&w.manifest(1, &[&key]), &key), false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    assert_eq!(
+        pass.summary,
+        vec![
+            "Update 1 has nothing to link here: no agents are set up for this login yet. atlasd links them on its next run after you install one."
+        ]
+    );
 }
 
 /// Applies release 2 cleanly, then checks that `bad` is refused and changes nothing.
@@ -374,7 +438,7 @@ fn assert_refused(make_bad: impl FnOnce(&World, &Key) -> SignedRelease, why: &st
     assert!(
         pass.problems
             .iter()
-            .any(|p| p.starts_with("refused release") && p.contains(why)),
+            .any(|p| p.starts_with("refused update") && p.contains(why)),
         "{why}: {:?}",
         pass.problems
     );
@@ -432,7 +496,7 @@ fn a_tree_mismatch_is_refused() {
             m.sources[1].tree = TreeHash::new("0".repeat(40)).unwrap();
             signed(&m, key)
         },
-        "but the release pins",
+        "but the update pins",
     );
 }
 
@@ -513,7 +577,11 @@ fn an_unreachable_hub_changes_nothing() {
     );
     assert_eq!(snapshot(w.home()), before);
     assert_eq!(pass.state, w.state);
-    assert!(pass.problems[0].contains("local copies (release 1)"));
+    assert!(
+        pass.problems[0].contains("agents keep using the local copies (update 1)"),
+        "{:?}",
+        pass.problems
+    );
 }
 
 #[test]

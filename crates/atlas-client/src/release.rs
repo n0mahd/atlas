@@ -118,7 +118,7 @@ pub fn check(signed: &SignedRelease, state: &State, hub: &str) -> Result<Checked
     let newer = match state.last_applied {
         Some(applied) if manifest.number < applied => {
             return Err(format!(
-                "it is older than release {applied}, which is already applied (no rollbacks)"
+                "it is older than update {applied}, which is already applied (no rollbacks)"
             ));
         }
         Some(applied) if manifest.number == applied => {
