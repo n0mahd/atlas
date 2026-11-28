@@ -401,7 +401,7 @@ Through systemd rather than running `atlasd run` directly: the run gets the same
 as every later one, its output goes to the journal, systemd never runs it twice at once,
 and `--no-block` keeps the install (and an install over SSH) from waiting for it.
 
-## 00XX · 2026-11-28 · The owner sees hook changes before signing
+## 0040 · 2026-11-28 · The owner sees hook changes before signing
 An update pins whole commits of Knowledge and public skills, so it can carry changes the
 owner never made in Atlas: an agent writing to the knowledge repo, or a sync from another
 machine. Hooks run by themselves on every machine, so before the passkey tap the owner

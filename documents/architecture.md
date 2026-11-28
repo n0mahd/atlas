@@ -99,7 +99,7 @@ Elsewhere or planned:
 4. The same Save asks for one passkey tap, which signs the update; the hub checks the
    signature before storing it. The UI calls these "updates", never "releases". When the
    update adds or changes a hook, or changes the passkeys machines trust, the owner first
-   sees a check page built from the exact manifest bytes being signed (decision 00XX).
+   sees a check page built from the exact manifest bytes being signed (decision 0040).
 5. atlasd pulls the update and checks the signature, that N is higher than the last
    one it applied, and the tree hash.
 6. atlasd computes a pure plan, viewable as a dry run.
@@ -125,7 +125,7 @@ Memory skips steps 3–5 by default: agents write it straight to git (decision 0
   signed release (decisions 0009, 0010).
 - The owner sees every hook an update adds or changes, and every change to the trusted
   passkeys, before signing it; the hub signs exactly the bytes that page was built from
-  (decision 00XX).
+  (decision 0040).
 - A machine trusts the hub once, at pairing: the installer and the atlasd build come
   from the hub, checked only against the hub's own checksum, and the owner keys a
   machine will accept arrive then.
