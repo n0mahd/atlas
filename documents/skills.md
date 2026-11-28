@@ -106,6 +106,28 @@ for same-named skills with different text, a **Needs attention** filter with a p
 the folder's file tree with a read-only viewer, and **Check for updates** for skills
 installed from GitHub (preview, keep-your-edits merge, the `skills` CLI's lock updated).
 
+## Updates
+
+**Check for updates** (Skills page, signed in; never automatic) compares each store skill
+that has a `skills` CLI lock record from GitHub with its source (`atlas-web::updates`,
+records from `atlas_fs::lock`). Global skills (knowledge, public) use the global lock
+(`$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json`), project
+skills their repo's `skills-lock.json`. A check lists each source repo's tree once through
+GitHub's API without signing in (at most 20 repos, four at a time, 10 s and size limits);
+the listings stay in memory for the hub's run and nothing is written. When GitHub's limit is
+used up the page says when to try again and nothing more is asked until then. **Preview**
+shows each changed file as a diff before anything is written. With the installed version
+(the record's baseline) a file only the source changed takes theirs, one only the owner
+changed keeps theirs, one both changed is merged line by line, and clashing lines are the
+owner's choice per file (keep mine or take theirs). A global record's baseline is a git tree
+SHA, fetched again from GitHub; a project record holds only a hash of the files, so for an
+edited project skill every difference is the owner's choice. **Update** is one change
+(`change::commit_change`): the folder is rewritten (execute bits kept) and the lock record
+gets what `npx skills update` would write, so the CLI then sees the skill as current. A lock
+that isn't inside a repo Atlas commits (the global one usually isn't) is left alone and the
+preview says so. Links, submodules and unsafe names in a source are refused; fetched files
+are never run; everything is checked against its git SHA and shown escaped.
+
 ## What is not here yet
 
 - Bringing in items found only on other machines: atlasd reports them; the content has to

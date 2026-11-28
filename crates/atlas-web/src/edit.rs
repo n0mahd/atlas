@@ -584,7 +584,7 @@ pub(crate) async fn settings_page(
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
     if w.auth.session(&headers).is_none() {
-        return Ok(Redirect::to("/signin?next=/settings").into_response());
+        return Ok(Redirect::to(&auth::signin_href("/settings")).into_response());
     }
     let snap = s.snapshot().await?;
     let page = s.page(
@@ -783,7 +783,7 @@ fn note_for(kind: &RepoKind, settings: &Settings) -> String {
 async fn show_edit(s: &AppState, headers: &HeaderMap, item: Item) -> Result<Response, AppError> {
     let w = writer(s)?;
     if w.auth.session(headers).is_none() {
-        return Ok(Redirect::to(&format!("/signin?next={}", item.edit)).into_response());
+        return Ok(Redirect::to(&auth::signin_href(&item.edit)).into_response());
     }
     let sources = Arc::clone(&s.sources);
     let target = item.target.clone();

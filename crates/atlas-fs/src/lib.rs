@@ -9,6 +9,7 @@ mod catalog;
 pub mod edit;
 mod harness;
 pub mod library;
+pub mod lock;
 mod paths;
 
 pub use catalog::load_catalog;

@@ -404,3 +404,20 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
   .toggle-item .switch-track { margin-left: auto; }
   .use-in { align-self: stretch; }
 }
+
+/* updates */
+.updates-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 12px; }
+.section .updates-check { margin: 10px 0 0; }
+.update-facts { margin-bottom: 10px; }
+.update-files { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.update-file { display: flex; flex-direction: column; gap: 6px; }
+.update-file.clash { padding-left: 10px; border-left: 3px solid var(--oxblood); }
+.update-file-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding-bottom: 3px; border-bottom: 1px solid var(--hair); }
+.update-path { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.update-choice { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; border: 0; }
+.update-choice label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
+.diff { max-height: 60vh; overflow: auto; }
+.diff .add { color: #9FD3B8; }
+.diff .del { color: #E6A0A8; }
+.diff .hunk { color: #B08A3E; }
+.update-state { white-space: normal; }
