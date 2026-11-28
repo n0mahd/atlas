@@ -14,6 +14,11 @@
 //! The hub sees only its own machine's home files. "Use Global instead" adds the text to
 //! Global; atlasd then replaces the agent's file on each machine only where every line of
 //! it is in Global (`atlas_harness::instructions::contained`).
+//!
+//! Facts about this machine ([`read_facts`]) cover the agents' home files and one
+//! project at most, the one shown or changed, since a project's facts can cost git runs
+//! (through `atlas_git`, never a bare `git`). The pages keep them with the snapshot
+//! ([`FactsSlot`]); a change checks the session first, then reads them fresh.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -240,10 +245,16 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
     facts
 }
 
-/// Reads everything the Instructions pages show about this machine. Blocking. `placed`
-/// is the owner's Claude choice from the snapshot's placements.
+/// Reads what the Instructions pages show about this machine: the agents' home files,
+/// Claude's AGENTS.md option, and the files of `project` only (none for Global), since
+/// a project's facts cost a git run. Blocking. `placed` is the owner's Claude choice from
+/// the snapshot's placements.
 #[must_use]
-pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> InstructionFacts {
+pub fn read_facts(
+    sources: &Sources,
+    placed: Option<ClaudeAgentsMd>,
+    project: Option<&Slug>,
+) -> InstructionFacts {
     let globals = globals(sources);
     let mut out = InstructionFacts::default();
     for layout in atlas_harness::layouts() {
@@ -270,7 +281,7 @@ pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> Instruct
         }
         out.homes.insert(layout.kind, agent);
     }
-    for p in &sources.projects {
+    for p in sources.projects.iter().filter(|p| Some(&p.name) == project) {
         out.projects
             .insert(p.name.clone(), project_facts(sources, &p.root));
     }
@@ -282,12 +293,31 @@ pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> Instruct
     out
 }
 
-async fn facts(s: &AppState, snap: &views::Snapshot) -> Result<InstructionFacts, AppError> {
+/// [`read_facts`] results kept with one snapshot ([`AppState::snapshot`]'s cache), by the
+/// project they cover (`None`: Global only), so the pages read them once per snapshot and
+/// a save, which drops the snapshot, drops them too.
+pub(crate) type FactsSlot = Arc<tokio::sync::Mutex<BTreeMap<Option<Slug>, Arc<InstructionFacts>>>>;
+
+/// The snapshot and the facts for the scope `scope_key` names, read once per snapshot.
+async fn facts(
+    s: &AppState,
+    scope_key: &str,
+) -> Result<(Arc<views::Snapshot>, Arc<InstructionFacts>), AppError> {
+    let (snap, slot) = s.cached().await?;
+    let project = views::resolve_scope(&snap, scope_key).project().cloned();
+    let mut slot = slot.lock().await;
+    if let Some(f) = slot.get(&project) {
+        return Ok((snap, Arc::clone(f)));
+    }
     let sources = Arc::clone(&s.sources);
     let placed = snap.catalog.placements.instructions.claude_reads_agents_md;
-    tokio::task::spawn_blocking(move || read_facts(&sources, placed))
+    let p = project.clone();
+    let f = tokio::task::spawn_blocking(move || read_facts(&sources, placed, p.as_ref()))
         .await
-        .map_err(|_| AppError::Internal)
+        .map(Arc::new)
+        .map_err(|_| AppError::Internal)?;
+    slot.insert(project, Arc::clone(&f));
+    Ok((snap, f))
 }
 
 // ---------------------------------------------------------------- pages
@@ -359,8 +389,7 @@ pub(crate) async fn list(
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> PageResult {
-    let snap = s.snapshot().await?;
-    let facts = facts(&s, &snap).await?;
+    let (snap, facts) = facts(&s, &q.scope).await?;
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::instructions(&snap, &scope, &facts);
     let mut page = s.page(
@@ -383,8 +412,7 @@ pub(crate) async fn detail(
     Query(q): Query<ListQuery>,
     Query(extra): Query<Extra>,
 ) -> PageResult {
-    let snap = s.snapshot().await?;
-    let facts = facts(&s, &snap).await?;
+    let (snap, facts) = facts(&s, &scope_key).await?;
     let v =
         views::instruction_detail(&snap, &scope_key, &file, &facts).ok_or(AppError::NotFound)?;
     let scope = views::resolve_scope(&snap, &scope_key);
@@ -941,7 +969,13 @@ async fn planned(s: &AppState, op: Op, text: String) -> Result<Planned, AppError
         .instructions
         .claude_reads_agents_md;
     tokio::task::spawn_blocking(move || {
-        let facts = read_facts(&sources, placed);
+        // Read fresh, not from the snapshot's cache: the plan moves this text. Only
+        // CLAUDE.md to AGENTS.md needs a project's facts.
+        let project = match &op {
+            Op::ToAgents(p) => Some(p),
+            _ => None,
+        };
+        let facts = read_facts(&sources, placed, project);
         plan(&sources, &facts, &op, &text)
     })
     .await
@@ -1183,6 +1217,31 @@ pub fn home_words(access: &Access, agent: &AgentHome) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn facts_cover_only_the_project_asked_for() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = |name: &str| {
+            let root = tmp.path().join(name);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+            atlas_fs::Project {
+                name: Slug::new(name).unwrap(),
+                root,
+            }
+        };
+        let sources = Sources {
+            home: tmp.path().to_path_buf(),
+            knowledge: tmp.path().join("k"),
+            public_skills: None,
+            projects: vec![project("shop"), project("blog")],
+        };
+        assert!(read_facts(&sources, None, None).projects.is_empty());
+        let shop = Slug::new("shop").unwrap();
+        let facts = read_facts(&sources, None, Some(&shop));
+        assert_eq!(facts.projects.keys().collect::<Vec<_>>(), [&shop]);
+        assert!(facts.projects[&shop].present.contains_key("AGENTS.md"));
+    }
 
     #[test]
     fn only_known_actions_parse() {

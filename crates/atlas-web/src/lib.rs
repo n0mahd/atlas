@@ -76,7 +76,14 @@ pub struct AppState {
 }
 
 /// A read of the store and when it was made.
-type Cached = (std::time::Instant, Arc<Snapshot>);
+#[derive(Debug)]
+struct Cached {
+    at: std::time::Instant,
+    snap: Arc<Snapshot>,
+    /// The Instructions pages' facts about this machine, read on first use with this
+    /// snapshot and dropped with it.
+    instructions: instructions_manage::FactsSlot,
+}
 
 /// How long one read of the store serves requests. Changes made outside Atlas show up
 /// within this; saves made through Atlas clear it at once.
@@ -116,11 +123,17 @@ impl AppState {
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
     /// read wait for that one read instead of starting their own.
     async fn snapshot(&self) -> Result<Arc<Snapshot>, AppError> {
+        Ok(self.cached().await?.0)
+    }
+
+    /// [`AppState::snapshot`] with the slot that keeps the Instructions pages' facts for
+    /// as long as that snapshot serves.
+    async fn cached(&self) -> Result<(Arc<Snapshot>, instructions_manage::FactsSlot), AppError> {
         let mut slot = self.cache.lock().await;
-        if let Some((at, snap)) = slot.as_ref()
-            && at.elapsed() < SNAPSHOT_TTL
+        if let Some(c) = slot.as_ref()
+            && c.at.elapsed() < SNAPSHOT_TTL
         {
-            return Ok(Arc::clone(snap));
+            return Ok((Arc::clone(&c.snap), Arc::clone(&c.instructions)));
         }
         let sources = Arc::clone(&self.sources);
         let lock = self.updates.global_lock().to_path_buf();
@@ -145,8 +158,13 @@ impl AppState {
         .await
         .map(Arc::new)
         .map_err(|_| AppError::Internal)?;
-        *slot = Some((std::time::Instant::now(), Arc::clone(&snap)));
-        Ok(snap)
+        let instructions = instructions_manage::FactsSlot::default();
+        *slot = Some(Cached {
+            at: std::time::Instant::now(),
+            snap: Arc::clone(&snap),
+            instructions: Arc::clone(&instructions),
+        });
+        Ok((snap, instructions))
     }
 
     /// Drops the cached read, so the next page shows a change just made.

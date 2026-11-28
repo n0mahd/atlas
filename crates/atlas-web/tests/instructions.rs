@@ -631,3 +631,27 @@ async fn turning_claudes_option_on_offers_to_send() {
     assert!(!page.body.contains("Also let Claude"), "{}", page.body);
     assert!(!page.body.contains("data-send-on-save"), "{}", page.body);
 }
+
+#[tokio::test]
+async fn the_list_reads_this_machine_once_per_snapshot() {
+    let h = hub(&[("AGENTS.md", "# Shop\n")]);
+    let local = r#"href="/instructions/shop/CLAUDE.local.md""#;
+    let first = get(&h, "/instructions?scope=shop").await;
+    assert!(!first.body.contains(local));
+    // Made outside Atlas: the next page within the snapshot's few seconds reuses the
+    // facts read with it rather than reading every file and running git again.
+    fs::write(h.project.join("CLAUDE.local.md"), "Mine.\n").unwrap();
+    let again = get(&h, "/instructions?scope=shop").await;
+    assert!(!again.body.contains(local), "{}", again.body);
+    // A save drops the snapshot and its facts together.
+    let res = post(
+        &h,
+        "/instructions/claude-agents-md",
+        &[("csrf", &h.csrf), ("value", "never")],
+        true,
+    )
+    .await;
+    assert_committed(&res);
+    let after = get(&h, "/instructions?scope=shop").await;
+    assert!(after.body.contains(local), "{}", after.body);
+}
