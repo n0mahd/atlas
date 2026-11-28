@@ -26,7 +26,7 @@ use atlas_core::catalog::edit::RepoKind;
 use atlas_core::catalog::{PLACEMENTS_FILE, Placement, Placements, SkillHome};
 use atlas_core::kernel::Slug;
 use atlas_fs::library::{self, LibraryError, Tree, TreeFile};
-use atlas_fs::lock::{self, Lock, LockKind, ReadLock};
+use atlas_fs::lock::{self, LockFile, LockKind};
 use axum::http::HeaderMap;
 
 use crate::AppState;
@@ -531,7 +531,7 @@ fn lock_at(s: &AppState, home: &SkillHome) -> Option<LockAt> {
     match home {
         SkillHome::Project(p) => {
             let project = src.projects.iter().find(|x| &x.name == p)?;
-            let abs = project.root.join(lock::PROJECT_LOCK_FILE);
+            let abs = lock::project_lock_path(&project.root);
             Some(LockAt {
                 kind: LockKind::Project,
                 shown: src.display(&abs),
@@ -544,7 +544,7 @@ fn lock_at(s: &AppState, home: &SkillHome) -> Option<LockAt> {
             })
         }
         SkillHome::Private | SkillHome::Public => {
-            let abs = s.global_skill_lock.as_ref().clone();
+            let abs = s.updates.global_lock().to_path_buf();
             let shown = src.display(&abs);
             let mut repos: Vec<(RepoKind, PathBuf)> =
                 vec![(RepoKind::Knowledge, src.knowledge.clone())];
@@ -579,6 +579,15 @@ fn lock_at(s: &AppState, home: &SkillHome) -> Option<LockAt> {
     }
 }
 
+/// A lock as read for a plan.
+#[derive(Debug)]
+enum ReadLock {
+    Missing,
+    /// There is a file Atlas won't rewrite (it doesn't parse, is old, or is a link).
+    Unusable,
+    Found(LockFile),
+}
+
 /// Locks read so far in one plan, edited in memory and written once at the end.
 #[derive(Default)]
 struct Locks {
@@ -587,9 +596,14 @@ struct Locks {
 
 impl Locks {
     fn get(&mut self, at: &LockAt) -> &mut (LockAt, ReadLock, bool) {
-        self.read
-            .entry(at.abs.clone())
-            .or_insert_with(|| (at.clone(), lock::read_lock(&at.abs, at.kind), false))
+        self.read.entry(at.abs.clone()).or_insert_with(|| {
+            let read = match lock::read_lock(&at.abs, at.kind) {
+                Ok(None) => ReadLock::Missing,
+                Ok(Some(l)) => ReadLock::Found(l),
+                Err(_) => ReadLock::Unusable,
+            };
+            (at.clone(), read, false)
+        })
     }
 
     /// Writes every lock that changed. Locks that gain records go in first, as their
@@ -610,8 +624,11 @@ impl Locks {
     }
 }
 
-fn source_words(entry: &serde_json::Value) -> String {
-    lock::source_of(entry).map_or_else(String::new, |s| format!(" (from {s})"))
+fn source_words(lock: &LockFile, name: &str) -> String {
+    lock.records
+        .get(name)
+        .and_then(lock::Record::github)
+        .map_or_else(String::new, |g| format!(" (from {})", g.slug()))
 }
 
 /// Whether the other global home (private for public, public for private) has a skill
@@ -666,9 +683,9 @@ fn plan_delete(s: &AppState, skills: &[(SkillHome, Slug)]) -> Result<Plan, Chang
         if let Some(lat) = lock_at(s, home) {
             let (lat, read, changed) = locks.get(&lat);
             if let ReadLock::Found(l) = read
-                && let Some(entry) = l.entry(name.as_str()).cloned()
+                && l.raw(name.as_str()).is_some()
             {
-                let from = source_words(&entry);
+                let from = source_words(l, name.as_str());
                 if lat.repo.is_some() && l.writable() {
                     l.remove(name.as_str());
                     *changed = true;
@@ -807,14 +824,13 @@ fn carry_record(
     name: &Slug,
     now: &str,
 ) {
-    let entry = match &locks.get(fl).1 {
-        ReadLock::Found(l) => match l.entry(name.as_str()) {
-            Some(e) => e.clone(),
+    let (entry, from_words) = match &locks.get(fl).1 {
+        ReadLock::Found(l) => match l.raw(name.as_str()) {
+            Some(e) => (e.clone(), source_words(l, name.as_str())),
             None => return,
         },
         _ => return,
     };
-    let from_words = source_words(&entry);
     let leave = |plan: &mut Plan, why: String| {
         plan.notes.push(format!(
             "The skills CLI's record of {name}{from_words} stays in {}: {why}, so Atlas changes neither lock.",
@@ -846,11 +862,11 @@ fn carry_record(
     let hashes = (fl.kind == LockKind::Global && tl.kind == LockKind::Project)
         .then(|| lock::hash_folder(&src.root.join(src.rel(name.as_str()))))
         .flatten();
-    let converted = lock::convert(&entry, fl.kind, tl.kind, hashes.as_ref(), now);
+    let converted = lock::convert_record(&entry, fl.kind, tl.kind, hashes.as_ref(), now);
     if let Some(record) = converted {
         let slot = locks.get(tl);
         if matches!(slot.1, ReadLock::Missing) {
-            slot.1 = ReadLock::Found(Lock::fresh(tl.kind));
+            slot.1 = ReadLock::Found(LockFile::fresh(&tl.abs, tl.kind));
         }
         if let ReadLock::Found(l) = &mut slot.1 {
             l.insert(name.as_str(), record);
@@ -936,7 +952,7 @@ mod tests {
             }],
         };
         AppState::new(sources, "hub", Vec::new(), None)
-            .with_global_skill_lock(home.join("outside/.skill-lock.json"))
+            .with_github_stand_in("http://127.0.0.1:9", home.join("outside/.skill-lock.json"))
     }
 
     #[test]

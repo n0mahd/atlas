@@ -11,7 +11,7 @@ atlas-core = { path = "../atlas-core" }
 atlas-harness = { path = "../atlas-harness" }
 cap-std.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 serde_yaml_ng.workspace = true
 sha1 = "0.11"
 sha2 = "0.10"

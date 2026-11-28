@@ -16,6 +16,7 @@
     {% endif %}
   </span>
 </form>
+{% if page.signed_in %}{% include "updates_button.html" %}{% endif %}
 
 {% if v.select && page.signed_in %}
 <form id="bulk" class="bulk-bar" method="post" action="/skills/bulk" data-send-on-save aria-label="Change the chosen skills">

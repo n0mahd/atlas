@@ -155,7 +155,7 @@ fn hub() -> Hub {
     );
     let csrf = writer.auth.session(&h).unwrap().csrf;
     let state = AppState::new(sources, "test-hub", Vec::new(), Some(writer))
-        .with_global_skill_lock(global_lock.clone());
+        .with_github_stand_in("http://127.0.0.1:9", global_lock.clone());
     let app = router(state, Access::new(vec![LOGIN.to_owned()]));
     Hub {
         _tmp: tmp,
@@ -538,7 +538,7 @@ async fn a_lock_outside_git_is_left_alone_and_the_confirmation_says_so() {
     let csrf = writer.auth.session(&h).unwrap().csrf;
     let app = router(
         AppState::new(sources, "test-hub", Vec::new(), Some(writer))
-            .with_global_skill_lock(outside.clone()),
+            .with_github_stand_in("http://127.0.0.1:9", outside.clone()),
         Access::new(vec![LOGIN.to_owned()]),
     );
     let hub2 = Hub {

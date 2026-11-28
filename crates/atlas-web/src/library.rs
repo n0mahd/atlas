@@ -34,8 +34,14 @@ impl Index {
     ) -> Self {
         let read = |path: &Path, kind| {
             lock::read_lock(path, kind)
-                .found()
-                .map_or_else(HashMap::new, |l| l.sources().into_iter().collect())
+                .ok()
+                .flatten()
+                .map_or_else(HashMap::new, |l| {
+                    l.records
+                        .iter()
+                        .filter_map(|(name, r)| Some((name.clone(), r.github()?.slug())))
+                        .collect()
+                })
         };
         Self {
             global_sources: read(global_lock, LockKind::Global),
@@ -45,7 +51,7 @@ impl Index {
                 .map(|p| {
                     (
                         p.name.to_string(),
-                        read(&p.root.join(lock::PROJECT_LOCK_FILE), LockKind::Project),
+                        read(&lock::project_lock_path(&p.root), LockKind::Project),
                     )
                 })
                 .collect(),
