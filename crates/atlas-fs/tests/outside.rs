@@ -134,7 +134,6 @@ fn everything_outside_is_classified() {
     let catalog = atlas_fs::load_catalog(&h.sources);
     let harnesses = atlas_fs::scan_harnesses(&h.sources);
     let out = outside::scan(&h.sources, &catalog, &harnesses, &h.rules);
-    assert_eq!(out.problem, None);
     let by = |name: &str| {
         out.skills
             .iter()
@@ -150,6 +149,7 @@ fn everything_outside_is_classified() {
         own.kinds.contains(&HarnessKind::ClaudeCode) && own.kinds.contains(&HarnessKind::Codex)
     );
     assert!(own.blocked().is_none() && own.clash.is_none());
+    assert_eq!(own.left_out, ["leak"]);
     assert_eq!(out.skills.iter().filter(|s| s.name == "own").count(), 1);
 
     let linked = by("linked");

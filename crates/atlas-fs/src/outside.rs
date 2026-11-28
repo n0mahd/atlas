@@ -16,7 +16,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use atlas_core::catalog::{Catalog, HookEvent, HookManifest, Keep, Placements, SkillHome};
+use atlas_core::catalog::{
+    Catalog, HookEvent, HookManifest, Keep, KeepKind, Placements, SkillHome,
+};
 use atlas_core::distribution::HarnessView;
 use atlas_core::kernel::{HarnessKind, Scope, Slug};
 use serde_json::Value;
@@ -213,7 +215,7 @@ impl Origin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Clash {
     pub home: SkillHome,
-    /// The two folders hold the same files (`library::Tree::digest`).
+    /// The folders hold exactly the same files (`library::Tree::exact_digest`).
     pub same: bool,
 }
 
@@ -235,6 +237,9 @@ pub struct OutsideSkill {
     /// A registered project the real folder sits in.
     pub project: Option<Slug>,
     pub has_skill_md: bool,
+    /// What a copy would leave out (links, a `.git`, special files), relative to the
+    /// folder. atlasd never replaces such an original, so the owner removes it by hand.
+    pub left_out: Vec<String>,
     pub clash: Option<Clash>,
     /// The owner chose to leave it outside.
     pub kept: bool,
@@ -407,8 +412,6 @@ pub struct Outside {
     pub claude_only: Vec<ClaudeOnly>,
     pub duplicates: Vec<Duplicate>,
     pub switched_off: Vec<SwitchedOff>,
-    /// Why `atlas/placements.toml` couldn't be read, if it couldn't.
-    pub problem: Option<String>,
 }
 
 impl Outside {
@@ -445,8 +448,8 @@ impl Ctx<'_> {
         }
     }
 
-    fn kept(&self, key: &str) -> bool {
-        self.keep.items.contains(key)
+    fn kept(&self, kind: KeepKind, shown: &str) -> bool {
+        self.keep.keeps(kind, shown)
     }
 }
 
@@ -464,12 +467,40 @@ pub fn skill_folder(sources: &Sources, home: &SkillHome, name: &str) -> Option<P
     }
 }
 
-/// Whether two folders hold the same files. Unreadable counts as different.
+/// Whether two folders hold exactly the same files. Unreadable, or holding anything a
+/// copy leaves out, counts as different.
 fn same_tree(a: &Path, b: &Path) -> bool {
     match (library::read_tree(a), library::read_tree(b)) {
-        (Ok(a), Ok(b)) => a.digest() == b.digest(),
+        (Ok(a), Ok(b)) => a
+            .exact_digest()
+            .is_some_and(|d| Some(d) == b.exact_digest()),
         _ => false,
     }
+}
+
+/// What a copy of `folder` would leave out: links, `.git` and anything that isn't a plain
+/// file or folder. Only names are read, never contents; bounded like a copy.
+fn left_out(folder: &Path) -> Vec<String> {
+    fn walk(dir: &Path, rel: &Path, depth: usize, seen: &mut usize, out: &mut Vec<String>) {
+        if depth > library::MAX_DEPTH {
+            return;
+        }
+        for (name, path) in list_dir(dir) {
+            *seen += 1;
+            if *seen > library::MAX_FILES {
+                return;
+            }
+            let here = rel.join(&name);
+            match fs::symlink_metadata(&path) {
+                Ok(m) if m.is_dir() && name != ".git" => walk(&path, &here, depth + 1, seen, out),
+                Ok(m) if m.is_file() => {}
+                _ => out.push(here.display().to_string()),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(folder, Path::new(""), 0, &mut 0, &mut out);
+    out
 }
 
 /// Looks at everything outside Atlas. `harnesses` is the harness scan of the same moment
@@ -481,25 +512,19 @@ pub fn scan(
     harnesses: &[HarnessView],
     rules: &Rules,
 ) -> Outside {
-    let (placements, problem) = match library::read_placements(&sources.knowledge) {
-        Ok((p, _)) => (p, None),
-        Err(e) => (Placements::default(), Some(e.to_string())),
-    };
+    let placements = &catalog.placements;
     let ctx = Ctx {
         sources,
         rules,
         home: fs::canonicalize(&sources.home).unwrap_or_else(|_| sources.home.clone()),
         keep: placements.keep.clone(),
     };
-    let mut out = Outside {
-        problem,
-        ..Outside::default()
-    };
+    let mut out = Outside::default();
     skills(&ctx, catalog, &mut out);
     built_in(&ctx, &mut out);
     hooks(&ctx, catalog, harnesses, &mut out);
     memory(&ctx, &mut out);
-    projects(&ctx, catalog, harnesses, &placements, &mut out);
+    projects(&ctx, catalog, harnesses, placements, &mut out);
     out
 }
 
@@ -577,7 +602,8 @@ fn skills(ctx: &Ctx, catalog: &Catalog, out: &mut Outside) {
                             .map(|(n, _)| n.clone())
                     });
                     OutsideSkill {
-                        key: format!("skill:{shown}"),
+                        key: Keep::key(KeepKind::Skill, &shown),
+                        left_out: real.as_deref().map_or_else(Vec::new, left_out),
                         has_skill_md: real.as_deref().is_some_and(has_skill_md),
                         shown_real: real.as_deref().map_or_else(String::new, |r| ctx.shown(r)),
                         name: name.clone(),
@@ -600,10 +626,7 @@ fn skills(ctx: &Ctx, catalog: &Catalog, out: &mut Outside) {
         }
     }
     for mut skill in found.into_values() {
-        skill.kept = skill
-            .entries
-            .iter()
-            .any(|e| ctx.kept(&format!("skill:{e}")));
+        skill.kept = skill.entries.iter().any(|e| ctx.kept(KeepKind::Skill, e));
         skill.clash = clash(ctx, catalog, &skill);
         out.skills.push(skill);
     }
@@ -906,8 +929,8 @@ fn hooks(ctx: &Ctx, catalog: &Catalog, harnesses: &[HarnessView], out: &mut Outs
                 continue;
             }
             let timeout = f.timeout.map_or_else(String::new, |t| t.to_string());
-            let key = format!(
-                "hook:{config}#{}",
+            let shown = format!(
+                "{config}#{}",
                 fingerprint(&[
                     h.kind.id(),
                     &f.event,
@@ -925,8 +948,8 @@ fn hooks(ctx: &Ctx, catalog: &Catalog, harnesses: &[HarnessView], out: &mut Outs
             }
             taken.insert(name.clone());
             out.hooks.push(OutsideHook {
-                kept: ctx.kept(&key),
-                key,
+                kept: ctx.kept(KeepKind::Hook, &shown),
+                key: Keep::key(KeepKind::Hook, &shown),
                 kind: h.kind,
                 config: config.clone(),
                 event: f.event.clone(),
@@ -992,10 +1015,10 @@ fn memory(ctx: &Ctx, out: &mut Outside) {
                         }
                         Ok(_) => NoteState::Differs,
                     };
-                    let key = format!("memory:{shown}/{file}");
+                    let item = format!("{shown}/{file}");
                     notes.push(Note {
-                        kept: ctx.kept(&key),
-                        key,
+                        kept: ctx.kept(KeepKind::Memory, &item),
+                        key: Keep::key(KeepKind::Memory, &item),
                         file: file.to_owned(),
                         state,
                     });
