@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## Installing the hub
+
+`deploy/install.sh` checks what it needs before building and says in one sentence what's
+missing. The rest:
+
+- **It stops at "Putting the hub on your Tailscale network".** Tailscale is waiting for
+  you to turn on HTTPS certificates or Serve for your Tailscale network (your tailnet).
+  Open the link it printed, approve, and it goes on.
+- **"couldn't keep your services running after you log out".** Run
+  `sudo loginctl enable-linger $USER`, or the hub stops each time you log out.
+- **"The hub service isn't running".** The lines after it are from the hub's log; most
+  often `hub.toml` has a mistake. Fix it, then `systemctl --user restart atlas-hub`.
+- **"Couldn't tell which Tailscale login this machine uses".** The machine is a tagged
+  device, which has no login. Write `~/.config/atlas/hub.toml` yourself from
+  `deploy/hub.example.toml`, with your own login in `allowed_logins`.
+
 ## Adding a machine
 
 ### `command not found: atlasd`
@@ -25,7 +41,8 @@ address or a short name. Use the command exactly as **Machines → Pair** shows 
 
 The hub only answers its owner's Tailscale login. Check that the machine is on your
 tailnet and signed in to Tailscale as a login listed in `allowed_logins`
-(`tailscale status` shows who it is).
+(`tailscale status` shows who it is). Devices with a Tailscale tag have no login, so they
+always get a 403; sign the machine in as yourself instead.
 
 ### `curl: (22) … error: 400`
 
@@ -34,7 +51,13 @@ Most often the hub has no atlasd builds yet. Put them in
 
 ### "atlasd isn't available for …"
 
-atlasd runs only on Linux, on x86_64 and ARM (aarch64), for now.
+atlasd runs on Linux and macOS, on x86_64 and ARM (aarch64). Other systems and CPUs
+aren't supported yet.
+
+### "This hub has no atlasd build for … on …"
+
+The hub has builds for other kinds of machine, but not this one. Add it to
+`~/.local/state/atlas-hub/dist/` on the hub ([install the hub](install-hub.md#give-the-hub-atlasd-builds-to-hand-out)).
 
 ## Passkeys
 
@@ -85,7 +108,7 @@ If the timer is inactive:
 
 ```sh
 systemctl --user enable --now atlasd.timer
-loginctl enable-linger "$USER"
+loginctl enable-linger "$USER"   # keep running after you log out
 ```
 
 ### "couldn't reach the hub … harnesses keep using the local copies"
@@ -100,8 +123,9 @@ hub's copy uses). Check that `git clone <that URL>` works from this account.
 
 ### "refused release …"
 
-atlasd checks every update's signature and number. It refuses one that isn't signed by a
-passkey it trusts, or that is older than one it already applied.
+atlasd calls an update a release in its messages. It checks every update's signature and
+number. It refuses one that isn't signed by a passkey it trusts, or that is older than
+one it already applied.
 
 A machine trusts the passkeys you had when it paired. It learns a newer passkey from an
 update signed by one it already trusts. So if you signed with a passkey added later, send
@@ -109,9 +133,9 @@ one update with an older passkey first. If that's lost, pair the machine again.
 
 ### Skill links keep changing back
 
-Two tools are managing the same links. Usually it's an older link script, such as
-`~/Knowledge/bin/link-agents`, run by a sync script or timer. On a machine with atlasd,
-stop the old script from running; atlasd does that job now.
+Two tools are managing the same links. Usually it's an older link script or dotfiles
+tool you set up before Atlas, run by hand, a timer or a sync job. On a machine with
+atlasd, stop the old script from running; atlasd does that job now.
 
 ### "… is your own folder or file" or "… was left alone"
 
@@ -119,7 +143,8 @@ atlasd only changes links it made (or was told to take over). Your own folders, 
 links elsewhere are left alone and reported on the Machines page. Move yours aside if you
 want Atlas to manage that place. To hand over links an older script made into a folder,
 add that folder to `adopt` in `~/.config/atlas/client.toml`, for example
-`adopt = ["~/Knowledge"]`.
+`adopt = ["~/Knowledge"]`. The installer does this for `~/Knowledge` and `~/Skills` when
+they exist.
 
 ## Saving
 
