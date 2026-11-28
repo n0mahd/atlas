@@ -316,6 +316,10 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
   .nav a, :root[data-rail="collapsed"] .nav a, .rail .foot-link, .rail .foot-button { min-width: 40px; height: 48px; }
   .nav { justify-content: space-around; }
 }
+@media (max-width: 359px) {
+  .rail, :root[data-rail="collapsed"] .rail { padding: 0 4px; gap: 2px; }
+  .nav a, :root[data-rail="collapsed"] .nav a, .rail .foot-link, .rail .foot-button { min-width: 36px; padding: 0 2px; }
+}
 
 /* Agent status: the mark plus a badge (has it, missing, not set up), words in the tooltip. */
 .agent-states { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
@@ -485,6 +489,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
   .toggle-item { flex: 1 1 calc(50% - 6px); }
   .rows > li.has-switch .row > summary .row-main { flex-basis: calc(100% - 82px); }
   .row > summary .row-switch-slot { order: 1; }
+  .row-switch { top: 0; height: 30px; }
   .toggle-item .toggle { width: 100%; }
   .toggle-item .switch-track { margin-left: auto; }
   .use-in { align-self: stretch; }
@@ -557,6 +562,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .group-name { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--gilt); }
 .group-head .count { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .group-head .switches { margin-left: auto; }
+.group-head .switches + .switches { margin-left: 0; }
 
 .rows > li.pick { display: flex; align-items: flex-start; gap: 0; }
 .rows > li.pick > .row { flex: 1 1 auto; min-width: 0; }

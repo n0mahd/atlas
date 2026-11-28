@@ -281,15 +281,38 @@ pub struct NotesGroup {
 #[derive(Debug, Default)]
 pub struct MemoryOutside {
     pub groups: Vec<NotesGroup>,
-    /// Folders for repos Atlas doesn't know, by raw name, and how many notes each has.
-    pub stray: Vec<(String, usize)>,
+    /// Folders for repos Atlas doesn't know: a readable name ([`stray_name`]), Claude
+    /// Code's raw folder name (for a title) and how many notes each has.
+    pub stray: Vec<(String, String, usize)>,
     pub new: usize,
     /// The project a project-scoped page shows, for Bring all in.
     pub project: String,
 }
 
+/// A readable name for one of Claude Code's per-repo folders, which are the repo's absolute
+/// path with `/` and `.` turned into `-`: the part after the home folder as `~/…`, or after
+/// `-Projects-`, else the raw name. Hyphens can't be told from slashes, so this is a label,
+/// never a path to use.
 #[must_use]
-pub(crate) fn memory_outside(snap: &Snapshot, scope: &Scope) -> MemoryOutside {
+pub(crate) fn stray_name(key: &str, home: &std::path::Path) -> String {
+    let prefix: String = home
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c == '/' || c == '.' { '-' } else { c })
+        .collect();
+    if let Some(rest) = key.strip_prefix(&format!("{prefix}-")) {
+        return format!("~/{rest}");
+    }
+    key.rsplit_once("-Projects-")
+        .map_or_else(|| key.to_owned(), |(_, rest)| rest.to_owned())
+}
+
+#[must_use]
+pub(crate) fn memory_outside(
+    snap: &Snapshot,
+    scope: &Scope,
+    home: &std::path::Path,
+) -> MemoryOutside {
     let groups: Vec<NotesGroup> = snap
         .outside
         .memory
@@ -330,7 +353,7 @@ pub(crate) fn memory_outside(snap: &Snapshot, scope: &Scope) -> MemoryOutside {
             snap.outside
                 .stray_memory
                 .iter()
-                .map(|s| (s.key.clone(), s.notes))
+                .map(|s| (stray_name(&s.key, home), s.key.clone(), s.notes))
                 .collect()
         } else {
             Vec::new()
@@ -1350,6 +1373,14 @@ pub(crate) async fn compare_copies(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn claude_s_folder_names_read_without_the_home_path() {
+        let home = std::path::Path::new("/home/me");
+        assert_eq!(super::stray_name("-home-me-code-app", home), "~/code-app");
+        assert_eq!(super::stray_name("-srv-x-Projects-old", home), "old");
+        assert_eq!(super::stray_name("-opt-thing", home), "-opt-thing");
+    }
+
     use super::*;
 
     #[test]

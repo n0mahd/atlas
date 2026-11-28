@@ -44,8 +44,8 @@
   {% if !outside.stray.is_empty() %}
   <h3 class="sub-head">Projects Atlas doesn't know <details class="info"><summary aria-label="How to bring these in">i</summary><p>Add the project to Atlas to bring these in.</p></details></h3>
   <ul class="rows">
-    {% for (key, n) in outside.stray %}
-    <li><div class="row static"><span class="row-main"><span class="row-name mono-name">{{ key }}</span></span><span class="row-meta">{{ n }} {% if *n == 1 %}note{% else %}notes{% endif %}</span></div></li>
+    {% for (name, key, n) in outside.stray %}
+    <li><div class="row static" title="{{ key }}"><span class="row-main"><span class="row-name mono-name">{{ name }}</span></span><span class="row-meta">{{ n }} {% if *n == 1 %}note{% else %}notes{% endif %}</span></div></li>
     {% endfor %}
   </ul>
   {% endif %}

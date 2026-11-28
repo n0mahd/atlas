@@ -735,7 +735,7 @@ async fn memory(
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
     q.apply(&mut page);
-    let outside = import::memory_outside(&snap, &scope);
+    let outside = import::memory_outside(&snap, &scope, &s.sources.home);
     Ok(Html(MemoryPage { page, v, outside }.render()?))
 }
 
