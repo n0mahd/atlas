@@ -841,3 +841,53 @@ fn a_hook_whose_script_isnt_executable_is_reported_not_installed() {
     let settings = fs::read_to_string(w.home().join(".claude/settings.json")).unwrap_or_default();
     assert!(!settings.contains("atlas:guard"), "{settings}");
 }
+
+#[test]
+fn a_hook_with_a_linked_script_is_reported_not_installed() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let store = PathBuf::from(&w.sources[0].remote);
+    // The script points at a file elsewhere in the repo, whose changes wouldn't show as
+    // changes to this hook.
+    write(&store.join("lib/real.sh"), "#!/bin/sh\nexit 0\n");
+    fs::set_permissions(store.join("lib/real.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::remove_file(store.join("hooks/guard/run.sh")).unwrap();
+    symlink("../../lib/real.sh", store.join("hooks/guard/run.sh")).unwrap();
+    // A second hook whose script is real but sources a linked helper.
+    write(
+        &store.join("hooks/helped/hook.toml"),
+        &HOOK.replace("Guard", "Helped"),
+    );
+    write(
+        &store.join("hooks/helped/run.sh"),
+        "#!/bin/sh\n. ./helper.sh\n",
+    );
+    fs::set_permissions(
+        store.join("hooks/helped/run.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    symlink("../../lib/real.sh", store.join("hooks/helped/helper.sh")).unwrap();
+    git(&store, &["add", "-A"]);
+    git(&store, &["commit", "--quiet", "-m", "linked scripts"]);
+    w.sources[0] = source(&store, SourceId::Knowledge);
+    let release = signed(&w.manifest(1, &[&key]), &key);
+
+    let pass = w.run(&release, false);
+    let has = |text: &str| pass.problems.iter().any(|p| p.contains(text));
+    assert!(
+        has("hook guard skipped: its script is a link, so machines will skip this hook"),
+        "{:?}",
+        pass.problems
+    );
+    assert!(
+        has("hook helped skipped: its folder holds a link (helper.sh)"),
+        "{:?}",
+        pass.problems
+    );
+    let settings = fs::read_to_string(w.home().join(".claude/settings.json")).unwrap_or_default();
+    assert!(
+        !settings.contains("atlas:guard") && !settings.contains("atlas:helped"),
+        "{settings}"
+    );
+}

@@ -104,8 +104,9 @@ Then the standing items:
   is rewritten by Atlas, so comments in it are lost.
 - The check before sending (decision 00XX) covers hooks and trusted passkeys. Phase 4's
   local MCP servers (`mcp.toml`) run by themselves too and must join the "runs by itself"
-  group in `atlas-web::review` when they land. Skills can also carry their own hooks in
-  some harnesses' frontmatter; those count only as skill changes today.
+  group in `atlas-web::review` when they land. Hooks a skill or subagent declares in its
+  frontmatter are shown as their `hooks` block; a script such a block runs from the
+  skill's own folder shows only as a skill change when it changes.
 - `atlas-web::change` checks each touched path with its own `git status`; a bulk change of
   hundreds of skills would want one batched status call. Fine for tens.
 

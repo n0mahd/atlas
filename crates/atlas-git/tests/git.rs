@@ -529,8 +529,14 @@ fn reads_what_changed_between_two_commits() {
     ));
     assert!(repo.file_at(&head, "../x", 1024).is_err());
     assert_eq!(
-        repo.files_at(&head, "hooks/guard").unwrap(),
-        vec!["hooks/guard/run.sh".to_owned()]
+        repo.tree_entries(&head, "hooks/guard").unwrap(),
+        vec![("100644".to_owned(), "hooks/guard/run.sh".to_owned())]
+    );
+    assert_eq!(
+        repo.mode_at(&head, "hooks/guard/run.sh")
+            .unwrap()
+            .as_deref(),
+        Some("100644")
     );
     let diff = repo.diff(&base, &head, "a.md").unwrap();
     assert!(

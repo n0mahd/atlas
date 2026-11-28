@@ -57,15 +57,12 @@ it. Keep the knowledge repo private anyway; it holds your memory and instruction
 - If the hub can't be reached, it changes nothing.
 
 Hooks are commands your agents run, on every machine that gets them. They reach a
-machine only inside an update you signed, and you see each new or changed hook in full
-before you sign. The same goes for a change to the passkeys your machines trust. What you
-sign is exactly what that page showed. atlasd skips a hook whose script isn't marked as
-runnable and reports it.
+machine only inside an update you signed, and you see each new or changed hook, and any
+change to the passkeys your machines trust, before you sign.
 
 An update carries your knowledge repo as it is when you send, not only what you edited
 in Atlas. Anything you or an agent committed to it some other way goes out with the next
-update. Hooks among those changes are shown on the check page; other changes (notes,
-skills, instructions, subagents) are counted in one line beside the send.
+update, hooks included.
 
 ## Each machine has its own token
 

@@ -414,13 +414,22 @@ machine already trusts the keys it got when it paired. A hook whose script isn't
 executable in git is flagged on the page, and atlasd reports it as a problem instead of
 installing it.
 
+What runs must be what the page shows, so a hook may not reach outside its folder: atlasd
+skips a hook whose folder, script or any other file in it is a link, and one whose
+`hooks` folder is a link, and reports why ("its script is a link, so machines will skip
+this hook"); the page flags every link (git mode 120000) in a hook folder the same way.
+Hooks a skill (`SKILL.md`) or subagent (`agents/*.md`) declares in its frontmatter run
+while it's in use, so a new or changed `hooks` block there is listed with the other hooks
+("Hooks in the skill pdf", "While the skill is in use"), the block in full or as a diff.
+
 The page shows what will be signed: when it is built, the hub builds the update right
 then, keeps its exact manifest bytes server-side under a random id tied to the session
 (`distribute::Pending`), and reads the hooks from the commits those bytes pin, never from
 HEAD. `/send/start` with that id hands out the digest of those bytes, only after the page
 was served; `/send/finish` signs and stores those same bytes and never rebuilds. Updates
 without such changes keep the single tap, with one line beside it naming what is signed
-("Update 4 · Knowledge"). Without JavaScript, Send posts a form that opens the page; the
+in things the owner can check ("Update 4 · 1 note changed", "Update 5 · AGENTS.md and 2
+skills changed"). Without JavaScript, Send posts a form that opens the page; the
 tap itself still needs JavaScript.
 
 Other things agents act on (memory notes, skills, instruction files, subagent files) are

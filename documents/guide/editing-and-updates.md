@@ -37,8 +37,8 @@ every 10 minutes and applies it.
 If you close the passkey prompt, the edit is still saved. The page says "Saved. Not on
 your machines yet" and offers a **Send** button.
 
-Next to the passkey prompt, one line says what you're signing, such as "Update 4 ·
-Knowledge".
+Next to the passkey prompt, one line says what you're signing, such as "Update 4 · 1 note
+changed" or "Update 5 · AGENTS.md and 2 skills changed".
 
 ## Hooks and passkeys get a look first
 
@@ -57,7 +57,13 @@ opened waits for the next update. **Not now** keeps your edit saved but not sent
 
 Removing a hook needs no look. Your first update lists every hook and every passkey your
 machines will trust. If a hook's script isn't marked as runnable in git, the page says so,
-and your machines skip that hook until you fix it (`chmod +x`, then commit).
+and your machines skip that hook until you fix it (`chmod +x`, then commit). A hook whose
+folder or script is a link, or holds one, is flagged the same way and skipped: what runs
+must be in the hook's own folder.
+
+Skills and subagents can declare hooks of their own in their frontmatter (a `hooks:`
+block), which run while that skill or subagent is in use. When that block is new or
+changes, the page lists it with the other hooks, as "Hooks in the skill pdf".
 
 ## Settings → Updates
 

@@ -657,11 +657,12 @@ impl Repo {
         Ok(Some(out.stdout))
     }
 
-    /// The files under folder `rel` in `commit`, as paths from the repo's top.
+    /// Every file under folder `rel` in `commit` with its tree mode (`100644`, `100755`,
+    /// `120000` for a link), as paths from the repo's top.
     ///
     /// # Errors
     /// `InvalidPath`, or git fails.
-    pub fn files_at(&self, commit: &str, rel: &str) -> Result<Vec<String>, GitError> {
+    pub fn tree_entries(&self, commit: &str, rel: &str) -> Result<Vec<(String, String)>, GitError> {
         check_oid(commit)?;
         check_rel(Path::new(rel))?;
         let out = self.git(
@@ -669,7 +670,6 @@ impl Repo {
                 os("ls-tree"),
                 os("-r"),
                 os("-z"),
-                os("--name-only"),
                 os("--full-tree"),
                 os(commit),
                 os("--"),
@@ -677,7 +677,12 @@ impl Repo {
             ],
             LOCAL_TIMEOUT,
         )?;
-        Ok(nul_split(&out.stdout).collect())
+        Ok(nul_split(&out.stdout)
+            .filter_map(|entry| {
+                let (meta, path) = entry.split_once('\t')?;
+                Some((meta.split(' ').next()?.to_owned(), path.to_owned()))
+            })
+            .collect())
     }
 
     /// The tree mode of the file at `rel` in `commit`, such as `100755` for an executable

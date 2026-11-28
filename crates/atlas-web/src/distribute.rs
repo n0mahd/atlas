@@ -479,10 +479,11 @@ pub(crate) async fn send_start(
         .filter(|src| previous.as_ref().and_then(|q| q.source(&src.id)) != Some(*src))
         .map(|src| release::label(&src.id))
         .collect();
-    let summary = if changed.is_empty() {
-        format!("Update {} · passkeys", p.number)
-    } else {
-        format!("Update {} · {}", p.number, changed.join(", "))
+    // What the tap signs, in things the owner can check: "Update 4 · 1 note changed".
+    let summary = match p.review.changed.summary() {
+        Some(counts) => format!("Update {} · {counts}", p.number),
+        None if changed.is_empty() => format!("Update {} · passkeys", p.number),
+        None => format!("Update {} · {}", p.number, changed.join(", ")),
     };
     let allow = w
         .signer
@@ -1752,12 +1753,7 @@ mod tests {
         let opts = hub.start("").await;
         assert!(opts["review"].is_null(), "no page: {opts}");
         assert!(opts["challenge"].is_string(), "{opts}");
-        assert!(
-            opts["summary"]
-                .as_str()
-                .unwrap()
-                .starts_with("Update 2 · Knowledge")
-        );
+        assert_eq!(opts["summary"], "Update 2 · 1 note changed");
         let (status, body) = hub.sign(opts["pending"].as_str().unwrap()).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         // The notice after sending names what else changed outside Atlas.
@@ -1972,6 +1968,150 @@ mod tests {
             page.contains("echo guard") && page.contains(r#"href="/">Not now"#),
             "{page}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_line_beside_the_tap_counts_what_changed() {
+        let hub = SendHub::new();
+        hub.send_all().await;
+        std::fs::write(hub.knowledge.join("AGENTS.md"), "# Rules, changed\n").unwrap();
+        for skill in ["a", "b"] {
+            let dir = hub.knowledge.join("skills").join(skill);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("SKILL.md"), format!("---\nname: {skill}\n---\n")).unwrap();
+        }
+        git(&hub.knowledge, &["add", "-A"]);
+        git(
+            &hub.knowledge,
+            &["commit", "-q", "-m", "Edit AGENTS.md in Atlas"],
+        );
+        let opts = hub.start("").await;
+        assert_eq!(opts["summary"], "Update 2 · AGENTS.md and 2 skills changed");
+    }
+
+    #[tokio::test]
+    async fn links_in_a_hook_folder_are_flagged() {
+        use std::os::unix::fs::symlink;
+        let hub = SendHub::new();
+        std::fs::create_dir_all(hub.knowledge.join("lib")).unwrap();
+        std::fs::write(hub.knowledge.join("lib/real.sh"), "echo real\n").unwrap();
+        add_hook(&hub.knowledge, "linked", "unused\n");
+        let script = hub.knowledge.join("hooks/linked/run.sh");
+        std::fs::remove_file(&script).unwrap();
+        symlink("../../lib/real.sh", &script).unwrap();
+        add_hook(&hub.knowledge, "helped", ". ./helper.sh\n");
+        symlink(
+            "../../lib/real.sh",
+            hub.knowledge.join("hooks/helped/helper.sh"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(hub.knowledge.join("elsewhere/far")).unwrap();
+        std::fs::write(hub.knowledge.join("elsewhere/far/hook.toml"), "x").unwrap();
+        symlink("../elsewhere/far", hub.knowledge.join("hooks/far")).unwrap();
+        git(&hub.knowledge, &["add", "-A"]);
+        git(&hub.knowledge, &["commit", "-q", "-m", "links"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        for text in [
+            "Its script is a link, so your machines will skip this hook.",
+            "Its folder holds a link (helper.sh), so your machines will skip this hook.",
+            "Its folder is a link (to ../elsewhere/far), so your machines will skip this hook.",
+            "A link to ../../lib/real.sh",
+        ] {
+            assert!(page.contains(text), "{text}: {page}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_linked_hooks_folder_is_flagged() {
+        use std::os::unix::fs::symlink;
+        let hub = SendHub::new();
+        hub.send_all().await;
+        std::fs::create_dir_all(hub.knowledge.join("stuff")).unwrap();
+        std::fs::write(hub.knowledge.join("stuff/x"), "x").unwrap();
+        symlink("stuff", hub.knowledge.join("hooks")).unwrap();
+        git(&hub.knowledge, &["add", "-A"]);
+        git(&hub.knowledge, &["commit", "-q", "-m", "link hooks"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(
+            page.contains("The hooks folder is a link, so your machines will skip every hook."),
+            "{page}"
+        );
+    }
+
+    const SKILL_HOOKS: &str = "---\nname: pdf\ndescription: Reads PDFs\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ./check.sh\n---\nRead PDFs.\n";
+
+    #[tokio::test]
+    async fn hooks_in_a_skill_or_subagent_get_a_look() {
+        let hub = SendHub::new();
+        let skill = hub.knowledge.join("skills/pdf");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: pdf\n---\nRead PDFs.\n").unwrap();
+        git(&hub.knowledge, &["add", "-A"]);
+        git(&hub.knowledge, &["commit", "-q", "-m", "pdf"]);
+        hub.send_all().await;
+
+        // A hooks block appears in the skill's frontmatter.
+        std::fs::write(skill.join("SKILL.md"), SKILL_HOOKS).unwrap();
+        git(&hub.knowledge, &["commit", "-q", "-am", "pdf hooks"]);
+        let opts = hub.start("").await;
+        let (id, page) = review_page(&hub, &opts).await;
+        assert!(page.contains("Hooks in the skill pdf"), "{page}");
+        assert!(page.contains("While the skill is in use"), "{page}");
+        assert!(page.contains("command: ./check.sh"), "{page}");
+        hub.start(&id).await;
+        let (status, _) = hub.sign(&id).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Its command changes: a diff.
+        std::fs::write(
+            skill.join("SKILL.md"),
+            SKILL_HOOKS.replace("./check.sh", "./other.sh"),
+        )
+        .unwrap();
+        git(&hub.knowledge, &["commit", "-q", "-am", "pdf other"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(
+            page.contains(r#"<span class="d-del">-          command: ./check.sh</span>"#),
+            "{page}"
+        );
+        assert!(
+            page.contains(r#"<span class="d-add">+          command: ./other.sh</span>"#),
+            "{page}"
+        );
+
+        // Prose changes only: no look.
+        let hub2 = SendHub::new();
+        let skill = hub2.knowledge.join("skills/pdf");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), SKILL_HOOKS).unwrap();
+        git(&hub2.knowledge, &["add", "-A"]);
+        git(&hub2.knowledge, &["commit", "-q", "-m", "pdf"]);
+        hub2.send_all().await;
+        std::fs::write(
+            skill.join("SKILL.md"),
+            SKILL_HOOKS.replace("Read PDFs.", "Read them."),
+        )
+        .unwrap();
+        git(&hub2.knowledge, &["commit", "-q", "-am", "prose"]);
+        let opts = hub2.start("").await;
+        assert!(opts["review"].is_null(), "{opts}");
+
+        // A subagent with hooks.
+        std::fs::create_dir_all(hub2.knowledge.join("agents")).unwrap();
+        std::fs::write(
+            hub2.knowledge.join("agents/reviewer.md"),
+            SKILL_HOOKS.replace("name: pdf", "name: reviewer"),
+        )
+        .unwrap();
+        git(&hub2.knowledge, &["add", "-A"]);
+        git(&hub2.knowledge, &["commit", "-q", "-m", "reviewer"]);
+        let opts = hub2.start("").await;
+        let (_, page) = review_page(&hub2, &opts).await;
+        assert!(page.contains("Hooks in the subagent reviewer"), "{page}");
+        assert!(page.contains("While the subagent is in use"), "{page}");
     }
 
     #[tokio::test]

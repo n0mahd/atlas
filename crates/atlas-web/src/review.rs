@@ -32,7 +32,34 @@ enum Kind {
 /// Things that run by themselves. An MCP server entry in `mcp.toml` joins here in phase 4.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Runs {
+    /// `hooks/<name>/…`, or `hooks/<name>` itself.
     Hook(String),
+    /// `hooks` itself (a link there would move every hook).
+    HooksFolder,
+}
+
+/// A file whose frontmatter may declare hooks the harness runs while it's in use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WithHooks {
+    Skill(String),
+    Subagent(String),
+}
+
+/// The skill or subagent file at `path`, if its frontmatter can carry hooks.
+fn with_hooks(source: &SourceId, path: &str) -> Option<WithHooks> {
+    let parts: Vec<&str> = path.split('/').collect();
+    match (source, parts.as_slice()) {
+        (SourceId::Knowledge, ["skills", name, "SKILL.md"])
+        | (SourceId::PublicSkills, [name, "SKILL.md"])
+            if !name.starts_with('.') =>
+        {
+            Some(WithHooks::Skill((*name).to_owned()))
+        }
+        (SourceId::Knowledge, ["agents", file]) => file
+            .strip_suffix(".md")
+            .map(|n| WithHooks::Subagent(n.to_owned())),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,7 +74,8 @@ enum Acted {
 fn classify(source: &SourceId, path: &str) -> Kind {
     let parts: Vec<&str> = path.split('/').collect();
     match (source, parts.as_slice()) {
-        (SourceId::Knowledge, ["hooks", name, _, ..]) => Kind::Runs(Runs::Hook((*name).to_owned())),
+        (SourceId::Knowledge, ["hooks"]) => Kind::Runs(Runs::HooksFolder),
+        (SourceId::Knowledge, ["hooks", name, ..]) => Kind::Runs(Runs::Hook((*name).to_owned())),
         (SourceId::Knowledge, ["skills", name, _, ..])
         | (SourceId::PublicSkills, [name, _, ..])
             if !name.starts_with('.') =>
@@ -87,6 +115,8 @@ pub(crate) struct HookFile {
 #[derive(Clone, Debug)]
 pub(crate) struct HookChange {
     pub name: String,
+    /// Hooks declared in a skill's or subagent's frontmatter: "in the skill writing".
+    pub place: String,
     pub new: bool,
     pub description: String,
     /// When it runs, in plain words.
@@ -99,6 +129,9 @@ pub(crate) struct HookChange {
     pub diff: Vec<DiffLine>,
     /// Its script isn't marked executable, so machines skip the hook.
     pub not_runnable: bool,
+    /// Set when its folder, its script or another file in it is a link: machines skip
+    /// such a hook, and this says why.
+    pub link: String,
 }
 
 /// Counts of the other things agents act on that changed.
@@ -147,6 +180,41 @@ impl Others {
         Some(format!("{list} changed {when}"))
     }
 
+    /// "1 note changed", "AGENTS.md and 2 skills changed": what an update carries, for the
+    /// line beside the passkey tap. None when nothing counted changed.
+    pub(crate) fn summary(&self) -> Option<String> {
+        let count = |f: fn(&Acted) -> bool| self.items.iter().filter(|a| f(a)).count();
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let mut parts: Vec<String> = self
+            .items
+            .iter()
+            .filter_map(|a| match a {
+                Acted::Instructions(p) => Some(p.clone()),
+                _ => None,
+            })
+            .collect();
+        for (n, one, many) in [
+            (count(|a| matches!(a, Acted::Note(_))), "note", "notes"),
+            (count(|a| matches!(a, Acted::Skill(_))), "skill", "skills"),
+            (
+                count(|a| matches!(a, Acted::Subagent(_))),
+                "subagent file",
+                "subagent files",
+            ),
+        ] {
+            if n > 0 {
+                parts.push(plural(n, one, many));
+            }
+        }
+        let list = match parts.as_slice() {
+            [] => return None,
+            [one] => one.clone(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        };
+        Some(format!("{list} changed"))
+    }
+
     /// What changed, one name per entry, for the expand.
     pub(crate) fn names(&self) -> Vec<String> {
         self.items
@@ -169,7 +237,10 @@ pub(crate) struct Review {
     pub keys: Vec<KeyChange>,
     /// First update only: every passkey the machines will trust (listed, not a change).
     pub trusted: Vec<String>,
+    /// What else changed outside Atlas (or since the last update), for the line on the page.
     pub others: Others,
+    /// Everything counted that changed, however it was made, for the line beside the tap.
+    pub changed: Others,
 }
 
 impl Review {
@@ -274,6 +345,11 @@ pub(crate) fn review(sources: &Sources, previous: Option<&Manifest>, next: &Mani
                 Kind::Runs(Runs::Hook(name)) => {
                     hooks.insert(name);
                 }
+                Kind::Runs(Runs::HooksFolder) => {
+                    if is_link(&repo, head, "hooks") {
+                        out.hooks.push(folder_link());
+                    }
+                }
                 Kind::Acted(a) => acted.push((a, c.path.clone())),
                 Kind::Other => {}
             }
@@ -283,8 +359,18 @@ pub(crate) fn review(sources: &Sources, previous: Option<&Manifest>, next: &Mani
                 out.hooks.push(h);
             }
         }
+        for c in &changed {
+            if let Some(owner) = with_hooks(&src.id, &c.path)
+                && let Some(h) = frontmatter_change(&repo, base.as_deref(), head, &c.path, &owner)
+            {
+                out.hooks.push(h);
+            }
+        }
         // The other things count only against an earlier update.
         let Some(base) = base else { continue };
+        out.changed
+            .items
+            .extend(acted.iter().map(|(a, _)| a.clone()));
         if let Some(paths) = outside_paths(&repo, &base, head) {
             acted.retain(|(_, p)| paths.contains(p));
         } else {
@@ -340,8 +426,20 @@ fn text_of(repo: &Repo, commit: &str, path: &str) -> (String, String) {
 /// hook: removing one needs no look.
 fn hook_change(repo: &Repo, base: Option<&str>, head: &str, name: &str) -> Option<HookChange> {
     let dir = format!("hooks/{name}");
+    if is_link(repo, head, &dir) {
+        let target = text_of(repo, head, &dir).0;
+        return Some(HookChange {
+            name: name.to_owned(),
+            new: true,
+            link: format!(
+                "Its folder is a link (to {target}), so your machines will skip this hook."
+            ),
+            ..HookChange::blank()
+        });
+    }
     let toml_path = format!("{dir}/hook.toml");
     let manifest_text = repo.file_at(head, &toml_path, SHOW_MAX).ok()??;
+    let entries = repo.tree_entries(head, &dir).unwrap_or_default();
     let had_hook = base.is_some_and(|b| {
         repo.file_at(b, &toml_path, SHOW_MAX)
             .ok()
@@ -365,36 +463,50 @@ fn hook_change(repo: &Repo, base: Option<&str>, head: &str, name: &str) -> Optio
             String::new(),
         ),
     };
+    let script = format!("{dir}/{run}");
+    let mode = |path: &str| {
+        entries
+            .iter()
+            .find(|(_, p)| p == path)
+            .map(|(m, _)| m.as_str())
+    };
+    let links: Vec<&str> = entries
+        .iter()
+        .filter(|(m, _)| m == LINK)
+        .map(|(_, p)| p.trim_start_matches(&format!("{dir}/")))
+        .collect();
+    let link = if mode(&script) == Some(LINK) {
+        "Its script is a link, so your machines will skip this hook.".to_owned()
+    } else if let Some(first) = links.first() {
+        format!("Its folder holds a link ({first}), so your machines will skip this hook.")
+    } else {
+        String::new()
+    };
     let mut change = HookChange {
         name: name.to_owned(),
         new: !had_hook,
         description,
         when: when_text,
         matcher,
-        files: Vec::new(),
-        diff: Vec::new(),
-        not_runnable: !run.is_empty()
-            && repo
-                .mode_at(head, &format!("{dir}/{run}"))
-                .ok()
-                .flatten()
-                .is_some_and(|mode| mode != "100755"),
+        not_runnable: !run.is_empty() && mode(&script).is_some_and(|m| m == "100644"),
+        link,
+        ..HookChange::blank()
     };
     if let (true, Some(base)) = (had_hook, base) {
         change.diff = parse_diff(&repo.diff(base, head, &dir).unwrap_or_default(), &dir);
         return Some(change);
     }
-    let mut files: Vec<String> = repo
-        .files_at(head, &dir)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|f| *f != toml_path)
-        .collect();
+    let mut files: Vec<&(String, String)> =
+        entries.iter().filter(|(_, f)| *f != toml_path).collect();
     // The script first.
-    let script = format!("{dir}/{run}");
-    files.sort_by_key(|f| (*f != script, f.clone()));
-    for path in files {
-        let (text, note) = text_of(repo, head, &path);
+    files.sort_by_key(|(_, f)| (*f != script, f.clone()));
+    for (mode, path) in files {
+        let (text, note) = text_of(repo, head, path);
+        let (text, note) = if mode == LINK {
+            (String::new(), format!("A link to {text}"))
+        } else {
+            (text, note)
+        };
         change.files.push(HookFile {
             name: path.trim_start_matches(&format!("{dir}/")).to_owned(),
             text,
@@ -409,6 +521,163 @@ fn hook_change(repo: &Repo, base: Option<&str>, head: &str, name: &str) -> Optio
         });
     }
     Some(change)
+}
+
+/// The tree mode of a symbolic link.
+const LINK: &str = "120000";
+
+fn is_link(repo: &Repo, commit: &str, path: &str) -> bool {
+    repo.mode_at(commit, path)
+        .ok()
+        .flatten()
+        .is_some_and(|m| m == LINK)
+}
+
+impl HookChange {
+    fn blank() -> Self {
+        Self {
+            name: String::new(),
+            place: String::new(),
+            new: false,
+            description: String::new(),
+            when: String::new(),
+            matcher: String::new(),
+            files: Vec::new(),
+            diff: Vec::new(),
+            not_runnable: false,
+            link: String::new(),
+        }
+    }
+}
+
+/// The whole `hooks` folder is a link: every hook would follow it.
+fn folder_link() -> HookChange {
+    HookChange {
+        name: "hooks".to_owned(),
+        new: true,
+        link: "The hooks folder is a link, so your machines will skip every hook.".to_owned(),
+        ..HookChange::blank()
+    }
+}
+
+/// The `hooks` block of a markdown file's frontmatter, as written (`hooks:` at the start
+/// of a line, with everything indented or listed under it). None without one.
+pub(crate) fn frontmatter_hooks(text: &str) -> Option<String> {
+    let (Some(fm), _) = atlas_core::catalog::split_frontmatter(text).ok()? else {
+        return None;
+    };
+    let mut block: Vec<&str> = Vec::new();
+    for line in fm.0.lines() {
+        if block.is_empty() {
+            let key = line.trim_start_matches(['"', '\'']);
+            if line == line.trim_start()
+                && key.starts_with("hooks")
+                && key["hooks".len()..]
+                    .trim_start_matches(['"', '\''])
+                    .trim_start()
+                    .starts_with(':')
+            {
+                block.push(line.trim_end());
+            }
+            continue;
+        }
+        let top_level =
+            !line.is_empty() && !line.starts_with([' ', '\t', '-', '#']) && line.trim() != "";
+        if top_level {
+            break;
+        }
+        block.push(line.trim_end());
+    }
+    while block.last().is_some_and(|l| l.trim().is_empty()) {
+        block.pop();
+    }
+    (!block.is_empty()).then(|| block.join("\n"))
+}
+
+/// Hooks a skill or subagent declares in its frontmatter that are new or changed.
+fn frontmatter_change(
+    repo: &Repo,
+    base: Option<&str>,
+    head: &str,
+    path: &str,
+    owner: &WithHooks,
+) -> Option<HookChange> {
+    let read = |commit: &str| {
+        let bytes = repo.file_at(commit, path, SHOW_MAX).ok()??;
+        frontmatter_hooks(&String::from_utf8(bytes).ok()?)
+    };
+    let now = read(head)?;
+    let before = base.and_then(read);
+    if before.as_deref() == Some(now.as_str()) {
+        return None;
+    }
+    let (name, place, when_text) = match owner {
+        WithHooks::Skill(n) => (n, format!("in the skill {n}"), "While the skill is in use"),
+        WithHooks::Subagent(n) => (
+            n,
+            format!("in the subagent {n}"),
+            "While the subagent is in use",
+        ),
+    };
+    let file = path.rsplit('/').next().unwrap_or(path).to_owned();
+    let mut change = HookChange {
+        name: name.clone(),
+        place,
+        new: before.is_none(),
+        when: when_text.to_owned(),
+        ..HookChange::blank()
+    };
+    match before {
+        None => change.files.push(HookFile {
+            name: file,
+            text: now,
+            note: String::new(),
+        }),
+        Some(old) => {
+            change.diff.push(DiffLine {
+                class: "file",
+                text: file,
+            });
+            change.diff.extend(line_diff(&old, &now));
+        }
+    }
+    Some(change)
+}
+
+/// A line-by-line diff of two short texts (longest common subsequence).
+fn line_diff(old: &str, new: &str) -> Vec<DiffLine> {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    let mut lcs = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            lcs[i][j] = if a[i] == b[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let line = |class, mark: char, text: &str| DiffLine {
+        class,
+        text: format!("{mark}{text}"),
+    };
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            out.push(line("ctx", ' ', a[i]));
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] >= lcs[i + 1][j]) {
+            out.push(line("add", '+', b[j]));
+            j += 1;
+        } else {
+            out.push(line("del", '-', a[i]));
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Turns `git diff` output into lines to show, file names relative to the hook's folder.
@@ -484,7 +753,11 @@ mod tests {
             classify(&k, "hooks/guard/hook.toml"),
             Kind::Runs(Runs::Hook("guard".into()))
         );
-        assert_eq!(classify(&k, "hooks/README.md"), Kind::Other);
+        assert_eq!(classify(&k, "hooks"), Kind::Runs(Runs::HooksFolder));
+        assert_eq!(
+            classify(&k, "hooks/linked"),
+            Kind::Runs(Runs::Hook("linked".into()))
+        );
         assert_eq!(
             classify(&k, "skills/pdf/SKILL.md"),
             Kind::Acted(Acted::Skill("pdf".into()))
@@ -535,6 +808,51 @@ mod tests {
         );
         assert!(o.names().contains(&"agents/reviewer.md".to_owned()));
         assert!(o.names().contains(&"pdf (skill)".to_owned()));
+    }
+
+    #[test]
+    fn frontmatter_hooks_are_read_as_written() {
+        let skill = "---\nname: pdf\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ./check.sh\ndescription: x\n---\nBody\nhooks: not this\n";
+        assert_eq!(
+            frontmatter_hooks(skill).unwrap(),
+            "hooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ./check.sh"
+        );
+        assert_eq!(
+            frontmatter_hooks("---\n\"hooks\": {Stop: []}\n---\n").unwrap(),
+            "\"hooks\": {Stop: []}"
+        );
+        assert_eq!(frontmatter_hooks("---\nname: a\n---\nhooks:\n  x\n"), None);
+        assert_eq!(frontmatter_hooks("---\nhooksy: 1\n---\n"), None);
+        assert_eq!(frontmatter_hooks("no frontmatter"), None);
+    }
+
+    #[test]
+    fn a_line_diff_marks_what_changed() {
+        let lines = line_diff("a\nb\nc", "a\nB\nc\nd");
+        let got: Vec<_> = lines.iter().map(|l| (l.class, l.text.as_str())).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("ctx", " a"),
+                ("add", "+B"),
+                ("del", "-b"),
+                ("ctx", " c"),
+                ("add", "+d"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_line_beside_the_tap_names_what_changed() {
+        let mut o = Others::default();
+        assert_eq!(o.summary(), None);
+        o.items.insert(Acted::Note("memory/a.md".into()));
+        assert_eq!(o.summary().unwrap(), "1 note changed");
+        o.items.insert(Acted::Instructions("AGENTS.md".into()));
+        o.items.insert(Acted::Skill("a".into()));
+        o.items.insert(Acted::Skill("b".into()));
+        o.items.remove(&Acted::Note("memory/a.md".into()));
+        assert_eq!(o.summary().unwrap(), "AGENTS.md and 2 skills changed");
     }
 
     #[test]
