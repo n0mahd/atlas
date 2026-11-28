@@ -376,3 +376,11 @@ Sessions were held only in memory, and the hub is redeployed often, so each rest
 for the passkey again. They are now saved to `<state>/sessions.json` (mode 0600), keyed by
 the SHA-256 of the cookie token so the file can't be replayed as a cookie, with wall-clock
 expiry. The 12-hour lifetime, cookie flags and CSRF are unchanged.
+
+## 0035 · 2026-11-27 · Scannable skill rows without descriptions
+Amends 0014 for the Skills page. Showing a truncated first line of description under every
+skill row caused reader fatigue when scanning a list. Collapsed skill rows now show only
+the name, any short flag (`Also global`, `Not in …`, `Broken link`), agent marks, and the
+chevron; the full description (or source path for skills outside Atlas) sits inside the
+inline drawer when expanded, and search still matches descriptions. Reading and attention
+are treated as currency across the UI (`documents/design.md`).

@@ -189,6 +189,7 @@ h2 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 15px; 
 details[open] > summary .chev::before { transform: rotate(45deg); }
 
 .drawer { margin: 0 0 8px 8px; padding: 8px 12px 10px; border-left: 2px solid var(--gilt-orn); background: var(--ground-deep); display: flex; flex-direction: column; gap: 8px; }
+.drawer-desc { margin: 0; font-size: 15px; color: var(--ink-soft); line-height: 1.4; }
 .drawer-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; }
 .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .chips.stacked { flex-direction: column; }
