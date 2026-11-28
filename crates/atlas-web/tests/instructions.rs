@@ -609,3 +609,25 @@ async fn a_confirmation_without_a_session_goes_to_sign_in() {
         "/signin?next=/instructions/shop/CLAUDE.md/to-agents"
     );
 }
+
+#[tokio::test]
+async fn turning_claudes_option_on_offers_to_send() {
+    let h = hub(&[
+        ("AGENTS.md", "# Shop\n"),
+        ("CLAUDE.md", "Run the tests.\n"),
+        (".gitignore", "CLAUDE.local.md\n"),
+    ]);
+    fs::write(h.project.join("CLAUDE.local.md"), "Mine.\n").unwrap();
+    let page = get(&h, "/instructions/shop/CLAUDE.md/to-agents").await;
+    assert!(page.body.contains("Also let Claude"), "{}", page.body);
+    assert!(
+        page.body.contains("data-send-on-save"),
+        "the option commits to the knowledge repo, which can be sent: {}",
+        page.body
+    );
+    // Without the offer the change stays in the project, so there is nothing to send.
+    fs::remove_file(h.project.join("CLAUDE.local.md")).unwrap();
+    let page = get(&h, "/instructions/shop/CLAUDE.md/to-agents").await;
+    assert!(!page.body.contains("Also let Claude"), "{}", page.body);
+    assert!(!page.body.contains("data-send-on-save"), "{}", page.body);
+}

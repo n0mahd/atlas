@@ -690,6 +690,9 @@ fn plan_to_agents(
                 "Make it AGENTS.md"
             }
             .to_owned(),
+            // Ticking the offer commits atlas/placements.toml in the knowledge repo, which
+            // Save may then send; `change::respond` asks only when that commit happened.
+            sends: !offer_claude.is_empty(),
             offer_claude,
             ..Confirm::default()
         },
