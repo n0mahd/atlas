@@ -58,7 +58,8 @@ skills work about to land):
    and restore on failure. One should remain.
 4. One concept, several homes: the SSH target check (`atlas-web` and `atlas-client`),
    eight temp-file-and-rename writers, the owner-key type and its converter, and the
-   session check that handlers call by hand instead of through an extractor.
+   session check (and, for sensitive actions, the grant check of decision 0037) that
+   handlers call by hand instead of through an extractor.
 5. `atlas-hub` has no tests (configuration, socket, first run), and the passkey
    ceremonies are tested only through the hub's pages.
 6. Planned protections the architecture page lists as not built: a content scanner,
@@ -67,13 +68,15 @@ skills work about to land):
 Then the standing items:
 - Reading trusts the `Tailscale-User-Login` header from `tailscale serve` (decision 0012);
   writes need a passkey (0016). Any process running as the hub's user can reach the socket.
-- Passkey ceremonies live in memory, so a hub restart in the middle of a sign-in means
-  starting it again. Sessions are kept on disk (decision 0034).
+- Passkey ceremonies, confirmation grants and a just-created CLI token waiting to be
+  shown live in memory, so a hub restart in the middle of one means starting it again.
+  Sessions are kept on disk (decision 0034) and name the passkey that opened them (0037).
 - Pages share one read of the store for 3 seconds (saves through Atlas clear it), so a
   change made outside Atlas can take that long to show. A file watcher would remove the
   delay if it ever matters.
 - The first-run window trusts any allowed Tailscale login while no passkey exists
-  (decision 0018); the local app's first-run wizard takes onboarding over in phase 3.
+  (decision 0018); finishing re-checks it (0037), and the local app's first-run wizard
+  takes onboarding over in phase 3.
 - Saving runs `git` in project repos the owner also works in by hand; a save refuses when
   the file has other uncommitted changes, but can't stop the owner committing meanwhile.
 - Links inside a repo are followed unless they point at a hidden file (`.env`, `.git`).
