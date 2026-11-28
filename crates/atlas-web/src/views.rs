@@ -31,7 +31,7 @@ pub const AGENTS: [HarnessKind; 8] = [
 ];
 
 /// Short names, as people say them.
-const fn short(kind: HarnessKind) -> &'static str {
+pub(crate) const fn short(kind: HarnessKind) -> &'static str {
     match kind {
         HarnessKind::ClaudeCode => "Claude",
         HarnessKind::Codex => "Codex",
@@ -46,7 +46,7 @@ const fn short(kind: HarnessKind) -> &'static str {
     }
 }
 
-fn join_names(kinds: &[HarnessKind]) -> String {
+pub(crate) fn join_names(kinds: &[HarnessKind]) -> String {
     let names: Vec<&str> = kinds.iter().map(|&k| short(k)).collect();
     match names.as_slice() {
         [] => String::new(),

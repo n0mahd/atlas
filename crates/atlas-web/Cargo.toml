@@ -12,6 +12,7 @@ askama.workspace = true
 atlas-core = { path = "../atlas-core" }
 atlas-fs = { path = "../atlas-fs" }
 atlas-git = { path = "../atlas-git" }
+atlas-harness = { path = "../atlas-harness" }
 atlas-signer = { path = "../atlas-signer" }
 atlas-verify = { path = "../atlas-verify" }
 sha2 = "0.10"
