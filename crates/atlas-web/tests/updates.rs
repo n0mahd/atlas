@@ -879,3 +879,25 @@ async fn an_execute_bit_change_is_an_update() {
         row(&page, "tool")
     );
 }
+
+/// A skill named `edit` links to its own update page.
+#[tokio::test]
+async fn a_skill_named_edit_links_to_its_update_page() {
+    let (api, _) = stand_in(Canned::default()).await;
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| {
+            write_skill(
+                &k.join("skills/edit"),
+                &[("SKILL.md", "---\nname: edit\n---\nEdit.\n", false)],
+            )
+        },
+    );
+    let (status, page) = hub.get("/skills/private/edit").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("href=\"/skills/private/edit/update\">Check for updates"),
+        "{page}"
+    );
+}

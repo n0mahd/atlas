@@ -377,6 +377,8 @@ struct SkillPage {
     files: library_pages::FileTree,
     /// Who gets the skill: the switches and "Use in…".
     p: skills_place::SkillPlace,
+    /// Its Check for updates page.
+    update_href: Option<String>,
 }
 
 #[derive(Template)]
@@ -614,7 +616,20 @@ async fn skill_detail(
         .then(|| format!("/skills/{home}/{name}/edit"));
     let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
     let p = skills_place::detail(&s, &snap, skill, &scope, &page).await?;
-    Ok(Html(SkillPage { page, v, files, p }.render()?))
+    let update_href = s
+        .writer
+        .is_some()
+        .then(|| format!("/skills/{home}/{name}/update"));
+    Ok(Html(
+        SkillPage {
+            page,
+            v,
+            files,
+            p,
+            update_href,
+        }
+        .render()?,
+    ))
 }
 
 async fn memory(
