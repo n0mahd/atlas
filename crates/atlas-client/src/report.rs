@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use atlas_core::distribution::{HarnessReport, InstalledSkill, InstructionLink};
+use atlas_core::distribution::{
+    HarnessReport, InstalledSkill, InstructionLink, OutsideKind, OutsideSkill,
+};
 use atlas_core::kernel::HarnessKind;
 use atlas_fs::Sources;
 use atlas_harness::hooks::managed_name;
@@ -108,4 +110,85 @@ pub fn harnesses(home: &Path, sources_dir: &Path) -> Vec<HarnessReport> {
             }
         })
         .collect()
+}
+
+/// At most this many outside skills are reported (and fingerprinted) per pass.
+pub const MAX_OUTSIDE: usize = 300;
+
+/// The skills in every agent's home skill folders that aren't links into `managed` (Atlas's
+/// copies and adopted folders): own folders with their digest, links elsewhere, broken
+/// links. Hidden entries are skipped; links are read, never followed to write anything.
+#[must_use]
+pub fn outside(home: &Path, managed: &[std::path::PathBuf]) -> Vec<OutsideSkill> {
+    let managed: Vec<std::path::PathBuf> = managed
+        .iter()
+        .filter_map(|r| fs::canonicalize(r).ok())
+        .collect();
+    let mut dirs: Vec<&str> = atlas_harness::layouts()
+        .iter()
+        .flat_map(|l| l.skill_dirs.iter().copied())
+        .collect();
+    dirs.sort_unstable();
+    dirs.dedup();
+    let mut out = Vec::new();
+    'dirs: for dir in dirs {
+        let dir = home.join(dir);
+        if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| !n.starts_with('.'))
+            .take(MAX_OUTSIDE * 4)
+            .collect();
+        names.sort();
+        for name in names {
+            if out.len() >= MAX_OUTSIDE {
+                break 'dirs;
+            }
+            let path = dir.join(&name);
+            let Ok(meta) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            let shown = crate::display(home, &path);
+            let item = if meta.file_type().is_symlink() {
+                let target = fs::read_link(&path).ok().map(|t| crate::display(home, &t));
+                match fs::canonicalize(&path) {
+                    Err(_) => OutsideSkill {
+                        name,
+                        path: shown,
+                        kind: OutsideKind::Broken,
+                        target,
+                        digest: None,
+                    },
+                    Ok(resolved) if managed.iter().any(|r| resolved.starts_with(r)) => continue,
+                    Ok(resolved) => OutsideSkill {
+                        name,
+                        path: shown,
+                        kind: OutsideKind::Link,
+                        target,
+                        digest: atlas_fs::library::read_tree(&resolved)
+                            .ok()
+                            .and_then(|t| t.exact_digest()),
+                    },
+                }
+            } else if meta.is_dir() {
+                OutsideSkill {
+                    name,
+                    path: shown,
+                    kind: OutsideKind::Folder,
+                    target: None,
+                    digest: crate::tree::exact(&path).map(|(_, d)| d),
+                }
+            } else {
+                continue;
+            };
+            out.push(item);
+        }
+    }
+    out
 }

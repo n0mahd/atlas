@@ -109,11 +109,14 @@ pub fn run(
         },
     }
 
+    let mut managed = vec![paths.sources.clone()];
+    managed.extend(config.adopt_roots(&paths.home));
     let report = Report {
         release: next.last_applied,
         at: now,
         harnesses: report::harnesses(&paths.home, &paths.sources),
         problems: problems.clone(),
+        outside: report::outside(&paths.home, &managed),
     };
     Pass {
         lines,
