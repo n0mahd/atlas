@@ -12,6 +12,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use tower::ServiceExt;
 
+mod common;
+
 const ORIGIN: &str = "https://hub.test";
 const LOGIN: &str = "owner@github";
 const COOKIE: &str = "__Host-atlas";
@@ -82,6 +84,11 @@ const SHOP_LOCK: &str = r#"{
 "#;
 
 fn hub() -> Hub {
+    hub_with(false)
+}
+
+/// `applied`: the hub's own machine has applied an update with everything saved.
+fn hub_with(applied: bool) -> Hub {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let knowledge = home.join("Knowledge");
@@ -141,6 +148,9 @@ fn hub() -> Hub {
             root: shop.clone(),
         }],
     };
+    if applied {
+        common::applied_update(&home.join("state"), &knowledge, ORIGIN, "test-hub");
+    }
     let writer = Writer::open(
         ORIGIN,
         &home.join("state"),
@@ -852,6 +862,74 @@ async fn the_list_groups_marks_conflicts_and_filters_what_needs_attention() {
     let searched = get(&hub, "/skills?q=keep&attention=1").await;
     assert!(searched.body.contains("keep"));
     assert!(!searched.body.contains("value=\"private/pdf\""));
+}
+
+/// Links Knowledge's `name` into Claude Code's skills folder, as atlasd would, and makes
+/// Codex's folder, so both agents are set up on the hub's machine.
+fn claude_has(hub: &Hub, name: &str) {
+    fs::create_dir_all(hub.home.join(".codex/skills")).unwrap();
+    fs::create_dir_all(hub.home.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(
+        hub.knowledge.join("skills").join(name),
+        hub.home.join(".claude/skills").join(name),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn nothing_is_flagged_missing_before_an_update_reaches_this_machine() {
+    let hub = hub();
+    claude_has(&hub, "pdf");
+    let list = get(&hub, "/skills").await;
+    assert_eq!(list.status, StatusCode::OK);
+    // Codex lacks a, b, c and keep only because nothing has been sent yet.
+    assert!(!list.body.contains("No agent has it"), "{}", list.body);
+    assert!(!list.body.contains("Not in "), "{}", list.body);
+    let attention = get(&hub, "/skills?attention=1").await;
+    assert!(
+        !attention.body.contains("value=\"private/a\""),
+        "{}",
+        attention.body
+    );
+    let home = get(&hub, "/").await;
+    // This Knowledge has no remote, so Home says so and offers no Send that would fail.
+    assert!(
+        home.body
+            .contains("get updates until Knowledge has a remote"),
+        "{}",
+        home.body
+    );
+    assert!(
+        !home.body.contains(r#"data-action="send""#),
+        "{}",
+        home.body
+    );
+    assert!(!home.body.contains("Claude can"), "{}", home.body);
+}
+
+#[tokio::test]
+async fn once_applied_only_what_the_owner_asked_for_and_is_missing_is_flagged() {
+    let hub = hub_with(true);
+    claude_has(&hub, "pdf");
+    let list = get(&hub, "/skills").await;
+    assert_eq!(list.status, StatusCode::OK);
+    // a is wanted by every agent and none has it.
+    assert!(list.body.contains("No agent has it"), "{}", list.body);
+    // pdf is off for Codex, so Codex lacking it is what the owner asked for.
+    assert!(!list.body.contains("Not in Codex"), "{}", list.body);
+    let attention = get(&hub, "/skills?attention=1").await;
+    assert!(attention.body.contains("private/a"), "{}", attention.body);
+    assert!(
+        !attention.body.contains("private/pdf"),
+        "{}",
+        attention.body
+    );
+    let home = get(&hub, "/").await;
+    assert!(
+        !home.body.contains("Nothing has been sent"),
+        "{}",
+        home.body
+    );
 }
 
 #[tokio::test]

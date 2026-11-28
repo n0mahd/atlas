@@ -521,7 +521,7 @@ async fn only_these_projects_round_trips() {
     );
     let (_, _, list) = send(&hub, get(&hub, &location, true)).await;
     assert!(list.contains("Now used only in the projects you chose"));
-    assert!(list.contains(r#"<span class="row-meta place-badge">2 projects</span>"#));
+    assert!(list.contains(" · used in 2 projects</span>"));
     let (_, _, page) = send(&hub, get(&hub, "/skills/private/pdf-tools", true)).await;
     assert!(page.contains(r#"name="use" value="only" checked"#));
     assert!(page.contains(r#"name="projects" value="shop" checked"#));

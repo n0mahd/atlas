@@ -229,7 +229,8 @@ struct SignInPage {
     next: String,
     /// The Tailscale login on first run.
     login: String,
-    minutes_left: u64,
+    /// How long the first-run window stays open, as "11 h 56 min".
+    time_left: String,
     /// The setup link's token.
     token: String,
 }
@@ -294,7 +295,7 @@ async fn render_signin(
             mode,
             next,
             login: login(headers),
-            minutes_left: w.first_run_minutes_left(),
+            time_left: hours_minutes(w.first_run_minutes_left()),
             token,
         }
         .render()?,
@@ -1182,8 +1183,25 @@ pub(crate) async fn save_instructions(
     save(&s, &headers, item, f).await
 }
 
+/// Minutes as people read them: "45 min", "2 h", "11 h 56 min".
+#[must_use]
+pub fn hours_minutes(minutes: u64) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn minutes_read_as_hours_and_minutes() {
+        assert_eq!(super::hours_minutes(716), "11 h 56 min");
+        assert_eq!(super::hours_minutes(120), "2 h");
+        assert_eq!(super::hours_minutes(1), "1 min");
+    }
+
     use std::fs;
     use std::path::Path;
     use std::process::Command;

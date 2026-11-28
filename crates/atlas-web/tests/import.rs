@@ -296,6 +296,47 @@ async fn a_skill_is_copied_and_committed_without_the_links_inside() {
 }
 
 #[tokio::test]
+async fn home_skills_and_tidy_count_outside_atlas_the_same_way() {
+    let hub = hub();
+    // A tool's skill, linked into Claude's folder: listed, never offered.
+    write(
+        &hub.home.join(".local/share/toolbox/skills/tool/SKILL.md"),
+        "---\ndescription: t\n---\nT\n",
+    );
+    symlink(
+        hub.home.join(".local/share/toolbox/skills/tool"),
+        hub.home.join(".claude/skills/tool"),
+    )
+    .unwrap();
+    // own can come in and diff can be compared; same is already in Atlas; the shop's
+    // .claude/skills folder is the one project item.
+    let offer = "2 skills on this machine aren't in Atlas; 1 project skill could be tidier.";
+    let home = get(&hub, "/").await;
+    assert!(home.contains(offer), "{home}");
+    let skills = get(&hub, "/skills").await;
+    assert!(skills.contains(offer), "{skills}");
+    let head = r#"<h2>Outside Atlas</h2><span class="count">2</span>"#;
+    assert!(skills.contains(head), "{skills}");
+    let outside =
+        &skills[skills.find(r#"id="outside""#).unwrap()..skills.find(r#"id="built-in""#).unwrap()];
+    assert!(
+        outside.contains(">own<") && outside.contains(">diff<"),
+        "{outside}"
+    );
+    assert!(
+        !outside.contains(">same<") && !outside.contains(">tool<"),
+        "{outside}"
+    );
+    let folded = &skills[skills.find(r#"id="built-in""#).unwrap()..];
+    assert!(
+        folded.contains(">same<") && folded.contains(">tool<"),
+        "{folded}"
+    );
+    let tidy = get(&hub, "/skills/tidy").await;
+    assert!(tidy.contains(head), "{tidy}");
+}
+
+#[tokio::test]
 async fn a_clash_with_an_identical_skill_copies_nothing() {
     let hub = hub();
     let before = commits(&hub.knowledge);
@@ -473,7 +514,7 @@ async fn left_outside_is_recorded_and_not_offered_again() {
     );
     let page = get(&hub, "/skills").await;
     assert!(!page.contains(r#"value="skill:~/.claude/skills/own""#));
-    assert!(page.contains("1 you chose to leave outside"));
+    assert!(page.contains("1 more you chose to leave outside"));
 }
 
 #[tokio::test]

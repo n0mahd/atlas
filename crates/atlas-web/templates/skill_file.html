@@ -10,7 +10,7 @@
   <aside class="aside">
     <dl class="facts">
       <dt>Skill</dt><dd><a href="{{ skill_href }}">{{ skill }}</a></dd>
-      <dt>File</dt><dd class="mono">{{ shown }}</dd>
+      <dt>File</dt><dd class="mono">{{ crate::views::breakable(shown)|safe }}</dd>
     </dl>
     <button class="button-plain copy" type="button" data-copy="{{ shown }}" hidden>Copy path</button>
     <a class="link-cap" href="{{ skill_href }}">Back to the skill</a>

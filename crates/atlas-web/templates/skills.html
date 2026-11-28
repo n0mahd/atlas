@@ -16,7 +16,6 @@
     {% endif %}
   </span>
 </form>
-{% if page.signed_in %}{% include "updates_button.html" %}{% endif %}
 
 {% if v.select && page.signed_in %}
 <form id="bulk" class="bulk-bar" method="post" action="/skills/bulk" data-send-on-save aria-label="Change the chosen skills">
@@ -39,12 +38,12 @@
 {% endif %}
 
 <div id="results" class="sections">
-  {% if outside.tidy > 0 %}<p class="marginalia tidy-offer">{% if outside.tidy == 1 %}One thing{% else %}{{ outside.tidy }} things{% endif %} about your skills could be tidier. <a class="link-cap" href="/skills/tidy">Tidy up</a></p>{% endif %}
+  {% if let Some(t) = outside.tidy %}<p class="marginalia tidy-offer">{{ t }} <a class="link-cap" href="/skills/tidy">Tidy up</a></p>{% endif %}
   {% for s in v.sections %}
   <section class="section" id="{{ s.id }}">
     <div class="section-head">
-      <span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2><span class="count">{{ s.shown() }}</span>
-      {% if page.signed_in && s.in_atlas() && s.shown() > 0 %}
+      <span class="num" aria-hidden="true">{{ s.num }}</span><h2>{{ s.title }}</h2><span class="count">{{ s.shown() }}</span>
+      {% if page.signed_in && s.in_atlas() && s.shown() > 0 && s.groups.is_empty() %}
       <form class="switches" method="post" action="/skills/bulk" data-send-on-save>
         <input type="hidden" name="csrf" value="{{ page.csrf }}">
         <input type="hidden" name="back" value="{{ v.back }}">
@@ -78,6 +77,12 @@
           <span class="warn-note switches-error" data-error hidden role="alert"></span>
         </form>
         {% endif %}
+        {% if page.signed_in %}
+        <form class="switches" method="post" action="/skills/updates/check">
+          <input type="hidden" name="csrf" value="{{ page.csrf }}">
+          <button class="mini" type="submit" title="Checking asks GitHub once per source, without signing in." aria-describedby="check-why">Check for updates</button>
+        </form>
+        {% endif %}
       </div>
       <ul class="rows">
         {% for r in g.rows %}{% include "skill_row.html" %}{% endfor %}
@@ -89,4 +94,5 @@
   {% endfor %}
   {% include "outside_skills.html" %}
 </div>
+{% if page.signed_in %}<p class="sr" id="check-why">Checking asks GitHub once per source, without signing in.</p>{% endif %}
 {% endblock %}

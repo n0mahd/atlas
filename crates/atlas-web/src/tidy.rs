@@ -72,17 +72,29 @@ impl TidyView {
     }
 }
 
-/// How many things Tidy up would offer to fix (switched-off skills are the owner's choice,
-/// so they don't count towards the offer).
+/// Tidy up's offer, the same line on Home and the Skills page, or None when there is
+/// nothing to do. Its first count is the Outside Atlas sections' ([`import::actionable`]);
+/// the second counts project copies of Global skills and folders only Claude-style agents
+/// read (switched-off skills are the owner's choice, so they don't count).
 #[must_use]
-pub(crate) fn count(snap: &Snapshot) -> usize {
+pub(crate) fn offer(snap: &Snapshot) -> Option<String> {
     let o = &snap.outside;
-    o.skills
-        .iter()
-        .filter(|s| !s.kept && s.origin.importable() && s.clash.as_ref().is_none_or(|c| !c.same))
-        .count()
-        + o.duplicates.len()
-        + o.claude_only.iter().filter(|c| !c.taken).count()
+    let outside = import::outside_count(snap);
+    let projects = o.duplicates.len() + o.claude_only.iter().filter(|c| !c.taken).count();
+    let outside_words = match outside {
+        1 => "1 skill on this machine isn't in Atlas".to_owned(),
+        n => format!("{n} skills on this machine aren't in Atlas"),
+    };
+    let project_words = match projects {
+        1 => "1 project skill could be tidier".to_owned(),
+        n => format!("{n} project skills could be tidier"),
+    };
+    match (outside, projects) {
+        (0, 0) => None,
+        (_, 0) => Some(format!("{outside_words}.")),
+        (0, _) => Some(format!("{project_words}.")),
+        _ => Some(format!("{outside_words}; {project_words}.")),
+    }
 }
 
 #[must_use]
@@ -91,7 +103,7 @@ pub(crate) fn view(snap: &Snapshot) -> TidyView {
     let outside: Vec<OutsideChoice> = o
         .skills
         .iter()
-        .filter(|s| !s.kept && s.blocked().is_none() && s.clash.is_none())
+        .filter(|s| import::actionable(s) && s.clash.is_none())
         .enumerate()
         .map(|(i, s)| OutsideChoice {
             field: format!("r{i}"),
@@ -104,7 +116,7 @@ pub(crate) fn view(snap: &Snapshot) -> TidyView {
     let differs: Vec<(String, String)> = o
         .skills
         .iter()
-        .filter(|s| !s.kept && s.blocked().is_none() && s.clash.as_ref().is_some_and(|c| !c.same))
+        .filter(|s| import::actionable(s) && s.clash.is_some())
         .map(|s| {
             (
                 s.name.clone(),

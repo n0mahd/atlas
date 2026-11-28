@@ -6,7 +6,7 @@
   <p class="signin-lede">Signed in to Tailscale as <b>{{ login }}</b>. Create the passkey that guards changes to this hub.</p>
   <label class="field"><span>Name this passkey</span><input class="search" name="name" placeholder="Laptop, phone, security key…" maxlength="60"></label>
   <button class="button-ink" type="button" data-action="enrol">Create passkey</button>
-  <p class="editor-note">Open for {{ minutes_left }} more minute{% if minutes_left != 1 %}s{% endif %}. After that, run <span class="mono">atlas-hub setup</span> on the hub for a link.</p>
+  <p class="editor-note">Open for {{ time_left }}. After that, run <span class="mono">atlas-hub setup</span> on the hub for a link.</p>
   {% when SignInMode::Closed %}
   <p class="signin-lede">This hub has no passkey yet, and its first-run window has closed.</p>
   <p>On the hub, run:</p>

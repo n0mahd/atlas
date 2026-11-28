@@ -13,6 +13,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
 
+mod common;
+
 const ORIGIN: &str = "https://hub.test";
 const LOGIN: &str = "owner@github";
 
@@ -58,6 +60,11 @@ struct Hub {
 const GLOBAL: &str = "# Global\n\nBe brief.\n";
 
 fn hub(project_files: &[(&str, &str)]) -> Hub {
+    hub_with(project_files, false)
+}
+
+/// `applied`: the hub's own machine has applied an update with everything saved.
+fn hub_with(project_files: &[(&str, &str)], applied: bool) -> Hub {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let knowledge = home.join("Knowledge");
@@ -82,6 +89,9 @@ fn hub(project_files: &[(&str, &str)]) -> Hub {
             root: project.clone(),
         }],
     };
+    if applied {
+        common::applied_update(&home.join("state"), &knowledge, ORIGIN, "test-hub");
+    }
     let writer = Writer::open(ORIGIN, &home.join("state"), std::time::Duration::ZERO).unwrap();
     let (cookie, csrf) = writer.test_session();
     let app = router(
@@ -197,11 +207,11 @@ async fn pages_show_who_reads_each_file() {
     assert!(list.body.contains("Agents' own files"), "{}", list.body);
     assert!(list.body.contains("/instructions/global/codex/use-global"));
     assert!(
-        list.body.contains("Not read by Codex"),
-        "Codex has its own file: {}",
+        !list.body.contains("Not read by"),
+        "nothing has been sent yet: {}",
         list.body
     );
-    assert!(list.body.contains("Claude reads a project"));
+    assert!(list.body.contains("Claude Code reads a project"));
     assert!(!list.body.contains(" style=\""));
 
     let project = get(&h, "/instructions?scope=shop").await;
@@ -247,6 +257,17 @@ async fn pages_show_who_reads_each_file() {
     assert_eq!(
         get(&h, "/instructions/shop/README.md").await.status,
         StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn once_applied_an_agent_that_skips_global_is_flagged() {
+    let h = hub_with(&[("AGENTS.md", "# Shop agents\n")], true);
+    let list = get(&h, "/instructions").await;
+    assert!(
+        list.body.contains("Not read by Codex"),
+        "Codex has its own file: {}",
+        list.body
     );
 }
 

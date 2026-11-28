@@ -8,14 +8,15 @@
   <div class="sections">
     {% if !v.outside.is_empty() || !v.differs.is_empty() %}
     <section class="section">
-      <div class="section-head"><span class="num">I</span><h2>Outside Atlas</h2><span class="count">{{ v.outside.len() + v.differs.len() }}</span></div>
-      <p class="marginalia">Brought in, a skill is copied to Global and committed; atlasd then swaps each exact copy on your machines for Atlas's link.</p>
+      <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>Outside Atlas</h2><span class="count">{{ v.outside.len() + v.differs.len() }}</span>
+        <details class="info"><summary aria-label="What bringing in does">i</summary><p id="bring-why">Brought in, a skill is copied into Global. Each machine then puts Atlas's copy in place of the old folder (the files are identical) and the old folder is removed.</p></details>
+      </div>
       <ul class="rows">
         {% for o in v.outside %}
         <li><fieldset class="row static choice-row">
           <legend class="row-main"><span class="row-name">{{ o.name }}</span><span class="row-desc mono">{{ o.source }}</span></legend>
           <span class="choices">
-            <label class="tab"><input type="radio" name="{{ o.field }}" value="bring:{{ o.key }}" checked><span>Bring in</span></label>
+            <label class="tab"><input type="radio" name="{{ o.field }}" value="bring:{{ o.key }}" checked aria-describedby="bring-why"><span>Bring in</span></label>
             <label class="tab"><input type="radio" name="{{ o.field }}" value="leave:{{ o.key }}"><span>Leave outside</span></label>
             <label class="tab"><input type="radio" name="{{ o.field }}" value=""><span>Later</span></label>
           </span>
@@ -31,7 +32,7 @@
 
     {% for p in v.projects %}
     <section class="section">
-      <div class="section-head"><span class="num">{{ p.num }}</span><h2>{{ p.name }}</h2></div>
+      <div class="section-head"><span class="num" aria-hidden="true">{{ p.num }}</span><h2>{{ p.name }}</h2></div>
       <ul class="rows">
         {% for c in p.duplicates %}
         <li><div class="row static choice-row">
@@ -56,7 +57,7 @@
   <div class="tidy-bar">
     {% if page.signed_in %}
     <button class="button-ink" type="submit">Tidy up</button>
-    <span class="editor-note">Nothing changes until you press it. Each repo gets one commit, which git can undo.</span>
+    <span class="editor-note">You can undo this.</span>
     {% else if page.can_sign_in %}
     <a class="link-cap" href="/signin?next=/skills/tidy">Sign in to tidy up</a>
     {% endif %}

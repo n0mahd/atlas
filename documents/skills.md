@@ -123,6 +123,11 @@ Global instead** (below). The Skills page also has **Tidy up** (`/skills/tidy`),
 note at the top of the page and by Home's notice when there is something to do. The owner's
 rule: after an import the original is gone and agents read Atlas's copy.
 
+- **Outside Atlas lists only what the owner can act on** (`import::actionable`: not left
+  outside, not a tool's or broken, and not an exact copy Atlas already has). The rest is
+  folded under **Built in and others** with the agents' own and plugins' skills. Home's
+  notice and the Skills page's Tidy up offer are one sentence (`tidy::offer`) whose first
+  count is that section's, so Home, Skills and the Tidy page agree.
 - **What is outside** comes from `atlas_fs::outside::scan`, run with every snapshot: the
   login's harness skill folders, the built-in and plugin skills, the hooks the harness scan
   found and Claude Code's per-repo memory. Its rules are pure functions of paths

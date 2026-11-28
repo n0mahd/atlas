@@ -172,11 +172,15 @@ impl AppState {
                 projects: atlas_fs::scan_projects(&sources),
                 library,
                 outside,
+                delivered: false,
             }
         })
         .await
-        .map(Arc::new)
         .map_err(|_| AppError::Internal)?;
+        let snap = Arc::new(Snapshot {
+            delivered: distribute::delivered(self).await,
+            ..snap
+        });
         let instructions = instructions_manage::FactsSlot::default();
         *slot = Some(Cached {
             at: std::time::Instant::now(),
@@ -425,6 +429,8 @@ struct OverviewPage {
     v: views::Overview,
     /// "3 changes aren't on your machines yet", when some are waiting.
     waiting: Option<String>,
+    /// Send can deliver something (offered only then).
+    can_send: bool,
 }
 
 #[derive(Template)]
@@ -444,8 +450,10 @@ struct SkillPage {
     files: library_pages::FileTree,
     /// Who gets the skill: the switches and "Use in…".
     p: skills_place::SkillPlace,
-    /// Its Check for updates page.
+    /// Its Check for updates page, for a skill installed from GitHub.
     update_href: Option<String>,
+    /// Where this machine's agents differ from the switches (`machine_differs`).
+    differs: Vec<String>,
 }
 
 #[derive(Template)]
@@ -627,12 +635,15 @@ async fn overview(
     let mut page = s.page(&headers, "/", "Home", &snap, &Scope::Global, false);
     page.totals = format!("Hub · {}", page.hub);
     q.apply(&mut page);
-    let waiting = distribute::waiting(&s).await.and_then(|w| w.text());
+    let waiting = distribute::waiting(&s).await;
+    let can_send = waiting.as_ref().is_some_and(distribute::Waiting::sendable);
+    let waiting = waiting.and_then(|w| w.text());
     Ok(Html(
         OverviewPage {
             page,
             v: views::overview(&snap),
             waiting,
+            can_send,
         }
         .render()?,
     ))
@@ -692,10 +703,14 @@ async fn skill_detail(
         .then(|| format!("/skills/{home}/{name}/edit"));
     let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
     let p = skills_place::detail(&s, &snap, skill, &scope, &page);
-    let update_href = s
-        .writer
-        .is_some()
-        .then(|| format!("/skills/{home}/{name}/update"));
+    // Only a skill installed from GitHub has anything to check.
+    let update_href = (s.writer.is_some()
+        && snap
+            .library
+            .source(&skill.home, skill.name.as_str())
+            .is_some())
+    .then(|| format!("/skills/{home}/{name}/update"));
+    let differs = skills_place::machine_differs(&p.switches, &v.agents, snap.delivered);
     Ok(Html(
         SkillPage {
             page,
@@ -703,6 +718,7 @@ async fn skill_detail(
             files,
             p,
             update_href,
+            differs,
         }
         .render()?,
     ))
@@ -719,7 +735,7 @@ async fn memory(
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
     q.apply(&mut page);
-    let outside = import::memory_outside(&snap, &scope);
+    let outside = import::memory_outside(&snap, &scope, &s.sources.home);
     Ok(Html(MemoryPage { page, v, outside }.render()?))
 }
 

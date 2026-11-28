@@ -2,7 +2,7 @@
 {% block content %}
 <div class="sections">
   <section class="section">
-    <div class="section-head"><span class="num">I</span><h2>In Atlas</h2><span class="count">{{ v.atlas.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>In Atlas</h2><span class="count">{{ v.atlas.len() }}</span></div>
     {% if v.atlas.is_empty() %}
     <details class="row help">
       <summary><span class="row-main"><span class="row-name">No hooks in Atlas yet</span><span class="row-desc">How to add one</span></span><span class="chev" aria-hidden="true"></span></summary>
@@ -22,18 +22,19 @@ harnesses = ["claude-code"]</pre>
       <li>
         <details class="row">
           <summary>
-            <span class="row-main"><span class="row-name">{{ h.name }}</span><span class="row-desc">{{ h.description }}</span></span>
-            <span class="row-meta">{{ h.event }}</span>
+            <span class="row-main"><span class="row-name">{{ h.name }}</span></span>
             {% if !h.ok %}<span class="row-flag">Script missing</span>{% endif %}
             <span class="chev" aria-hidden="true"></span>
           </summary>
           <div class="drawer">
+            {% if !h.description.is_empty() %}<p class="drawer-desc">{{ h.description }}</p>{% endif %}
             <dl class="facts">
+              <dt>When</dt><dd>{{ h.event }}</dd>
               <dt>Scope</dt><dd>{{ h.scope_label }}</dd>
               <dt>Tools</dt><dd>{{ h.matcher }}</dd>
               <dt>Runs</dt><dd class="mono">{{ h.run }} · {{ h.timeout }}</dd>
               <dt>Agents</dt><dd>{{ h.harnesses }}</dd>
-              <dt>File</dt><dd class="mono">{{ h.path }}</dd>
+              <dt>File</dt><dd class="mono">{{ crate::views::breakable(h.path)|safe }}</dd>
             </dl>
           </div>
         </details>

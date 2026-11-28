@@ -3,7 +3,9 @@
   {% if p.switches.is_empty() %}
   <p class="place-none">No agent set up on this machine reads skill folders.</p>
   {% else %}
-  {# Turning every agent off may ask first with a page of its own (which sends), so that post is a plain one. #}
+  {# Turning every agent off may ask first with a page of its own (which sends), so that post is a plain one.
+     B1, owner choice: on the Skills list this switch sits on the collapsed row (skill_row.html), so the drawer leaves it out. #}
+  {% if p.back != "list" %}
   <form method="post" action="{{ p.action }}/agents" class="place-form place-all"{% if p.send && !p.all_on %} data-send-on-save{% endif %}>
     <input type="hidden" name="csrf" value="{{ page.csrf }}">
     <input type="hidden" name="agent" value="all">
@@ -16,6 +18,7 @@
       <span class="toggle-state">{{ p.summary }}</span>
     </button>
   </form>
+  {% endif %}
   <ul class="toggles">
     {% for a in p.switches %}
     <li class="toggle-item{% if a.locked.is_some() %} locked{% endif %}">
@@ -25,11 +28,11 @@
         <input type="hidden" name="on" value="{% if a.on %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="{{ p.back }}">
         <input type="hidden" name="scope" value="{{ p.scope }}">
-        <button type="submit" class="toggle" role="switch" aria-checked="{{ a.on }}" aria-label="{{ a.name }} uses {{ p.name }}"{% if a.locked.is_some() %} disabled aria-describedby="why-{{ p.dom }}-{{ a.id }}"{% else if !p.can_change() %} disabled{% endif %}>
+        <button type="submit" class="toggle" role="switch" aria-checked="{{ a.on }}" aria-label="{{ a.name }} uses {{ p.name }}"{% if let Some(why) = a.locked %} disabled title="{{ why }}" aria-describedby="why-{{ p.dom }}-{{ a.id }}"{% else if !p.can_change() %} disabled{% endif %}>
           {{ a.icon|safe }}<span class="toggle-label">{{ a.name }}</span><span class="switch-track" aria-hidden="true"></span>
         </button>
       </form>
-      {% if let Some(why) = a.locked %}<p class="toggle-why" id="why-{{ p.dom }}-{{ a.id }}">{{ why }}</p>{% endif %}
+      {% if let Some(why) = a.locked %}<span class="sr" id="why-{{ p.dom }}-{{ a.id }}">{{ why }}</span><details class="info"><summary aria-label="Why {{ a.name }} can't be turned off">i</summary><p>{{ why }}</p></details>{% endif %}
       {% if let Some(note) = a.note %}<p class="toggle-why warn">{{ note }}</p>{% endif %}
     </li>
     {% endfor %}

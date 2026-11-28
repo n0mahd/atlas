@@ -1,6 +1,6 @@
 {# Outside Atlas part of the Hooks page (import::hooks_outside). Commands are shown masked. #}
 <section class="section" id="outside">
-  <div class="section-head"><span class="num">II</span><h2>Outside Atlas</h2><span class="count">{{ outside.rows.len() }}</span>
+  <div class="section-head"><span class="num" aria-hidden="true">II</span><h2>Outside Atlas</h2><span class="count">{{ outside.rows.len() }}</span>
     {% if page.signed_in && outside.importable > 1 %}
     <form class="head-action" method="post" action="/import/hooks" data-send-on-save>
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
@@ -23,10 +23,10 @@
           <span class="chev" aria-hidden="true"></span>
         </summary>
         <div class="drawer">
-          <span class="mono muted">{{ f.config }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span>
+          <span class="mono muted">{{ crate::views::breakable(f.config)|safe }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span>
           {% if f.importable %}
           <pre class="ink-block">{{ f.command }}</pre>
-          <p class="drawer-note">Atlas keeps it as <span class="mono">hooks/&lt;name&gt;/</span> with this command as its script, for {{ f.harness }} only. Hooks run commands, so it reaches your machines only in an update you sign; then atlasd's entry takes this one's place.</p>
+          <p class="drawer-note">Brought in, it runs for {{ f.harness }} only, from an update you sign; Atlas's copy then takes this one's place.</p>
           {% endif %}
           {% if page.signed_in %}
           <div class="row-actions">

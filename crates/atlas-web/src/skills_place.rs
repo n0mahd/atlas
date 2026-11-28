@@ -551,6 +551,47 @@ pub(crate) fn detail(
     )
 }
 
+/// Where this machine's agents differ from the switches, in words ("missing for Pi and
+/// Codex", "Grok still has it"). Empty until this machine has applied everything the owner
+/// saved (`delivered`): before that every difference only means "not sent yet".
+#[must_use]
+pub fn machine_differs(
+    switches: &[Switch],
+    agents: &[views::AgentState],
+    delivered: bool,
+) -> Vec<String> {
+    if !delivered {
+        return Vec::new();
+    }
+    let mut missing = Vec::new();
+    let mut extra = Vec::new();
+    for sw in switches {
+        let Some(a) = agents.iter().find(|a| a.name == sw.name) else {
+            continue;
+        };
+        match (sw.on, a.class) {
+            (true, "warn") => missing.push(a.name),
+            (false, "ok") => extra.push(a.name),
+            _ => {}
+        }
+    }
+    let and = |names: &[&str]| match names {
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => String::new(),
+    };
+    let mut out = Vec::new();
+    if !missing.is_empty() {
+        out.push(format!("missing for {}", and(&missing)));
+    }
+    match extra.as_slice() {
+        [] => {}
+        [one] => out.push(format!("{one} still has it")),
+        many => out.push(format!("{} still have it", and(many))),
+    }
+    out
+}
+
 /// The flash line after a change, from the redirect's own validated parameters (never
 /// free text from the address).
 #[must_use]
@@ -993,6 +1034,7 @@ mod tests {
         use atlas_core::catalog::Catalog;
         use atlas_core::distribution::HarnessView;
         Snapshot {
+            delivered: false,
             catalog: Catalog::default(),
             harnesses: kinds
                 .iter()

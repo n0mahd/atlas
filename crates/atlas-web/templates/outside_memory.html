@@ -1,7 +1,7 @@
 {# Outside Atlas part of the Memory page: Claude Code's own per-repo notes (import::memory_outside). #}
 {% if !outside.groups.is_empty() || !outside.stray.is_empty() %}
 <section class="section" id="outside">
-  <div class="section-head"><span class="num">§</span><h2>Outside Atlas</h2><span class="count">{{ outside.new }}</span>
+  <div class="section-head"><span class="num" aria-hidden="true">§</span><h2>Outside Atlas</h2><span class="count">{{ outside.new }}</span>
     {% if page.signed_in && outside.new > 0 %}
     <form class="head-action" method="post" action="/import/notes" data-send-on-save>
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
@@ -9,10 +9,10 @@
       <button class="button-plain button-small" type="submit">Bring all in</button>
     </form>
     {% endif %}
+    <details class="info"><summary aria-label="About these notes">i</summary><p>Claude Code keeps these notes beside each project. Once Atlas has every one, Claude Code's new notes go straight into Atlas.</p></details>
   </div>
-  <p class="marginalia">Claude Code keeps these notes beside each repo. Once Atlas has every one, atlasd links Claude Code's folder to <span class="mono">memory/projects/&lt;project&gt;</span>, so new notes go straight to git.</p>
   {% for g in outside.groups %}
-  <h3 class="sub-head">{{ g.project }} <span class="mono muted">{{ g.folder }}</span></h3>
+  <h3 class="sub-head">{{ g.project }} <span class="mono muted">{{ crate::views::breakable(g.folder)|safe }}</span></h3>
   {% if let Some(p) = g.problem %}<p class="marginalia warn-note">{{ p }}</p>{% endif %}
   <ul class="rows">
     {% for n in g.rows %}
@@ -42,11 +42,10 @@
   </ul>
   {% endfor %}
   {% if !outside.stray.is_empty() %}
-  <h3 class="sub-head">Repos Atlas doesn't know</h3>
-  <p class="marginalia">Register the repo as a project to bring these in.</p>
+  <h3 class="sub-head">Projects Atlas doesn't know <details class="info"><summary aria-label="How to bring these in">i</summary><p>Add the project to Atlas to bring these in.</p></details></h3>
   <ul class="rows">
-    {% for (key, n) in outside.stray %}
-    <li><div class="row static"><span class="row-main"><span class="row-name mono-name">{{ key }}</span></span><span class="row-meta">{{ n }} {% if *n == 1 %}note{% else %}notes{% endif %}</span></div></li>
+    {% for (name, key, n) in outside.stray %}
+    <li><div class="row static" title="{{ key }}"><span class="row-main"><span class="row-name mono-name">{{ name }}</span></span><span class="row-meta">{{ n }} {% if *n == 1 %}note{% else %}notes{% endif %}</span></div></li>
     {% endfor %}
   </ul>
   {% endif %}
