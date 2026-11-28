@@ -5,7 +5,6 @@
     <summary>
       <span class="row-main">
         <span class="row-name">{{ r.name }}</span>
-        {% if v.attention && !r.reasons.is_empty() %}<span class="row-desc warn">{{ r.reasons|join("; ") }}</span>{% else %}<span class="row-desc">{{ r.description }}</span>{% endif %}
       </span>
       {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
       {% if let Some(p) = place_row %}{% if let Some(b) = p.badge %}<span class="row-meta place-badge">{{ b }}</span>{% endif %}{% endif %}
@@ -15,6 +14,7 @@
       <span class="chev" aria-hidden="true"></span>
     </summary>
     <div class="drawer">
+      {% if !r.description.is_empty() %}<p class="drawer-desc">{{ r.description }}</p>{% endif %}
       {% if !r.reasons.is_empty() %}<ul class="reasons">{% for why in r.reasons %}<li>{{ why }}</li>{% endfor %}</ul>{% endif %}
       {% if let Some(p) = place_row %}
       {% include "skill_place.html" %}
@@ -24,7 +24,7 @@
       </ul>
       {% endif %}
       <div class="drawer-foot">
-        {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files > 0 %} · {{ r.files }} more files{% endif %}</span>{% endif %}
+        {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files == 1 %} · 1 more file{% else if r.files > 1 %} · {{ r.files }} more files{% endif %}</span>{% endif %}
         <span class="drawer-links">
           {% if let Some(href) = r.href %}<a class="link-cap" href="{{ href }}">Read the skill</a>{% endif %}
           {% if page.signed_in && !r.home.is_empty() && r.home != "public" %}<a class="link-cap warn" href="/skills/confirm?action=delete&amp;s={{ r.home }}%2F{{ r.name }}&amp;back={{ v.back_enc }}">Delete…</a>{% endif %}

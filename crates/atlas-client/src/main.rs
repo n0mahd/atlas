@@ -89,15 +89,23 @@ fn home() -> Result<PathBuf, String> {
         .ok_or_else(|| "HOME isn't set to an absolute path".to_owned())
 }
 
+/// This machine's short name. Linux keeps it in a file; macOS has neither file, so ask
+/// `hostname -s` and lowercase it (`MacBook-Air` is `macbook-air` on the tailnet).
 fn hostname() -> String {
     ["/proc/sys/kernel/hostname", "/etc/hostname"]
         .iter()
-        .find_map(|f| {
-            std::fs::read_to_string(f)
+        .find_map(|f| std::fs::read_to_string(f).ok())
+        .or_else(|| {
+            std::process::Command::new("hostname")
+                .arg("-s")
+                .output()
                 .ok()
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.to_lowercase())
         })
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".to_owned())
 }
 

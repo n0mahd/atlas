@@ -103,6 +103,15 @@ for arch in x86_64 aarch64; do
 done
 ```
 
+For Macs, build on a Mac (Apple silicon shown; use `x86_64` for Intel) and copy the
+result to the hub. atlasd links Apple's Security framework, so it can't be cross-built
+from Linux:
+
+```sh
+cargo build --release -p atlas-client
+scp target/release/atlasd <hub>:.local/state/atlas-hub/dist/atlasd-macos-aarch64
+```
+
 `~/.local/state/atlas-hub` is the hub's state folder (`state_dir` in the config changes
 it). You only need the builds for the CPUs you use. Repeat this when atlasd changes;
 machines get the new build the next time you install it on them.

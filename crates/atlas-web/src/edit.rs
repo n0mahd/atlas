@@ -109,7 +109,7 @@ impl Writer {
             .unwrap_or_default();
         Ok(Self {
             signer,
-            auth: Auth::new(),
+            auth: Auth::open(state_dir),
             origin: url.origin().ascii_serialization(),
             settings_path,
             settings: Mutex::new(settings),

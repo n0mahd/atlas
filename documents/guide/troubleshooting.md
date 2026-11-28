@@ -73,6 +73,14 @@ journalctl --user -u atlasd -n 50           # what did the last runs say?
 atlasd run --dry-run                        # run once now, changing nothing
 ```
 
+On macOS:
+
+```sh
+launchctl print gui/$(id -u)/atlasd | grep -E 'state|last exit'   # is the agent loaded?
+tail -n 50 ~/Library/Logs/atlasd.log                               # what did the last runs say?
+~/.local/bin/atlasd run --dry-run
+```
+
 If the timer is inactive:
 
 ```sh

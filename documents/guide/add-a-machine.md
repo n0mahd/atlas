@@ -6,7 +6,7 @@ you run agents there.
 
 ## Before you start
 
-- The machine runs Linux (x86_64 or ARM) with systemd. macOS isn't supported yet.
+- The machine runs Linux (x86_64 or ARM) with systemd, or macOS (Apple silicon or Intel).
 - It is on your tailnet, signed in to Tailscale as a login the hub allows.
 - It has `git`, and can fetch your knowledge repo from its remote (for a private GitHub
   repo, an SSH key or credentials that work for `git clone`).
@@ -61,8 +61,9 @@ account's `~/.ssh/authorized_keys`.
 4. Pairs it with the hub, using the one-time code. The machine gets its own token.
 5. If `~/Knowledge` or `~/Skills` exist, lets atlasd take over the skill links an older
    setup made into them.
-6. Installs a systemd user timer that runs atlasd every 10 minutes, and turns on
-   "linger" so it keeps running when you're logged out.
+6. Runs atlasd every 10 minutes. On Linux that's a systemd user timer, with "linger"
+   turned on so it keeps running when you're logged out. On macOS it's a launchd agent,
+   `~/Library/LaunchAgents/atlasd.plist`, logging to `~/Library/Logs/atlasd.log`.
 
 atlasd runs as your account. It never asks for root.
 
@@ -73,6 +74,8 @@ See what atlasd would change, without changing anything:
 ```sh
 atlasd run --dry-run
 ```
+
+(On macOS `~/.local/bin` usually isn't on your `PATH`; run `~/.local/bin/atlasd` instead.)
 
 Before you've sent your first update it says the hub has no signed release yet. That's
 fine: send one from **Settings → Updates** ([editing and updates](editing-and-updates.md)).
@@ -93,6 +96,13 @@ wait for the next 10-minute run.
    systemctl --user disable --now atlasd.timer
    rm ~/.config/systemd/user/atlasd.{service,timer} ~/.local/bin/atlasd
    rm -r ~/.config/atlas ~/.local/state/atlas-client
+   ```
+
+   On macOS, replace the first two lines with:
+
+   ```sh
+   launchctl bootout gui/$(id -u)/atlasd
+   rm ~/Library/LaunchAgents/atlasd.plist ~/.local/bin/atlasd
    ```
 
 The skill links atlasd made point into `~/.local/share/atlas/sources`. Delete that folder
