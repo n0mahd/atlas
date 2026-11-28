@@ -12,7 +12,7 @@
   </div>
   <p class="marginalia">Claude Code keeps these notes beside each repo. Once Atlas has every one, atlasd links Claude Code's folder to <span class="mono">memory/projects/&lt;project&gt;</span>, so new notes go straight to git.</p>
   {% for g in outside.groups %}
-  <h3 class="sub-head">{{ g.project }} <span class="mono muted">{{ g.folder }}</span></h3>
+  <h3 class="sub-head">{{ g.project }} <span class="mono muted">{{ crate::views::breakable(g.folder)|safe }}</span></h3>
   {% if let Some(p) = g.problem %}<p class="marginalia warn-note">{{ p }}</p>{% endif %}
   <ul class="rows">
     {% for n in g.rows %}

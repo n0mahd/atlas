@@ -8,7 +8,7 @@
   <aside class="aside">
     <dl class="facts">
       <dt>Lives in</dt><dd>{{ v.lives_in }}</dd>
-      <dt>File</dt><dd class="mono">{{ v.path }}</dd>
+      <dt>File</dt><dd class="mono">{{ crate::views::breakable(v.path)|safe }}</dd>
       {% if let Some(d) = v.declared_name %}<dt>Named</dt><dd class="warn">“{{ d }}” in its frontmatter</dd>{% endif %}
     </dl>
     <h2 class="aside-head">Who gets it</h2>

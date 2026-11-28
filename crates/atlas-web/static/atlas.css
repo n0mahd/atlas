@@ -251,7 +251,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .aside-head { margin-top: 6px; font-size: 13px; }
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 15px; }
 .facts dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
-.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts dd { margin: 0; overflow-wrap: break-word; }
 .list-plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
 .ink-block { background: #16181D; color: #ECEAE3; margin: 0; padding: 10px 12px; box-shadow: inset 0 0 0 1px var(--gilt-orn); font-family: var(--mono); font-size: 12.5px; line-height: 1.55; overflow-x: auto; white-space: pre; }
 .ink-block.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -399,7 +399,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .tidy-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 18px; }
 
 .compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 8px; }
-.compare-label { margin: 0 0 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.compare-label { margin: 0 0 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: break-word; }
 .compare .ink-block { max-height: 28em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 #outside .row-flag { white-space: normal; flex: 0 1 auto; min-width: 0; }
@@ -438,7 +438,14 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .toggle-all .toggle-label { font-family: var(--display); font-weight: 700; font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; }
 .toggles { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .toggle-item { display: flex; flex-direction: column; gap: 3px; max-width: 100%; }
-.toggle-item.locked { flex-basis: 100%; }
+.toggle-item.locked { flex-direction: row; align-items: center; }
+/* B1, owner choice: the all-agents switch on a collapsed Skills row, laid over a slot the
+   summary keeps free so the row itself stays one link to its drawer. */
+.rows > li.has-switch { position: relative; }
+.row-switch-slot { flex: none; width: 40px; }
+.rows > li:not(.has-switch) .row-switch-slot { display: none; }
+.row-switch { position: absolute; top: 5px; right: 34px; height: 36px; display: flex; align-items: center; margin: 0; }
+.toggle-row { min-height: 28px; padding: 4px; border-color: transparent; background: none; }
 .toggle-why { margin: 0; padding-left: 10px; border-left: 2px solid var(--gilt-orn); font-size: 14px; font-style: italic; color: var(--ink-soft); }
 .toggle-why.warn { border-left-color: var(--oxblood); color: var(--oxblood); }
 
@@ -465,6 +472,8 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 @media (max-width: 720px) {
   .toggle-all { width: 100%; flex-wrap: wrap; }
   .toggle-item { flex: 1 1 calc(50% - 6px); }
+  .rows > li.has-switch .row > summary .row-main { flex-basis: calc(100% - 82px); }
+  .row > summary .row-switch-slot { order: 1; }
   .toggle-item .toggle { width: 100%; }
   .toggle-item .switch-track { margin-left: auto; }
   .use-in { align-self: stretch; }
@@ -478,7 +487,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .update-file { display: flex; flex-direction: column; gap: 6px; }
 .update-file.clash { padding-left: 10px; border-left: 3px solid var(--oxblood); }
 .update-file-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding-bottom: 3px; border-bottom: 1px solid var(--hair); }
-.update-path { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.update-path { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; font-size: 13px; }
 .update-choice { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; border: 0; }
 .update-choice label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
 .diff { max-height: 60vh; overflow: auto; }
@@ -562,7 +571,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .new-skill .editor-actions { margin-top: 4px; }
 
 .file-tree { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-family: var(--mono); font-size: 12px; }
-.file-tree a { text-decoration: none; overflow-wrap: anywhere; }
+.file-tree a { text-decoration: none; overflow-wrap: break-word; }
 .file-tree a:hover { text-decoration: underline; }
 .file-tree .row-flag { font-size: 10.5px; }
 .skill-menu { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }

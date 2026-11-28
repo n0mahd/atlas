@@ -1,16 +1,14 @@
-<li{% if v.select && page.signed_in && !r.home.is_empty() %} class="pick"{% endif %}>
+{% let place_row = place.row(r.href.as_deref()) %}
+<li class="{% if v.select && page.signed_in && !r.home.is_empty() %}pick {% endif %}{% if let Some(p) = place_row %}{% if !p.switches.is_empty() %}has-switch{% endif %}{% endif %}">
   {% if v.select && page.signed_in && !r.home.is_empty() %}<input class="pick-box" type="checkbox" form="bulk" name="s" value="{{ r.key() }}" id="pick-{{ r.home }}-{{ r.name }}"><label class="sr" for="pick-{{ r.home }}-{{ r.name }}">Choose {{ r.name }}</label>{% endif %}
-  {% let place_row = place.row(r.href.as_deref()) %}
   <details class="row"{% if place.is_open(r.href.as_deref()) %} open{% endif %}>
     <summary>
       <span class="row-main">
         <span class="row-name">{{ r.name }}</span>
       </span>
-      {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
-      {% if let Some(p) = place_row %}{% if let Some(b) = p.badge %}<span class="row-meta place-badge">{{ b }}</span>{% endif %}{% endif %}
-      {% if r.conflict %}<span class="row-flag">Conflict</span>{% endif %}
-      {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
+      {% if r.conflict %}<span class="row-flag">Conflict</span>{% else if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% else if !r.reasons.is_empty() %}<span class="row-flag">Needs a look</span>{% endif %}
       <span class="marks{% if r.all %} all{% endif %}">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
+      <span class="row-switch-slot" aria-hidden="true"></span>
       <span class="chev" aria-hidden="true"></span>
     </summary>
     <div class="drawer">
@@ -24,7 +22,7 @@
       </ul>
       {% endif %}
       <div class="drawer-foot">
-        {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files == 1 %} · 1 more file{% else if r.files > 1 %} · {{ r.files }} more files{% endif %}</span>{% endif %}
+        <span class="mono muted">{% if !r.path.is_empty() %}{{ crate::views::breakable(r.path)|safe }}{% if r.files == 1 %} · 1 more file{% else if r.files > 1 %} · {{ r.files }} more files{% endif %}{% endif %}{% if r.also_global %} · also global{% endif %}{% if let Some(p) = place_row %}{% if let Some(b) = p.badge %} · used in {{ b|lower }}{% endif %}{% endif %}</span>
         <span class="drawer-links">
           {% if let Some(href) = r.href %}<a class="link-cap" href="{{ href }}">Read the skill</a>{% endif %}
           {% if page.signed_in && !r.home.is_empty() && r.home != "public" %}<a class="link-cap warn" href="/skills/confirm?action=delete&amp;s={{ r.home }}%2F{{ r.name }}&amp;back={{ v.back_enc }}">Delete…</a>{% endif %}
@@ -32,4 +30,15 @@
       </div>
     </div>
   </details>
+  {% if let Some(p) = place_row %}{% if !p.switches.is_empty() %}
+  {# B1, owner choice: one all-agents switch on the collapsed row (per-agent switches stay in the drawer). Revert: drop this form, the row-switch-slot span above, `has-switch`, and show the drawer's "All agents" switch on the list again (skill_place.html). #}
+  <form method="post" action="{{ p.action }}/agents" class="row-switch place-form"{% if p.send && !p.all_on %} data-send-on-save{% endif %}>
+    <input type="hidden" name="csrf" value="{{ page.csrf }}">
+    <input type="hidden" name="agent" value="all">
+    <input type="hidden" name="on" value="{% if p.all_on %}0{% else %}1{% endif %}">
+    <input type="hidden" name="back" value="{{ p.back }}">
+    <input type="hidden" name="scope" value="{{ p.scope }}">
+    <button type="submit" class="toggle toggle-row" role="switch" aria-checked="{{ p.all_on }}" aria-label="Every agent uses {{ p.name }}" title="{{ p.summary }}"{% if !p.can_change() %} disabled{% endif %}{% if p.focus %} autofocus{% endif %}><span class="switch-track" aria-hidden="true"></span></button>
+  </form>
+  {% endif %}{% endif %}
 </li>

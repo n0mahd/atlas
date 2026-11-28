@@ -30,6 +30,25 @@ pub struct Snapshot {
     pub delivered: bool,
 }
 
+/// A path as HTML that wraps only after a `/` (a `<wbr>` there), so a long path never breaks
+/// inside a file name on a phone. Escaped here; templates mark the result `|safe`.
+#[must_use]
+pub fn breakable(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 16);
+    for c in path.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            '/' => out.push_str("/<wbr>"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Short names, as people say them.
 pub(crate) const fn short(kind: HarnessKind) -> &'static str {
     match kind {

@@ -23,10 +23,10 @@
           <span class="chev" aria-hidden="true"></span>
         </summary>
         <div class="drawer">
-          <span class="mono muted">{{ f.config }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span>
+          <span class="mono muted">{{ crate::views::breakable(f.config)|safe }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span>
           {% if f.importable %}
           <pre class="ink-block">{{ f.command }}</pre>
-          <p class="drawer-note">Atlas keeps it as <span class="mono">hooks/&lt;name&gt;/</span> with this command as its script, for {{ f.harness }} only. Hooks run commands, so it reaches your machines only in an update you sign; then atlasd's entry takes this one's place.</p>
+          <p class="drawer-note">Brought in, it runs for {{ f.harness }} only, from an update you sign; Atlas's copy then takes this one's place.</p>
           {% endif %}
           {% if page.signed_in %}
           <div class="row-actions">

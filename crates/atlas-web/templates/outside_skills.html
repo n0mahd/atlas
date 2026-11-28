@@ -76,7 +76,7 @@
           <div class="drawer">
             <p class="drawer-desc"{% if !b.source_title.is_empty() %} title="{{ b.source_title }}"{% endif %}>{{ b.source }}</p>
             {% if b.state == "same" %}<p class="drawer-note">Atlas has the same skill; each machine puts Atlas's copy in its place with the next update.</p>{% endif %}
-            {% if b.state.is_empty() %}<span class="mono muted">{{ b.path }}</span>{% endif %}
+            {% if b.state.is_empty() %}<span class="mono muted">{{ crate::views::breakable(b.path)|safe }}</span>{% endif %}
             {% if page.signed_in && b.state == "blocked" %}
             <form class="inline-form" method="post" action="/import/keep" data-send-on-save>
               <input type="hidden" name="csrf" value="{{ page.csrf }}">

@@ -251,6 +251,7 @@ async fn machines_lists_amp_and_muse_but_not_herdr() {
     assert!(body.contains("Not set up here: Claude, Codex, OpenCode, Pi, Antigravity, Grok."));
     assert!(!body.contains("Herdr"), "Herdr runs agents; it is not one");
     let (_, _, hooks) = get(&app, "/hooks", Some(OWNER)).await;
+    let hooks = hooks.replace("<wbr>", "");
     assert!(hooks.contains("done.sh") && hooks.contains(".config/muse/settings.json"));
 }
 
@@ -267,5 +268,6 @@ async fn machines_lists_grok_build_with_its_hooks_folder() {
     assert!(body.contains("agent-name\">Grok<"), "Grok row missing");
     assert!(body.contains("1 hook"), "Grok's hooks folder not read");
     let (_, _, hooks) = get(&app, "/hooks", Some(OWNER)).await;
+    let hooks = hooks.replace("<wbr>", "");
     assert!(hooks.contains("grok-done.sh") && hooks.contains(".grok/hooks"));
 }

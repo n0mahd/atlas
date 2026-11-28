@@ -16,7 +16,7 @@
   <ol class="update-files">
     {% for f in files %}
     <li class="update-file{% if f.clash %} clash{% endif %}">
-      <div class="update-file-head"><span class="mono update-path">{{ f.path }}</span><span class="row-meta">{{ f.change }}</span><span class="{% if f.clash %}row-flag{% else %}row-meta{% endif %}">{{ f.fate }}</span></div>
+      <div class="update-file-head"><span class="mono update-path">{{ crate::views::breakable(f.path)|safe }}</span><span class="row-meta">{{ f.change }}</span><span class="{% if f.clash %}row-flag{% else %}row-meta{% endif %}">{{ f.fate }}</span></div>
       {% if f.clash %}
       <fieldset class="update-choice">
         <legend class="sr">Choose for {{ f.path }}</legend>

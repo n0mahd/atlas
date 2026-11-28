@@ -25,7 +25,7 @@
     <li><a class="row" href="{{ n.href }}"><span class="row-main"><span class="row-name plain">{{ n.text }}</span></span><span class="link-cap">{{ n.action }}</span></a></li>
     {% endfor %}
     {% for p in v.problems %}
-    <li><div class="row static"><span class="row-main"><span class="row-name plain">{{ p.message }}</span><span class="row-desc mono">{{ p.path }}</span></span></div></li>
+    <li><div class="row static"><span class="row-main"><span class="row-name plain">{{ p.message }}</span><span class="row-desc mono">{{ crate::views::breakable(p.path)|safe }}</span></span></div></li>
     {% endfor %}
   </ul>
   <p class="marginalia warn-note" data-error hidden role="alert"></p>

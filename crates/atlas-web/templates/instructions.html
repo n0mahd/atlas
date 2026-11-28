@@ -13,9 +13,8 @@
         <a class="row" href="{{ r.href }}">
           <span class="row-main">
             <span class="row-name">{{ r.name }}</span>
-            {% if !r.flag.is_empty() %}<span class="row-desc warn">{{ r.flag }}</span>{% endif %}
           </span>
-          <span class="row-meta">{{ r.lines }} lines</span>
+          {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
           <span class="marks">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
           <span class="chev right" aria-hidden="true"></span>
         </a>
@@ -34,12 +33,11 @@
     <ul class="rows">
       {% for o in v.own %}
       <li>
-        <a class="row" href="{{ o.href }}">
+        <a class="row" href="{{ o.href }}" title="{{ o.shown }}">
           <span class="row-main">
-            <span class="row-name">{{ o.agent }} <span class="mono muted">{{ o.shown }}</span></span>
-            <span class="row-desc warn">{{ o.note }}</span>
+            <span class="row-name">{{ o.agent }}</span>
           </span>
-          <span class="row-meta">{{ o.lines }} lines</span>
+          <span class="row-flag">{{ o.note }}</span>
           <span class="marks"><span class="mark" role="img" aria-label="{{ o.agent }}" title="{{ o.agent }}">{{ o.icon|safe }}</span></span>
           <span class="instr-go link-cap">Use Global instead</span>
         </a>

@@ -66,7 +66,7 @@
     {% endif %}
     <form method="post" action="/settings/tokens" class="setting-row">
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
-      <span class="row-main"><span class="row-name">Create a CLI token</span><span class="row-desc">Lets <code>atlasd machines</code> on a workstation list, add (over its own SSH), and remove machines.</span></span>
+      <span class="row-main"><span class="row-name">Create a CLI token</span><span class="row-desc">Lets another computer add and remove machines from its terminal.</span></span>
       <label class="field grow"><span class="sr">Name the CLI token</span><input class="search" name="name" placeholder="Name this workstation" required maxlength="60" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <button class="button-plain" type="submit">Create token</button>
     </form>
