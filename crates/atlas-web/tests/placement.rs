@@ -136,7 +136,7 @@ async fn hub_with(agents: &[&str], extra: usize) -> Hub {
     };
     let (_, _, page) = send(&hub, get(&hub, "/skills", true)).await;
     let at = page.find(r#"name="atlas-csrf" content=""#).unwrap() + 27;
-    hub.csrf = page[at..at + 64].to_owned();
+    page[at..at + 64].clone_into(&mut hub.csrf);
     hub
 }
 
