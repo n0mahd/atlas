@@ -892,9 +892,17 @@ async fn nothing_is_flagged_missing_before_an_update_reaches_this_machine() {
         attention.body
     );
     let home = get(&hub, "/").await;
+    // This Knowledge has no remote, so Home says so and offers no Send that would fail.
     assert!(
         home.body
-            .contains("Nothing has been sent to your machines yet")
+            .contains("get updates until Knowledge has a remote"),
+        "{}",
+        home.body
+    );
+    assert!(
+        !home.body.contains(r#"data-action="send""#),
+        "{}",
+        home.body
     );
     assert!(!home.body.contains("Claude can"), "{}", home.body);
 }

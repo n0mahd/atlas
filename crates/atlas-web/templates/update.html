@@ -12,7 +12,6 @@
   <input type="hidden" name="csrf" value="{{ page.csrf }}">
   <input type="hidden" name="local" value="{{ local_pin }}">
   <input type="hidden" name="upstream" value="{{ upstream_pin }}">
-  <p class="marginalia">Nothing is written until you press Update. {{ lock_note }}</p>
   <ol class="update-files">
     {% for f in files %}
     <li class="update-file{% if f.clash %} clash{% endif %}">
@@ -21,8 +20,8 @@
       <fieldset class="update-choice">
         <legend class="sr">Choose for {{ f.path }}</legend>
         <input type="hidden" name="p{{ f.n }}" value="{{ f.path }}">
-        <label><input type="radio" name="c{{ f.n }}" value="mine" required> Keep mine</label>
-        <label><input type="radio" name="c{{ f.n }}" value="theirs" required> Take theirs</label>
+        <label><input type="radio" name="c{{ f.n }}" value="mine" required> Keep my edits</label>
+        <label><input type="radio" name="c{{ f.n }}" value="theirs" required> Use the new version</label>
       </fieldset>
       {% endif %}
       {% if !f.note.is_empty() %}<p class="empty">{{ f.note }}</p>{% endif %}
@@ -31,7 +30,8 @@
     </li>
     {% endfor %}
   </ol>
-  <button class="button-ink" type="submit">Update</button>
+  <button class="button-ink" type="submit" aria-describedby="update-why">Update</button>
+  <details class="info"><summary aria-label="What Update does">i</summary><p id="update-why">Nothing is written until you press Update. {{ lock_note }}</p></details>
 </form>
 {% endif %}
 <p><a class="link-cap" href="/skills/updates">All updates</a></p>

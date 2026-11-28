@@ -93,7 +93,6 @@ a:hover { color: var(--verdigris-deep); }
 }
 .nav a:hover { background: rgba(236, 234, 227, 0.08); color: var(--rail-text); }
 .nav a.active { background: #ECEAE3; color: #16181D; }
-.nav a[data-later] { color: var(--rail-muted); }
 .nav .num { width: 24px; flex: none; color: var(--gilt-orn); font-size: 12px; text-align: center; }
 .nav-icon { display: none; width: 18px; height: 18px; flex: none; }
 :root[data-rail="collapsed"] .nav .num { display: none; }
@@ -249,6 +248,8 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 32px; align-items: start; }
 .aside { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 14px; }
 .aside-head { margin-top: 6px; font-size: 13px; }
+.machine-diff > summary { display: list-item; cursor: pointer; color: var(--oxblood); font-family: var(--display); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.machine-diff .agent-states { margin-top: 8px; }
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 15px; }
 .facts dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
 .facts dd { margin: 0; overflow-wrap: break-word; }
@@ -281,7 +282,9 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
   .frame { flex-direction: column; }
   .rail, :root[data-rail="collapsed"] .rail { position: sticky; top: 0; z-index: 5; width: auto; height: auto; flex: none; flex-direction: row; align-items: center; gap: 4px; padding: 0 8px; overflow-x: auto; }
   .rail-head, :root[data-rail="collapsed"] .rail-head { flex-direction: row; border: 0; margin: 0; height: 46px; padding: 0 6px 0 0; }
-  .rail-toggle, .rail-foot, .brand-word { display: none; }
+  .rail-toggle, .brand-word, .rail-foot .hub-line { display: none; }
+  .rail .rail-foot, :root[data-rail="collapsed"] .rail .rail-foot { margin: 0; padding: 0; flex-direction: row; align-items: center; gap: 0; }
+  .rail .foot-link, .rail .foot-button { height: 52px; min-width: 40px; padding: 0 3px; flex-direction: column; justify-content: center; gap: 3px; color: var(--rail-text); }
   .rail { scrollbar-width: none; }
   .nav { flex: 1; justify-content: space-between; }
   .nav { flex-direction: row; }
@@ -306,10 +309,18 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
   .emblem { width: 68px; height: 68px; }
   .wordmark { font-size: 40px; }
 }
+/* Narrow phones: the top bar keeps every section plus Settings and Sign out (or Sign in)
+   as icons; each keeps its name in its title for touch-and-hold and screen readers. */
+@media (max-width: 520px) {
+  .rail .label, :root[data-rail="collapsed"] .rail .label { display: none; }
+  .nav a, :root[data-rail="collapsed"] .nav a, .rail .foot-link, .rail .foot-button { min-width: 40px; height: 48px; }
+  .nav { justify-content: space-around; }
+}
 
 /* Agent status: the mark plus a badge (has it, missing, not set up), words in the tooltip. */
 .agent-states { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
 .agent-state { position: relative; width: 22px; height: 22px; color: var(--icon); }
+.agent-state-mark { display: block; width: 100%; height: 100%; }
 .agent-state .agent-icon { width: 22px; height: 22px; }
 .agent-state.muted .agent-icon { opacity: 0.35; }
 .badge-icon { position: absolute; right: -6px; bottom: -5px; width: 12px; height: 12px; stroke: var(--ground); }

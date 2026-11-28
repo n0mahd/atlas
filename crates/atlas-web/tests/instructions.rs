@@ -211,7 +211,7 @@ async fn pages_show_who_reads_each_file() {
         "nothing has been sent yet: {}",
         list.body
     );
-    assert!(list.body.contains("Claude reads a project"));
+    assert!(list.body.contains("Claude Code reads a project"));
     assert!(!list.body.contains(" style=\""));
 
     let project = get(&h, "/instructions?scope=shop").await;

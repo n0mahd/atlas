@@ -3,7 +3,7 @@
 {% if outside.show %}
 {% if !outside.rows.is_empty() %}
 <section class="section" id="outside">
-  <div class="section-head"><span class="num">§</span><h2>Outside Atlas</h2><span class="count"{% if outside.kept > 0 %} title="{{ outside.kept }} more you chose to leave outside"{% endif %}>{{ outside.rows.len() }}</span>
+  <div class="section-head"><span class="num" aria-hidden="true">§</span><h2>Outside Atlas</h2><span class="count"{% if outside.kept > 0 %} title="{{ outside.kept }} more you chose to leave outside"{% endif %}>{{ outside.rows.len() }}</span>
     <details class="info"><summary aria-label="What bringing in does">i</summary><p id="bring-why">Brought in, a skill is copied into Atlas. Each machine then puts Atlas's copy in place of the old folder (the files are identical) and the old folder is removed.</p></details>
     {% if page.signed_in && outside.importable > 1 %}
     <form class="head-action" method="post" action="/import/skills" data-send-on-save>
@@ -62,7 +62,7 @@
 {% if !outside.built_in.is_empty() %}
 <section class="section" id="built-in">
   <details class="folded">
-    <summary class="section-head"><span class="num">§</span><h2>Built in and others</h2><span class="count">{{ outside.built_in.len() }}</span><span class="chev" aria-hidden="true"></span></summary>
+    <summary class="section-head"><span class="num" aria-hidden="true">§</span><h2>Built in and others</h2><span class="count">{{ outside.built_in.len() }}</span><span class="chev" aria-hidden="true"></span></summary>
     <ul class="rows">
       {% for b in outside.built_in %}
       <li>

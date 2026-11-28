@@ -90,7 +90,6 @@ pub struct NavItem {
     pub label: &'static str,
     pub href: String,
     pub active: bool,
-    pub later: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -167,22 +166,20 @@ impl Page {
             }
         };
         let items = [
-            ("I", "Skills", "/skills", true, false),
-            ("II", "Instructions", "/instructions", true, false),
-            ("III", "Memory", "/memory", true, false),
-            ("IV", "Hooks", "/hooks", false, false),
-            ("V", "Machines", "/machines", false, false),
-            ("VI", "MCP", "/mcp", false, true),
+            ("I", "Skills", "/skills", true),
+            ("II", "Instructions", "/instructions", true),
+            ("III", "Memory", "/memory", true),
+            ("IV", "Hooks", "/hooks", false),
+            ("V", "Machines", "/machines", false),
         ];
         let nav: Vec<NavItem> = items
             .into_iter()
-            .map(|(num, label, href, scoped_page, later)| NavItem {
+            .map(|(num, label, href, scoped_page)| NavItem {
                 num,
                 icon: icons::section(label),
                 label,
                 href: carry(href, scoped_page),
                 active: href == section,
-                later,
             })
             .collect();
         let title = title.into();
@@ -380,7 +377,15 @@ pub fn overview(snap: &Snapshot) -> Overview {
     let store_memory = c.memory.iter().filter(|m| m.scope == Scope::Global).count();
     let found_hooks: usize = snap.harnesses.iter().map(|h| h.hooks.len()).sum();
     let mut notices = Vec::new();
-    if let Some(text) = crate::tidy::offer(snap) {
+    // A new hub's first step: bring in what this machine already has.
+    let fresh = c.skills.is_empty() && c.instructions.is_empty() && c.memory.is_empty();
+    if fresh && crate::import::outside_count(snap) > 0 {
+        notices.push(Notice {
+            text: "Bring in the skills already on this machine".to_owned(),
+            href: "/skills/tidy".to_owned(),
+            action: "Bring in",
+        });
+    } else if let Some(text) = crate::tidy::offer(snap) {
         notices.push(Notice {
             text,
             href: "/skills/tidy".to_owned(),
@@ -397,37 +402,42 @@ pub fn overview(snap: &Snapshot) -> Overview {
             });
         }
     }
+    let empty = fresh && c.hooks.is_empty() && found_hooks == 0;
     Overview {
-        tiles: vec![
-            Tile {
-                num: "I",
-                label: "Skills",
-                count: c.skills.len(),
-                detail: format!("{global} global, {} in projects", c.skills.len() - global),
-                href: "/skills",
-            },
-            Tile {
-                num: "II",
-                label: "Instructions",
-                count: c.instructions.len(),
-                detail: "files".to_owned(),
-                href: "/instructions",
-            },
-            Tile {
-                num: "III",
-                label: "Memory",
-                count: store_memory,
-                detail: "notes in the store".to_owned(),
-                href: "/memory",
-            },
-            Tile {
-                num: "IV",
-                label: "Hooks",
-                count: c.hooks.len() + found_hooks,
-                detail: format!("{found_hooks} outside Atlas"),
-                href: "/hooks",
-            },
-        ],
+        tiles: if empty {
+            Vec::new()
+        } else {
+            vec![
+                Tile {
+                    num: "I",
+                    label: "Skills",
+                    count: c.skills.len(),
+                    detail: format!("{global} global, {} in projects", c.skills.len() - global),
+                    href: "/skills",
+                },
+                Tile {
+                    num: "II",
+                    label: "Instructions",
+                    count: c.instructions.len(),
+                    detail: "files".to_owned(),
+                    href: "/instructions",
+                },
+                Tile {
+                    num: "III",
+                    label: "Memory",
+                    count: store_memory,
+                    detail: "notes in Atlas".to_owned(),
+                    href: "/memory",
+                },
+                Tile {
+                    num: "IV",
+                    label: "Hooks",
+                    count: c.hooks.len() + found_hooks,
+                    detail: format!("{found_hooks} outside Atlas"),
+                    href: "/hooks",
+                },
+            ]
+        },
         problems: c
             .problems
             .iter()
@@ -1104,16 +1114,15 @@ fn claude_option(facts: &InstructionFacts, num: &'static str) -> ClaudeOption {
     let words = [
         (
             ClaudeAgentsMd::WhenNoClaudeMd,
-            "Only without CLAUDE.md (Claude's default)",
+            "Only when there's no CLAUDE.md (Claude Code's default)",
         ),
-        (ClaudeAgentsMd::Alongside, "Beside CLAUDE.md"),
+        (ClaudeAgentsMd::Alongside, "Always, as well as CLAUDE.md"),
         (ClaudeAgentsMd::Never, "Never"),
     ];
     let setting = facts.claude.effective();
     let note = match (facts.claude.placed, facts.claude.machine.as_deref()) {
         (Some(placed), Some(m)) if claude_choice(m) != Some(placed) => {
-            "This machine still has another setting; atlasd changes it with the next update."
-                .to_owned()
+            "This machine still has another setting; it changes with the next update.".to_owned()
         }
         (None, Some(m)) if claude_choice(m).is_none() => {
             format!("This machine's Claude Code says {m}.")

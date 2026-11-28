@@ -2,9 +2,9 @@
 {% block content %}
 <div class="sections">
   <section class="section" id="from-github">
-    <div class="section-head"><span class="num">I</span><h2>Installed from GitHub</h2><span class="count">{{ rows.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>Installed from GitHub</h2><span class="count">{{ rows.len() }}</span></div>
     {% include "updates_button.html" %}
-    {% if checked.is_empty() %}<p class="marginalia">Not checked yet. Checking asks GitHub once per source, without signing in.</p>{% else %}<p class="marginalia">Checked at {{ checked }} UTC.{% if left_out > 0 %} {{ left_out }} more sources wait for the next check.{% endif %}</p>{% endif %}
+    {% if checked.is_empty() %}<p class="marginalia">Not checked yet.</p>{% else %}<p class="marginalia">Checked at {{ checked }} UTC.{% if left_out > 0 %} {{ left_out }} more sources wait for the next check.{% endif %}</p>{% endif %}
     {% if rows.is_empty() %}
     <p class="empty">No skill here was installed from GitHub with the skills CLI.</p>
     {% else %}

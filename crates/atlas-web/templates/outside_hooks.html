@@ -1,6 +1,6 @@
 {# Outside Atlas part of the Hooks page (import::hooks_outside). Commands are shown masked. #}
 <section class="section" id="outside">
-  <div class="section-head"><span class="num">II</span><h2>Outside Atlas</h2><span class="count">{{ outside.rows.len() }}</span>
+  <div class="section-head"><span class="num" aria-hidden="true">II</span><h2>Outside Atlas</h2><span class="count">{{ outside.rows.len() }}</span>
     {% if page.signed_in && outside.importable > 1 %}
     <form class="head-action" method="post" action="/import/hooks" data-send-on-save>
       <input type="hidden" name="csrf" value="{{ page.csrf }}">

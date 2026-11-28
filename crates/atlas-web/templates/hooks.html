@@ -2,7 +2,7 @@
 {% block content %}
 <div class="sections">
   <section class="section">
-    <div class="section-head"><span class="num">I</span><h2>In Atlas</h2><span class="count">{{ v.atlas.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>In Atlas</h2><span class="count">{{ v.atlas.len() }}</span></div>
     {% if v.atlas.is_empty() %}
     <details class="row help">
       <summary><span class="row-main"><span class="row-name">No hooks in Atlas yet</span><span class="row-desc">How to add one</span></span><span class="chev" aria-hidden="true"></span></summary>

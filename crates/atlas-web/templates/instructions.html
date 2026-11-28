@@ -3,7 +3,7 @@
 <div class="sections">
   {% for s in v.sections %}
   <section class="section">
-    <div class="section-head"><span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2></div>
+    <div class="section-head"><span class="num" aria-hidden="true">{{ s.num }}</span><h2>{{ s.title }}</h2></div>
     {% if s.rows.is_empty() %}
     <p class="empty">{{ s.empty }}</p>
     {% else %}
@@ -29,7 +29,7 @@
   {% endfor %}
   {% if !v.own.is_empty() %}
   <section class="section">
-    <div class="section-head"><span class="num">{{ v.own_num }}</span><h2>Agents' own files</h2><span class="count">{{ v.own.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">{{ v.own_num }}</span><h2>Agents' own files</h2><span class="count">{{ v.own.len() }}</span></div>
     <ul class="rows">
       {% for o in v.own %}
       <li>
@@ -48,7 +48,7 @@
   {% endif %}
   {% if let Some(c) = v.claude %}
   <section class="section">
-    <div class="section-head"><span class="num">{{ c.num }}</span><h2>Claude reads a project's AGENTS.md</h2></div>
+    <div class="section-head"><span class="num" aria-hidden="true">{{ c.num }}</span><h2>Claude Code reads a project's AGENTS.md</h2></div>
     <form method="post" action="/instructions/claude-agents-md" class="setting-row"{% if page.signed_in %} data-send-on-save{% endif %}>
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
       <label class="field grow"><span class="sr">When Claude Code reads a project's AGENTS.md</span>

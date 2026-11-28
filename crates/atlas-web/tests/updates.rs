@@ -894,7 +894,15 @@ async fn a_skill_named_edit_links_to_its_update_page() {
                 &k.join("skills/edit"),
                 &[("SKILL.md", "---\nname: edit\n---\nEdit.\n", false)],
             );
+            write_skill(
+                &k.join("skills/plain"),
+                &[("SKILL.md", "---\nname: plain\n---\nMine.\n", false)],
+            );
         },
+    );
+    write(
+        &hub.home.join(".agents/.skill-lock.json"),
+        &global_lock(&[("edit", "0000000000000000000000000000000000000000")]),
     );
     let (status, page) = hub.get("/skills/private/edit").await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -902,6 +910,9 @@ async fn a_skill_named_edit_links_to_its_update_page() {
         page.contains("href=\"/skills/private/edit/update\">Check for updates"),
         "{page}"
     );
+    // A skill not installed from GitHub has nothing to check.
+    let (_, page) = hub.get("/skills/private/plain").await;
+    assert!(!page.contains("Check for updates"), "{page}");
 }
 
 fn tree_hits(served: &Canned, repo: &str) -> usize {

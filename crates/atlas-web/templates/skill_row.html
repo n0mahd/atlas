@@ -18,7 +18,7 @@
       {% include "skill_place.html" %}
       {% else %}
       <ul class="agent-states">
-        {% for a in r.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
+        {% for a in r.agents %}<li class="agent-state {{ a.class }}"><span class="agent-state-mark" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</span></li>{% endfor %}
       </ul>
       {% endif %}
       <div class="drawer-foot">

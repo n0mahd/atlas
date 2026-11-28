@@ -117,6 +117,10 @@ pub(crate) fn history(w: &Writer) -> Vec<UpdateRow> {
 
 /// Saved changes that aren't on the machines yet.
 pub(crate) enum Waiting {
+    /// Knowledge has no commits yet: nothing to send, and nothing to say.
+    Empty,
+    /// Knowledge has commits but no remote, so machines couldn't fetch an update.
+    NoRemote,
     /// Nothing has ever been sent.
     NeverSent,
     /// Commits in Knowledge and public skills since the latest update's pins.
@@ -127,19 +131,57 @@ impl Waiting {
     /// The line the UI shows, or None when the machines have everything.
     pub(crate) fn text(&self) -> Option<String> {
         match self {
+            Self::Empty | Self::Changes(0) => None,
+            Self::NoRemote => Some(
+                "Your machines can't get updates until Knowledge has a remote to push to"
+                    .to_owned(),
+            ),
             Self::NeverSent => Some("Nothing has been sent to your machines yet".to_owned()),
-            Self::Changes(0) => None,
             Self::Changes(1) => Some("1 change isn't on your machines yet".to_owned()),
             Self::Changes(n) => Some(format!("{n} changes aren't on your machines yet")),
         }
     }
 }
 
+impl Waiting {
+    /// Whether Send can deliver something now.
+    pub(crate) const fn sendable(&self) -> bool {
+        matches!(self, Self::NeverSent | Self::Changes(1..))
+    }
+}
+
+/// Why Knowledge can't be sent at all (no commits, or no remote to push to), if so.
+fn unsendable(knowledge: &std::path::Path) -> Option<Waiting> {
+    let Ok(repo) = atlas_git::Repo::open(knowledge) else {
+        return Some(Waiting::Empty);
+    };
+    if repo.head().is_err() {
+        return Some(Waiting::Empty);
+    }
+    match repo.remote_url() {
+        Ok(Some(_)) => None,
+        _ => Some(Waiting::NoRemote),
+    }
+}
+
 /// Counts what's waiting. None on a read-only hub.
 pub(crate) async fn waiting(s: &AppState) -> Option<Waiting> {
+    s.writer.as_ref()?;
+    let knowledge = s.sources.knowledge.clone();
+    if let Some(stuck) = tokio::task::spawn_blocking(move || unsendable(&knowledge))
+        .await
+        .ok()?
+    {
+        return Some(stuck);
+    }
+    changes_since_sent(s).await
+}
+
+/// Commits in Knowledge and public skills since the latest update's pins (`NeverSent`
+/// when there is none), whether or not Send could deliver them now.
+async fn changes_since_sent(s: &AppState) -> Option<Waiting> {
     let w = s.writer.as_ref()?;
-    let latest = w.releases.latest().and_then(|r| decode_manifest(&r));
-    let Some(latest) = latest else {
+    let Some(latest) = w.releases.latest().and_then(|r| decode_manifest(&r)) else {
         return Some(Waiting::NeverSent);
     };
     let sources = Arc::clone(&s.sources);
@@ -186,7 +228,7 @@ pub(crate) async fn delivered(s: &AppState) -> bool {
         .iter()
         .filter(|c| c.machine.eq_ignore_ascii_case(&s.hub))
         .any(|c| c.report.as_ref().and_then(|r| r.release) == Some(latest));
-    applied && matches!(waiting(s).await, Some(Waiting::Changes(0)))
+    applied && matches!(changes_since_sent(s).await, Some(Waiting::Changes(0)))
 }
 
 #[derive(Serialize)]

@@ -3,7 +3,7 @@
 {% if !flash.is_empty() %}<p class="marginalia flash" role="status">{{ flash }}</p>{% endif %}
 <div class="sections">
   <section class="section" id="updates" data-passkey data-next="/settings?flash=sent#updates">
-    <div class="section-head"><span class="num">I</span><h2>Updates</h2><span class="count">{{ updates.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>Updates</h2><span class="count">{{ updates.len() }}</span></div>
     <form method="post" action="/settings" class="setting-row">
       <input type="hidden" name="csrf" value="{{ page.csrf }}">
       <label class="switch"><input type="checkbox" name="send_on_save" value="1"{% if send_on_save %} checked{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Send changes to my machines when I save</span><span class="row-desc">One passkey tap saves and sends. Machines update within 10 minutes.</span></span></label>
@@ -24,7 +24,7 @@
     {% endif %}
   </section>
   <section class="section" data-passkey data-next="/settings">
-    <div class="section-head"><span class="num">II</span><h2>Passkeys</h2><span class="count">{{ keys.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">II</span><h2>Passkeys</h2><span class="count">{{ keys.len() }}</span></div>
     <ul class="rows">
       {% for k in keys %}
       <li><div class="row static">
@@ -43,7 +43,7 @@
     <p class="marginalia warn-note" data-error hidden role="alert"></p>
   </section>
   <section class="section" id="cli-tokens">
-    <div class="section-head"><span class="num">III</span><h2>CLI tokens</h2><span class="count">{{ tokens.len() }}</span></div>
+    <div class="section-head"><span class="num" aria-hidden="true">III</span><h2>CLI tokens</h2><span class="count">{{ tokens.len() }}</span></div>
     {% if let Some(t) = new_token %}
     <p class="marginalia" role="status">Token for <strong>{{ t.name }}</strong> (shown once). Run this on that machine:</p>
     <div class="code-row">
