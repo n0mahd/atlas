@@ -9,12 +9,14 @@
       <span class="ledger-sum">{{ m.summary }}</span>
       {% if !m.hub && page.signed_in %}
       <div class="ledger-actions">
+        {% if builds %}
         <form method="post" action="/machines/pair" class="inline-form">
           <input type="hidden" name="csrf" value="{{ page.csrf }}">
           <input type="hidden" name="machine" value="{{ m.name }}">
           <button class="button-plain button-sm" type="submit">Pair</button>
         </form>
-        {% if m.clients.is_empty() %}
+        {% endif %}
+        {% if builds && m.clients.is_empty() %}
         <form method="post" action="/machines/pair/ssh" class="inline-form" data-busy="Installing…">
           <input type="hidden" name="csrf" value="{{ page.csrf }}">
           <input type="hidden" name="target" value="{{ m.name }}">

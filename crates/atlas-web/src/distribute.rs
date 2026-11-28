@@ -453,6 +453,10 @@ pub(crate) async fn pair_code(
     if !w.authorised(&headers, &f.csrf) {
         return Ok(forbidden("Sign in again to pair a machine.\n"));
     }
+    if !crate::has_builds(&s) {
+        // No command that would only fail: the page says how to add a build.
+        return crate::machines_page(&s, &headers, None, None, None).await;
+    }
     let code = issue_pairing_code(w)?;
     let pair_target = remote::Target::parse(&f.machine)
         .ok()
@@ -553,6 +557,9 @@ pub(crate) async fn pair_ssh(
     let w = writer(&s)?;
     if !w.authorised(&headers, &f.csrf) {
         return Ok(forbidden("Sign in again to pair a machine.\n"));
+    }
+    if !crate::has_builds(&s) {
+        return crate::machines_page(&s, &headers, None, None, None).await;
     }
     let target = match remote::Target::parse(&f.target) {
         Ok(t) => t,
@@ -688,6 +695,9 @@ pub(crate) async fn api_admin_pair_code(
     let w = writer(&s)?;
     if let Some(res) = unauthorised_cli(w, &headers) {
         return Ok(res);
+    }
+    if !crate::has_builds(&s) {
+        return Err(AppError::Bad(crate::install::NO_BUILDS.into()));
     }
     let code = issue_pairing_code(w)?;
     let origin = w.origin().to_owned();
@@ -1053,6 +1063,9 @@ mod tests {
             let shop = pushed_repo(&home, "shop");
             let state_dir = home.join("state");
             enrol(&state_dir);
+            // One atlasd build to hand out, or the page offers no install command.
+            std::fs::create_dir_all(state_dir.join("dist")).unwrap();
+            std::fs::write(state_dir.join("dist/atlasd-linux-x86_64"), b"build").unwrap();
             let writer =
                 crate::Writer::open(ORIGIN, &state_dir, std::time::Duration::ZERO).unwrap();
             let cookie = writer.auth.sign_in();
@@ -1302,18 +1315,6 @@ mod tests {
     async fn the_install_script_makes_the_first_run_before_the_timer() {
         let hub = SendHub::new();
         let (status, script) = call(&hub.app, hub.get("/install")).await;
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "a script that says why, for curl -f"
-        );
-        assert!(script.contains("no atlasd builds"), "{script}");
-        assert!(script.contains("exit 1"), "{script}");
-
-        let dist = hub.home.join("state/dist");
-        std::fs::create_dir_all(&dist).unwrap();
-        std::fs::write(dist.join("atlasd-linux-x86_64"), b"build").unwrap();
-        let (status, script) = call(&hub.app, hub.get("/install")).await;
         assert_eq!(status, StatusCode::OK);
         let run = script
             .find("atlasd\" run --summary")
@@ -1322,6 +1323,60 @@ mod tests {
             .find("systemctl --user enable --now atlasd.timer\n")
             .expect("timer enabled");
         assert!(run < enable, "{script}");
+    }
+
+    /// Without builds the hub offers no command that would only fail with a bare 400: the
+    /// page says how to get one, pairing issues no code, and the script says why.
+    #[tokio::test]
+    async fn with_no_builds_nothing_offers_an_install() {
+        let hub = SendHub::new();
+        let cli_token = mint_cli_token(&hub, "laptop").await;
+        let body = format!("csrf={}&name=workstation", hub.csrf);
+        call(&hub.app, post_form(&hub, "/machines/add", body)).await;
+        let (_, page) = call(&hub.app, hub.get("/machines")).await;
+        assert!(page.contains("action=\"/machines/pair\""), "with a build");
+
+        std::fs::remove_dir_all(hub.home.join("state/dist")).unwrap();
+        let (status, page) = call(&hub.app, hub.get("/machines")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains("No atlasd builds to hand out yet"), "{page}");
+        assert!(page.contains("Give the hub atlasd builds to hand out"));
+        for absent in [
+            "action=\"/machines/pair\"",
+            "action=\"/machines/pair/ssh\"",
+            "/install | sh",
+        ] {
+            assert!(!page.contains(absent), "{absent}");
+        }
+        assert!(
+            page.contains("action=\"/machines/add\""),
+            "tracking still works"
+        );
+
+        let body = format!("csrf={}&machine=workstation", hub.csrf);
+        let (status, page) = call(&hub.app, post_form(&hub, "/machines/pair", body)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!page.contains("/install | sh"), "no code issued");
+        assert!(page.contains("No atlasd builds to hand out yet"));
+        let body = format!("csrf={}&target=you%40laptop", hub.csrf);
+        let (_, page) = call(&hub.app, post_form(&hub, "/machines/pair/ssh", body)).await;
+        assert!(!page.contains("/install | sh"), "nothing ran over SSH");
+
+        let req = admin_req(Request::post("/api/admin/pair-code"), &cli_token)
+            .body(Body::empty())
+            .unwrap();
+        let (status, body) = call(&hub.app, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("no atlasd builds"), "{body}");
+
+        let (status, script) = call(&hub.app, hub.get("/install")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a script that says why, for curl -f"
+        );
+        assert!(script.contains("no atlasd builds"), "{script}");
+        assert!(script.contains("exit 1"), "{script}");
     }
 
     #[tokio::test]
