@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use askama::Template as _;
 use atlas_core::distribution::{
     AddMachineRequest, ClientSummary, MachineSummary, MachinesListResponse, PairCodeResponse,
     PairRequest, PairResponse, RemoveMachineResponse, Report,
@@ -24,13 +25,59 @@ use crate::{AppError, AppState, SshResult, auth};
 /// How long a built update waits for its signature.
 const PENDING_TTL: std::time::Duration = std::time::Duration::from_mins(10);
 
-/// An update built for the owner, waiting for the passkey tap.
+/// Updates one session may have waiting at once.
+const PENDING_PER_SESSION: usize = 4;
+
+/// An update built for the owner, waiting for the passkey tap. Its manifest bytes are
+/// fixed when it's built: the check page shows what they pin and the tap signs them, so
+/// nothing committed afterwards can slip in.
 #[derive(Debug, Clone)]
 pub struct Pending {
     pub number: u64,
     pub bytes: Vec<u8>,
     pub digest: [u8; 32],
+    /// The CSRF token of the session that built it: only that session may sign it.
+    session: String,
+    /// What it changes, read from exactly the commits it pins.
+    pub(crate) review: crate::review::Review,
+    /// Whether its check page was served (needed before signing when it has hooks).
+    shown: bool,
+    /// Where to go once sent, and on "Not now".
+    next: String,
+    back: String,
     expires: std::time::Instant,
+}
+
+impl Pending {
+    fn usable_by(&self, session: &str) -> bool {
+        self.expires > std::time::Instant::now() && auth::same_secret(&self.session, session)
+    }
+}
+
+/// The session's CSRF token, which identifies it.
+fn session_of(w: &Writer, headers: &HeaderMap) -> Option<String> {
+    w.auth.session(headers).map(|s| s.csrf)
+}
+
+/// Keeps `p` under a fresh id; returns the id.
+fn keep(w: &Writer, p: Pending) -> String {
+    let id = auth::token();
+    if let Ok(mut map) = w.pending.lock() {
+        let now = std::time::Instant::now();
+        map.retain(|_, q| q.expires > now);
+        let mine: Vec<(String, std::time::Instant)> = map
+            .iter()
+            .filter(|(_, q)| auth::same_secret(&q.session, &p.session))
+            .map(|(k, q)| (k.clone(), q.expires))
+            .collect();
+        if mine.len() >= PENDING_PER_SESSION
+            && let Some((oldest, _)) = mine.iter().min_by_key(|(_, e)| *e)
+        {
+            map.remove(oldest);
+        }
+        map.insert(id.clone(), p);
+    }
+    id
 }
 
 fn writer(s: &AppState) -> Result<&Arc<Writer>, AppError> {
@@ -179,6 +226,8 @@ struct SignOptions {
     #[serde(rename = "userVerification")]
     user_verification: &'static str,
     timeout: u32,
+    /// The update being signed; `/send/finish` names it.
+    pending: String,
     /// What this update carries, such as "Update 4 · Knowledge".
     summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,12 +241,23 @@ struct AllowedKey {
     kind: &'static str,
 }
 
+/// What Send says when the machines already have everything.
+pub(crate) const NOTHING_NEW: &str = "Your machines already have everything.";
+
 #[derive(Serialize)]
 struct NothingToSend {
     nothing: bool,
+    /// [`NOTHING_NEW`], for the page to show in place.
+    message: &'static str,
     next: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<String>,
+}
+
+/// The update has hooks to look at first: the page to show.
+#[derive(Serialize)]
+struct LookFirst {
+    review: String,
 }
 
 #[derive(Deserialize)]
@@ -205,6 +265,12 @@ pub struct SendStart {
     /// Where to go once sent.
     #[serde(default)]
     next: String,
+    /// Where "Not now" goes.
+    #[serde(default)]
+    back: String,
+    /// An update already built (and shown); sign exactly that one.
+    #[serde(default)]
+    pending: String,
 }
 
 fn next_or_settings(next: &str) -> String {
@@ -229,15 +295,17 @@ fn rp_id(w: &Writer) -> String {
         .unwrap_or_default()
 }
 
-/// Pushes Knowledge if the remote lacks some of its commits, then builds the update.
-/// Returns it with notes for the owner, such as public skills waiting for a push.
+/// Pushes Knowledge if the remote lacks some of its commits, then builds the update and
+/// reads what it changes from the commits it pins. Returns them with notes for the owner,
+/// such as public skills waiting for a push.
 fn prepare(
     writer: &Writer,
     sources: &atlas_fs::Sources,
+    previous: Option<&Manifest>,
     number: u64,
     origin: &str,
     keys: Vec<OwnerKey>,
-) -> Result<(Manifest, Vec<String>), String> {
+) -> Result<(Manifest, crate::review::Review, Vec<String>), String> {
     let _guard = writer
         .git
         .lock()
@@ -266,22 +334,31 @@ fn prepare(
             .iter()
             .map(|k| format!("{} {}.", k.source, k.reason)),
     );
-    Ok((manifest, notes))
+    let review = crate::review::review(sources, previous, &manifest);
+    Ok((manifest, review, notes))
 }
 
-/// Pushes Knowledge if it has commits the remote lacks (never public skills), builds the
-/// next update, and asks for the passkey tap whose challenge is its digest. Answers
-/// `nothing` when machines already have all of it.
-pub(crate) async fn send_start(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<SendStart>,
-) -> Result<Response, AppError> {
-    let w = Arc::clone(writer(&s)?);
-    if !w.authorised(&headers, csrf_header(&headers)) {
-        return Ok(forbidden("Sign in again to send changes.\n"));
-    }
-    let next = next_or_settings(&req.next);
+/// What building an update came to.
+enum Built {
+    /// The machines already have all of it.
+    Nothing(Option<String>),
+    /// Kept under this id.
+    Kept {
+        id: String,
+        look: bool,
+        note: Option<String>,
+    },
+}
+
+/// Builds the next update from the commits machines can fetch now and keeps it, bytes
+/// fixed, for this session to sign.
+async fn build_pending(
+    s: &AppState,
+    w: &Arc<Writer>,
+    session: String,
+    next: String,
+    back: String,
+) -> Result<Built, AppError> {
     let keys = w.signer.owner_keys();
     if keys.is_empty() {
         return Err(AppError::Bad(
@@ -292,13 +369,15 @@ pub(crate) async fn send_start(
     let number = w.releases.numbers().last().map_or(1, |n| n + 1);
     let sources = Arc::clone(&s.sources);
     let origin = w.origin().to_owned();
-    let writer = Arc::clone(&w);
-    let built =
-        tokio::task::spawn_blocking(move || prepare(&writer, &sources, number, &origin, keys))
-            .await
-            .map_err(|_| AppError::Internal)?;
+    let writer = Arc::clone(w);
+    let before = previous.clone();
+    let built = tokio::task::spawn_blocking(move || {
+        prepare(&writer, &sources, before.as_ref(), number, &origin, keys)
+    })
+    .await
+    .map_err(|_| AppError::Internal)?;
     s.invalidate().await;
-    let (manifest, notes) = built.map_err(AppError::Bad)?;
+    let (manifest, review, notes) = built.map_err(AppError::Bad)?;
     let note = (!notes.is_empty()).then(|| notes.join(" "));
     if manifest.sources.is_empty() {
         return Err(AppError::Bad(format!(
@@ -310,34 +389,101 @@ pub(crate) async fn send_start(
         .as_ref()
         .is_some_and(|p| p.sources == manifest.sources && p.owner_keys == manifest.owner_keys)
     {
-        return Ok(Json(NothingToSend {
-            nothing: true,
-            next,
-            note,
-        })
-        .into_response());
+        return Ok(Built::Nothing(note));
     }
-    let changed: Vec<String> = manifest
-        .sources
-        .iter()
-        .filter(|src| previous.as_ref().and_then(|p| p.source(&src.id)) != Some(*src))
-        .map(|src| release::label(&src.id))
-        .collect();
-    let summary = if changed.is_empty() {
-        format!("Update {number} · passkeys")
-    } else {
-        format!("Update {number} · {}", changed.join(", "))
-    };
     let bytes = serde_json::to_vec(&manifest).map_err(|_| AppError::Internal)?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    if let Ok(mut pending) = w.pending.lock() {
-        *pending = Some(Pending {
+    let look = review.needs_look();
+    let id = keep(
+        w,
+        Pending {
             number,
             bytes,
             digest,
+            session,
+            review,
+            shown: false,
+            next,
+            back,
             expires: std::time::Instant::now() + PENDING_TTL,
-        });
+        },
+    );
+    Ok(Built::Kept { id, look, note })
+}
+
+fn review_href(id: &str) -> String {
+    format!("/send/review/{id}")
+}
+
+/// Starts sending. Without `pending`: pushes Knowledge if it has commits the remote lacks
+/// (never public skills) and builds the next update; when it adds or changes a hook the
+/// answer is the check page to show, otherwise the passkey options straight away. With
+/// `pending`: the passkey options for that update exactly as it was built (and shown).
+/// Answers `nothing` when machines already have all of it.
+pub(crate) async fn send_start(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SendStart>,
+) -> Result<Response, AppError> {
+    let w = Arc::clone(writer(&s)?);
+    if !w.authorised(&headers, csrf_header(&headers)) {
+        return Ok(forbidden("Sign in again to send changes.\n"));
     }
+    let Some(session) = session_of(&w, &headers) else {
+        return Ok(forbidden("Sign in again to send changes.\n"));
+    };
+    let (id, note) = if req.pending.is_empty() {
+        let next = next_or_settings(&req.next);
+        let back = next_or_settings(&req.back);
+        match build_pending(&s, &w, session.clone(), next.clone(), back).await? {
+            Built::Nothing(note) => {
+                return Ok(Json(NothingToSend {
+                    nothing: true,
+                    message: NOTHING_NEW,
+                    next,
+                    note,
+                })
+                .into_response());
+            }
+            Built::Kept { id, look: true, .. } => {
+                return Ok(Json(LookFirst {
+                    review: review_href(&id),
+                })
+                .into_response());
+            }
+            Built::Kept { id, note, .. } => (id, note),
+        }
+    } else {
+        (req.pending.clone(), None)
+    };
+    let found = w
+        .pending
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&id).cloned())
+        .filter(|p| p.usable_by(&session));
+    let Some(p) = found else {
+        return Ok(forbidden("That request expired. Send again.\n"));
+    };
+    if p.review.needs_look() && !p.shown {
+        return Ok(Json(LookFirst {
+            review: review_href(&id),
+        })
+        .into_response());
+    }
+    let previous = w.releases.latest().and_then(|r| decode_manifest(&r));
+    let manifest: Manifest = serde_json::from_slice(&p.bytes).map_err(|_| AppError::Internal)?;
+    let changed: Vec<String> = manifest
+        .sources
+        .iter()
+        .filter(|src| previous.as_ref().and_then(|q| q.source(&src.id)) != Some(*src))
+        .map(|src| release::label(&src.id))
+        .collect();
+    let summary = if changed.is_empty() {
+        format!("Update {} · passkeys", p.number)
+    } else {
+        format!("Update {} · {}", p.number, changed.join(", "))
+    };
     let allow = w
         .signer
         .owner_keys()
@@ -348,11 +494,12 @@ pub(crate) async fn send_start(
         })
         .collect();
     Ok(Json(SignOptions {
-        challenge: atlas_signer::b64url(&digest),
+        challenge: atlas_signer::b64url(&p.digest),
         rp_id: rp_id(&w),
         allow,
         user_verification: "required",
         timeout: 120_000,
+        pending: id,
         summary,
         note,
     })
@@ -364,6 +511,9 @@ pub struct SendFinish {
     credential: Signature,
     #[serde(default)]
     next: String,
+    /// The update `/send/start` handed out.
+    #[serde(default)]
+    pending: String,
 }
 
 #[derive(Serialize)]
@@ -371,8 +521,8 @@ struct Done {
     next: String,
 }
 
-/// Checks the passkey's signature over the pending update exactly as a client will, then
-/// stores it for the machines to fetch.
+/// Checks the passkey's signature over the named pending update exactly as a client will,
+/// then stores those same bytes for the machines to fetch. Never rebuilds the update.
 pub(crate) async fn send_finish(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -382,12 +532,17 @@ pub(crate) async fn send_finish(
     if !w.authorised(&headers, csrf_header(&headers)) {
         return Ok(forbidden("Sign in again to send changes.\n"));
     }
+    let Some(session) = session_of(w, &headers) else {
+        return Ok(forbidden("Sign in again to send changes.\n"));
+    };
+    // One try per built update: a refused signature uses it up.
     let pending = w
         .pending
         .lock()
         .ok()
-        .and_then(|mut p| p.take())
-        .filter(|p| p.expires > std::time::Instant::now());
+        .and_then(|mut map| map.remove(&req.pending))
+        .filter(|p| p.usable_by(&session))
+        .filter(|p| !p.review.needs_look() || p.shown);
     let Some(p) = pending else {
         return Ok(forbidden("That request expired. Send again.\n"));
     };
@@ -421,11 +576,103 @@ pub(crate) async fn send_finish(
         signature: req.credential,
     };
     w.releases.save(&release).map_err(AppError::Bad)?;
+    if let Ok(mut last) = w.last_sent.lock() {
+        *last = Some((p.number, p.review.others.clone()));
+    }
     tracing::warn!("update {} signed and sent", p.number);
-    Ok(Json(Done {
-        next: next_or_settings(&req.next),
-    })
-    .into_response())
+    let next = if req.next.is_empty() {
+        p.next
+    } else {
+        next_or_settings(&req.next)
+    };
+    Ok(Json(Done { next }).into_response())
+}
+
+/// The "other things" line for the update just sent, for the notice after sending.
+pub(crate) fn sent_others(s: &AppState) -> Option<crate::views::OthersView> {
+    let w = s.writer.as_ref()?;
+    let latest = w.releases.numbers().last().copied()?;
+    let last = w.last_sent.lock().ok()?;
+    let (number, others) = last.as_ref()?;
+    if *number != latest {
+        return None;
+    }
+    crate::views::OthersView::of(others)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ReviewForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    next: String,
+    #[serde(default)]
+    back: String,
+}
+
+/// Send without the page's script: builds the update and opens its check page, which
+/// works as a plain page (the passkey tap itself needs JavaScript).
+pub(crate) async fn review_build(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<ReviewForm>,
+) -> Result<Response, AppError> {
+    let w = Arc::clone(writer(&s)?);
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to send changes.\n"));
+    }
+    let Some(session) = session_of(&w, &headers) else {
+        return Ok(forbidden("Sign in again to send changes.\n"));
+    };
+    let next = next_or_settings(&f.next);
+    let back = next_or_settings(&f.back);
+    match build_pending(&s, &w, session, next, back.clone()).await? {
+        Built::Nothing(_) => Ok(Redirect::to("/settings?flash=nothing#updates").into_response()),
+        Built::Kept { id, .. } => Ok(Redirect::to(&review_href(&id)).into_response()),
+    }
+}
+
+/// The check page: each new or changed hook in full, read from exactly the commits the
+/// update pins, with Send (the passkey tap) and Not now.
+pub(crate) async fn review_page(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    let Some(session) = session_of(w, &headers) else {
+        return Ok(Redirect::to("/signin?next=/settings").into_response());
+    };
+    let found = w.pending.lock().ok().and_then(|mut map| {
+        let p = map.get_mut(&id).filter(|p| p.usable_by(&session))?;
+        p.shown = true;
+        Some(p.clone())
+    });
+    let Some(p) = found else {
+        return Ok(Redirect::to("/settings#updates").into_response());
+    };
+    let snap = s.snapshot().await?;
+    let mut page = s.page(
+        &headers,
+        "/settings",
+        "Check before sending",
+        &snap,
+        &atlas_core::kernel::Scope::Global,
+        false,
+    );
+    page.totals = format!("Update {}", p.number);
+    let html = crate::SendReviewPage {
+        page,
+        id,
+        next: p.next.clone(),
+        back: p.back.clone(),
+        hooks: p.review.hooks.clone(),
+        keys: p.review.keys.clone(),
+        trusted: p.review.trusted.clone(),
+        others: crate::views::OthersView::of(&p.review.others),
+    }
+    .render()?;
+    Ok(axum::response::Html(html).into_response())
 }
 
 /// The old Releases page lives in Settings now.
@@ -985,33 +1232,51 @@ mod tests {
         git(dir, &["commit", "-q", "-m", file]);
     }
 
-    /// The owner's passkey, as an authenticator holds it.
+    /// A passkey, as an authenticator holds it.
+    fn key_from(seed: u8) -> p256::ecdsa::SigningKey {
+        p256::ecdsa::SigningKey::from_slice(&[seed; 32]).unwrap()
+    }
+
+    /// The owner's passkey.
     fn owner_key() -> p256::ecdsa::SigningKey {
-        p256::ecdsa::SigningKey::from_slice(&[7u8; 32]).unwrap()
+        key_from(7)
     }
 
     const CRED_ID: &[u8] = &[1, 2, 3, 4];
 
-    /// Writes the hub's passkey store with the owner's one key, named Laptop.
-    fn enrol(state: &Path) {
-        let point = owner_key().verifying_key().to_sec1_point(false);
-        let raw = point.as_bytes();
+    /// Writes the hub's passkey store with these keys: (name, seed, credential id).
+    fn write_keys(state: &Path, keys: &[(&str, u8, &[u8])]) {
         let b64 = atlas_signer::b64url;
-        let passkey = format!(
-            r#"{{"cred":{{"cred_id":"{}","cred":{{"type_":"ES256","key":{{"EC_EC2":{{"curve":"SECP256R1","x":"{}","y":"{}"}}}}}},"counter":0,"transports":null,"user_verified":true,"backup_eligible":false,"backup_state":false,"registration_policy":"required","extensions":{{"cred_protect":"NotRequested","hmac_create_secret":"NotRequested","appid":"NotRequested","cred_props":"NotRequested"}},"attestation":{{"data":"None","metadata":"None"}},"attestation_format":"none"}}}}"#,
-            b64(CRED_ID),
-            b64(&raw[1..33]),
-            b64(&raw[33..65])
-        );
+        let entries: Vec<String> = keys
+            .iter()
+            .map(|(name, seed, cred)| {
+                let point = key_from(*seed).verifying_key().to_sec1_point(false);
+                let raw = point.as_bytes();
+                let passkey = format!(
+                    r#"{{"cred":{{"cred_id":"{}","cred":{{"type_":"ES256","key":{{"EC_EC2":{{"curve":"SECP256R1","x":"{}","y":"{}"}}}}}},"counter":0,"transports":null,"user_verified":true,"backup_eligible":false,"backup_state":false,"registration_policy":"required","extensions":{{"cred_protect":"NotRequested","hmac_create_secret":"NotRequested","appid":"NotRequested","cred_props":"NotRequested"}},"attestation":{{"data":"None","metadata":"None"}},"attestation_format":"none"}}}}"#,
+                    b64(cred),
+                    b64(&raw[1..33]),
+                    b64(&raw[33..65])
+                );
+                format!(r#"{{"name":"{name}","added":0,"last_used":null,"passkey":{passkey}}}"#)
+            })
+            .collect();
         let store = format!(
-            r#"{{"user_id":"00000000-0000-4000-8000-000000000001","keys":[{{"name":"Laptop","added":0,"last_used":null,"passkey":{passkey}}}]}}"#
+            r#"{{"user_id":"00000000-0000-4000-8000-000000000001","keys":[{}]}}"#,
+            entries.join(",")
         );
         std::fs::create_dir_all(state).unwrap();
         std::fs::write(state.join("passkeys.json"), store).unwrap();
     }
 
-    /// Signs `challenge` exactly as a browser's passkey prompt would.
-    fn assertion(challenge: &[u8]) -> String {
+    /// Writes the hub's passkey store with the owner's one key, named Laptop.
+    fn enrol(state: &Path) {
+        write_keys(state, &[("Laptop", 7, CRED_ID)]);
+    }
+
+    /// Signs `challenge` for pending update `pending` exactly as a browser's passkey
+    /// prompt would.
+    fn assertion(challenge: &[u8], pending: &str) -> String {
         use p256::ecdsa::signature::Signer as _;
         let b64 = atlas_signer::b64url;
         let mut auth_data = Sha256::digest(b"hub.test").to_vec();
@@ -1025,7 +1290,7 @@ mod tests {
         message.extend_from_slice(&Sha256::digest(client.as_bytes()));
         let sig: p256::ecdsa::Signature = owner_key().sign(&message);
         format!(
-            r#"{{"next":"/memory/fact?saved=abc&sent=1","credential":{{"credential_id":"{}","authenticator_data":"{}","client_data_json":"{}","signature":"{}"}}}}"#,
+            r#"{{"next":"/memory/fact?saved=abc&sent=1","pending":"{pending}","credential":{{"credential_id":"{}","authenticator_data":"{}","client_data_json":"{}","signature":"{}"}}}}"#,
             b64(CRED_ID),
             b64(&auth_data),
             b64(client.as_bytes()),
@@ -1115,16 +1380,82 @@ mod tests {
             self.state.writer.as_deref().unwrap()
         }
 
-        fn pending_bytes(&self) -> Vec<u8> {
-            self.writer()
-                .pending
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .bytes
-                .clone()
+        fn pending_bytes(&self, id: &str) -> Vec<u8> {
+            self.writer().pending.lock().unwrap()[id].bytes.clone()
         }
+
+        /// Starts a send; `pending` names an update already built.
+        async fn start(&self, pending: &str) -> serde_json::Value {
+            let body = format!(r#"{{"pending":"{pending}"}}"#);
+            let (status, body) = call(&self.app, self.post("/send/start", &body, true)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            serde_json::from_str(&body).unwrap()
+        }
+
+        /// Signs pending update `id` with the owner's passkey.
+        async fn sign(&self, id: &str) -> (StatusCode, String) {
+            let digest: [u8; 32] = Sha256::digest(self.pending_bytes(id)).into();
+            call(
+                &self.app,
+                self.post("/send/finish", &assertion(&digest, id), true),
+            )
+            .await
+        }
+
+        /// Sends everything waiting, looking at the check page first when there is one.
+        async fn send_all(&self) {
+            let opts = self.start("").await;
+            let id = match opts["review"].as_str() {
+                Some(href) => {
+                    let (status, _) = call(&self.app, self.get(href)).await;
+                    assert_eq!(status, StatusCode::OK);
+                    let id = href.trim_start_matches("/send/review/").to_owned();
+                    let opts = self.start(&id).await;
+                    assert!(opts["challenge"].is_string(), "{opts}");
+                    id
+                }
+                None => opts["pending"].as_str().unwrap().to_owned(),
+            };
+            let (status, body) = self.sign(&id).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+
+        /// The hub restarted: same state folder and repos, a fresh writer.
+        fn reopen(self) -> Self {
+            let state_dir = self.home.join("state");
+            let writer =
+                crate::Writer::open(ORIGIN, &state_dir, std::time::Duration::ZERO).unwrap();
+            let sources = atlas_fs::Sources {
+                home: self.home.clone(),
+                knowledge: self.knowledge.clone(),
+                public_skills: Some(self.public.clone()),
+                projects: Vec::new(),
+            };
+            let state = crate::AppState::new(sources, "hub", Vec::new(), Some(writer));
+            let app = crate::router(state.clone(), crate::Access::new(vec![LOGIN.into()]));
+            Self { state, app, ..self }
+        }
+
+        fn latest_manifest(&self) -> Manifest {
+            super::decode_manifest(&self.writer().releases.latest().unwrap()).unwrap()
+        }
+    }
+
+    /// Adds hook `name` (before Bash runs, running `run.sh`) to the repo and commits it.
+    fn add_hook(dir: &Path, name: &str, script: &str) {
+        let hook = dir.join("hooks").join(name);
+        std::fs::create_dir_all(&hook).unwrap();
+        std::fs::write(
+            hook.join("hook.toml"),
+            format!(
+                "description = \"Checks {name}\"\nevent = \"pre-tool-use\"\nmatcher = \"Bash\"\nrun = \"run.sh\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(hook.join("run.sh"), script).unwrap();
+        set_exec(&hook.join("run.sh"), true);
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-q", "-m", &format!("Add {name}")]);
     }
 
     use axum::http::HeaderMap;
@@ -1193,7 +1524,8 @@ mod tests {
         );
 
         // The challenge is the digest of exactly the bytes that will be signed.
-        let bytes = hub.pending_bytes();
+        let id = opts["pending"].as_str().unwrap().to_owned();
+        let bytes = hub.pending_bytes(&id);
         assert_eq!(
             opts["challenge"].as_str().unwrap(),
             atlas_signer::b64url(&Sha256::digest(&bytes))
@@ -1212,20 +1544,15 @@ mod tests {
         assert_eq!(manifest.sources[1].commit.as_str(), public_upstream);
 
         // A forged signature is refused and nothing is stored.
-        let forged = assertion(b"some other digest");
+        let forged = assertion(b"some other digest", &id);
         let (status, _) = call(&hub.app, hub.post("/send/finish", &forged, true)).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert!(hub.writer().releases.latest().is_none());
 
         // Start again (the refused try used the pending update up) and sign it properly.
-        let (status, body) = call(&hub.app, hub.post("/send/start", "{}", true)).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let digest_now: [u8; 32] = Sha256::digest(hub.pending_bytes()).into();
-        let (status, body) = call(
-            &hub.app,
-            hub.post("/send/finish", &assertion(&digest_now), true),
-        )
-        .await;
+        let again = hub.start("").await;
+        let id = again["pending"].as_str().unwrap().to_owned();
+        let (status, body) = hub.sign(&id).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("/memory/fact?saved=abc&sent=1"), "{body}");
         let sent = hub.writer().releases.latest().unwrap();
@@ -1337,6 +1664,255 @@ mod tests {
             )
             .body(Body::from(body))
             .unwrap()
+    }
+
+    /// Marks a file executable or not.
+    fn set_exec(path: &Path, exec: bool) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = if exec { 0o755 } else { 0o644 };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// The check page `opts` points at, read as the owner sees it.
+    async fn review_page(hub: &SendHub, opts: &serde_json::Value) -> (String, String) {
+        let href = opts["review"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a page to look at first: {opts}"));
+        let (status, page) = call(&hub.app, hub.get(href)).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        (href.trim_start_matches("/send/review/").to_owned(), page)
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_hooks_send_is_one_tap() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        hub.send_all().await;
+        std::fs::create_dir_all(hub.knowledge.join("memory")).unwrap();
+        commit(&hub.knowledge, "memory/a.md");
+        let opts = hub.start("").await;
+        assert!(opts["review"].is_null(), "no page: {opts}");
+        assert!(opts["challenge"].is_string(), "{opts}");
+        assert!(
+            opts["summary"]
+                .as_str()
+                .unwrap()
+                .starts_with("Update 2 · Knowledge")
+        );
+        let (status, body) = hub.sign(opts["pending"].as_str().unwrap()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The notice after sending names what else changed outside Atlas.
+        let (_, page) = call(&hub.app, hub.get("/?sent=1")).await;
+        assert!(page.contains("1 note changed outside Atlas"), "{page}");
+    }
+
+    #[tokio::test]
+    async fn first_send_lists_every_hook() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        add_hook(&hub.knowledge, "notify", "echo notify\n");
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        for text in [
+            "guard",
+            "notify",
+            "echo guard",
+            "echo notify",
+            "Before a tool runs · Bash",
+            "Laptop",
+            "Trusted by your machines",
+            ">Not now<",
+        ] {
+            assert!(page.contains(text), "{text}: {page}");
+        }
+        let main = page[page.find("<main").unwrap()..].to_lowercase();
+        for word in ["manifest", "release", "tree", "executable"] {
+            assert!(!main.contains(word), "{word}: {main}");
+        }
+        assert!(hub.writer().releases.latest().is_none(), "nothing sent yet");
+    }
+
+    #[tokio::test]
+    async fn a_deleted_hook_needs_no_look() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        hub.send_all().await;
+        std::fs::remove_dir_all(hub.knowledge.join("hooks/guard")).unwrap();
+        git(&hub.knowledge, &["add", "-A"]);
+        git(&hub.knowledge, &["commit", "-q", "-m", "Remove guard"]);
+        let opts = hub.start("").await;
+        assert!(opts["review"].is_null(), "{opts}");
+        assert!(opts["challenge"].is_string(), "{opts}");
+    }
+
+    #[tokio::test]
+    async fn a_changed_hook_shows_its_diff() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        hub.send_all().await;
+        std::fs::write(hub.knowledge.join("hooks/guard/run.sh"), "echo louder\n").unwrap();
+        git(&hub.knowledge, &["commit", "-q", "-am", "Louder"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(
+            page.contains(r#"<span class="d-del">-echo guard</span>"#),
+            "{page}"
+        );
+        assert!(
+            page.contains(r#"<span class="d-add">+echo louder</span>"#),
+            "{page}"
+        );
+        assert!(page.contains("Changed hook"), "{page}");
+        assert!(
+            !page.contains("Trusted by your machines"),
+            "only on the first"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hook_whose_script_isnt_executable_says_so() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        set_exec(&hub.knowledge.join("hooks/guard/run.sh"), false);
+        git(&hub.knowledge, &["commit", "-q", "-am", "Plain"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(
+            page.contains("isn't marked as runnable, so your machines will skip this hook"),
+            "{page}"
+        );
+        set_exec(&hub.knowledge.join("hooks/guard/run.sh"), true);
+        git(&hub.knowledge, &["commit", "-q", "-am", "Runnable"]);
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(!page.contains("marked as runnable"), "{page}");
+    }
+
+    #[tokio::test]
+    async fn the_update_signed_is_the_one_shown() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        let opts = hub.start("").await;
+        let id = opts["review"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("/send/review/")
+            .to_owned();
+
+        // It can't be signed before its page is shown.
+        let early = hub.start(&id).await;
+        assert!(early["challenge"].is_null(), "{early}");
+        assert!(early["review"].is_string(), "{early}");
+        let digest: [u8; 32] = Sha256::digest(hub.pending_bytes(&id)).into();
+        let (status, _) = call(
+            &hub.app,
+            hub.post("/send/finish", &assertion(&digest, &id), true),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let opts = hub.start("").await;
+        let (id, page) = review_page(&hub, &opts).await;
+        assert!(page.contains("echo guard") && !page.contains("echo late"));
+        let shown: Manifest = serde_json::from_slice(&hub.pending_bytes(&id)).unwrap();
+        let shown_commit = shown.sources[0].commit.as_str().to_owned();
+
+        // A new hook is committed and pushed after the page was built.
+        add_hook(&hub.knowledge, "late", "echo late\n");
+        git(&hub.knowledge, &["push", "-q"]);
+        let late_head = git(&hub.knowledge, &["rev-parse", "HEAD"]);
+
+        let opts = hub.start(&id).await;
+        assert_eq!(
+            opts["challenge"].as_str().unwrap(),
+            atlas_signer::b64url(&Sha256::digest(hub.pending_bytes(&id)))
+        );
+        let (status, body) = hub.sign(&id).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let stored = hub.latest_manifest();
+        assert_eq!(stored.sources[0].commit.as_str(), shown_commit);
+        assert_ne!(shown_commit, late_head);
+        let hooks = git(
+            &hub.knowledge,
+            &["ls-tree", "--name-only", &shown_commit, "hooks/"],
+        );
+        assert!(
+            hooks.contains("hooks/guard") && !hooks.contains("hooks/late"),
+            "{hooks}"
+        );
+
+        // The next send asks about the late hook.
+        let opts = hub.start("").await;
+        let (_, page) = review_page(&hub, &opts).await;
+        assert!(
+            page.contains("echo late") && !page.contains("echo guard"),
+            "{page}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_passkey_needs_a_look_and_is_what_gets_signed() {
+        let hub = SendHub::new();
+        hub.send_all().await;
+        write_keys(
+            &hub.home.join("state"),
+            &[("Laptop", 7, CRED_ID), ("Phone", 9, &[5, 6, 7, 8])],
+        );
+        let hub = hub.reopen();
+        let opts = hub.start("").await;
+        let (id, page) = review_page(&hub, &opts).await;
+        assert!(
+            page.contains("This update adds the passkey &#39;Phone&#39;"),
+            "{page}"
+        );
+        let opts = hub.start(&id).await;
+        assert!(opts["challenge"].is_string(), "{opts}");
+        let (status, body) = hub.sign(&id).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut names: Vec<String> = hub
+            .latest_manifest()
+            .owner_keys
+            .into_iter()
+            .map(|k| k.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["Laptop", "Phone"]);
+    }
+
+    #[tokio::test]
+    async fn sending_with_nothing_new_says_so_and_sends_nothing() {
+        let hub = SendHub::new();
+        hub.send_all().await;
+        let opts = hub.start("").await;
+        assert_eq!(opts["nothing"], true, "{opts}");
+        assert_eq!(opts["message"], "Your machines already have everything.");
+        let form = format!("csrf={}&next=%2F%3Fsent%3D1&back=%2F", hub.csrf);
+        let (status, _) = call(&hub.app, post_form(&hub, "/send/review", form)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (_, settings) = call(&hub.app, hub.get("/settings?flash=nothing")).await;
+        assert!(settings.contains("Your machines already have everything."));
+        assert_eq!(hub.writer().releases.numbers(), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn the_check_page_works_without_the_script() {
+        let hub = SendHub::new();
+        add_hook(&hub.knowledge, "guard", "echo guard\n");
+        let form = format!("csrf={}&next=%2F%3Fsent%3D1&back=%2F", hub.csrf);
+        let res = hub
+            .app
+            .clone()
+            .oneshot(post_form(&hub, "/send/review", form))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let to = res.headers()[header::LOCATION].to_str().unwrap().to_owned();
+        assert!(to.starts_with("/send/review/"), "{to}");
+        let (_, page) = call(&hub.app, hub.get(&to)).await;
+        assert!(
+            page.contains("echo guard") && page.contains(r#"href="/">Not now"#),
+            "{page}"
+        );
     }
 
     #[tokio::test]

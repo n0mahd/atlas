@@ -47,7 +47,9 @@ it. Keep the knowledge repo private anyway; it holds your memory and instruction
 - If the hub can't be reached, it changes nothing.
 
 Hooks are commands your agents run. They reach a machine only inside an update you
-signed.
+signed, and you see each new or changed hook in full before you sign. The same goes for
+a change to the passkeys your machines trust. What you sign is exactly what that page
+showed. atlasd skips a hook whose script isn't marked as runnable and reports it.
 
 ## Each machine has its own token
 

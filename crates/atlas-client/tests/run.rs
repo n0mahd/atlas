@@ -94,9 +94,18 @@ fn repo(dir: &Path, id: SourceId, files: &[(&str, &str)]) -> Source {
     git(dir, &["init", "--quiet"]);
     for (path, text) in files {
         write(&dir.join(path), text);
+        // Hook scripts are committed executable, as they must be to run.
+        if Path::new(path).extension().is_some_and(|e| e == "sh") {
+            fs::set_permissions(dir.join(path), fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "--quiet", "-m", "store"]);
+    source(dir, id)
+}
+
+/// `dir`'s HEAD as a release source.
+fn source(dir: &Path, id: SourceId) -> Source {
     Source {
         id,
         remote: dir.to_string_lossy().into_owned(),
@@ -801,4 +810,34 @@ fn only_plain_top_level_markdown_files_are_subagents() {
         );
     }
     assert_eq!(d.problems.len(), 3, "{:?}", d.problems);
+}
+
+#[test]
+fn a_hook_whose_script_isnt_executable_is_reported_not_installed() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let store = PathBuf::from(&w.sources[0].remote);
+    let script = store.join("hooks/guard/run.sh");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
+    git(&store, &["commit", "--quiet", "-am", "plain script"]);
+    w.sources[0] = source(&store, SourceId::Knowledge);
+    let release = signed(&w.manifest(1, &[&key]), &key);
+
+    let pass = w.run(&release, false);
+    assert!(
+        pass.problems
+            .iter()
+            .any(|p| p.contains("hook guard skipped") && p.contains("isn't executable")),
+        "{:?}",
+        pass.problems
+    );
+    let claude = pass
+        .report
+        .harnesses
+        .iter()
+        .find(|r| r.kind == HarnessKind::ClaudeCode)
+        .unwrap();
+    assert_eq!(claude.hooks_managed, 0);
+    let settings = fs::read_to_string(w.home().join(".claude/settings.json")).unwrap_or_default();
+    assert!(!settings.contains("atlas:guard"), "{settings}");
 }

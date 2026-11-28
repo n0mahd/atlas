@@ -101,6 +101,24 @@ pub struct Page {
     pub flash: String,
     /// A button the notice offers, such as Send for a save that didn't reach the machines.
     pub flash_action: Option<&'static str>,
+    /// After sending: what else the update changed, as one line with an expand.
+    pub flash_more: Option<OthersView>,
+}
+
+/// "3 notes and 1 skill changed outside Atlas", and what they are.
+#[derive(Clone, Debug)]
+pub struct OthersView {
+    pub line: String,
+    pub names: Vec<String>,
+}
+
+impl OthersView {
+    pub(crate) fn of(others: &crate::review::Others) -> Option<Self> {
+        Some(Self {
+            line: others.line()?,
+            names: others.names(),
+        })
+    }
 }
 
 /// The scope a request asked for, if it names a known project; otherwise global.
@@ -122,6 +140,7 @@ impl Page {
     /// `section` is the nav path; `scoped` pages carry the scope in links and show the picker.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)] // one struct literal, field by field
     pub fn new(
         section: &'static str,
         title: impl Into<String>,
@@ -231,6 +250,7 @@ impl Page {
             edit_href: None,
             flash: String::new(),
             flash_action: None,
+            flash_more: None,
         }
     }
 }

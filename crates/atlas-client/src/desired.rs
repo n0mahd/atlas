@@ -98,6 +98,17 @@ fn agents_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf
     out
 }
 
+#[cfg(unix)]
+fn is_executable(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_: &fs::Metadata) -> bool {
+    true
+}
+
 fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
     let slug = Slug::new(name).map_err(|e| e.to_string())?;
     let file = dir.join("hook.toml");
@@ -114,8 +125,16 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
         ));
     }
     let script = dir.join(run);
-    if !fs::symlink_metadata(&script).is_ok_and(|m| m.is_file()) {
+    let Ok(meta) = fs::symlink_metadata(&script) else {
         return Err(format!("its script {run} is missing"));
+    };
+    if !meta.is_file() {
+        return Err(format!("its script {run} is missing"));
+    }
+    if !is_executable(&meta) {
+        return Err(format!(
+            "its script {run} isn't executable (mark it with chmod +x and commit)"
+        ));
     }
     Ok(HookSpec {
         hook: ManagedHook {
