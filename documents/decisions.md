@@ -503,7 +503,7 @@ same files. Setup links keep their 64-character form and have no rate limit: the
 made on the hub itself and can't be guessed. The install script joins its arguments, so a
 code pasted with a space still works.
 
-## 00XX · 2026-11-28 · The install script runs the first pass in the foreground
+## 0041 · 2026-11-28 · The install script runs the first pass in the foreground
 The served install script now runs `atlasd run --summary` itself, after pairing and before
 it starts the timer (or the launchd agent), so the person sees what happened in two or
 three lines: what was linked for which agents, and that nothing of theirs was deleted, or
