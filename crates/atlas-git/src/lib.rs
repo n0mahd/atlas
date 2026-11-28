@@ -10,6 +10,21 @@ use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The git trailer key that marks a commit the hub made.
+pub const ATLAS_TRAILER_KEY: &str = "Atlas-Change";
+/// The trailer every commit the hub makes ends with, so later reads can tell the owner's
+/// own commits (made by hand) from Atlas's, whatever its subject says.
+pub const ATLAS_TRAILER: &str = "Atlas-Change: hub";
+
+/// `message` with [`ATLAS_TRAILER`] as its last paragraph (once).
+#[must_use]
+pub fn with_atlas_trailer(message: &str) -> String {
+    if message.lines().any(|l| l.trim() == ATLAS_TRAILER) {
+        return message.to_owned();
+    }
+    format!("{}\n\n{ATLAS_TRAILER}", message.trim_end())
+}
 const PUSH_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Environment variables that could point git at another repo, index or object store.
@@ -195,13 +210,14 @@ impl Repo {
         if untracked {
             self.git(&[os("add"), os("--"), rel.as_os_str()], LOCAL_TIMEOUT)?;
         }
+        let message = with_atlas_trailer(message);
         let commit = [
             os("commit"),
             os("--only"),
             os("--no-verify"),
             os("--quiet"),
             os("-m"),
-            os(message),
+            os(&message),
             os("--"),
             rel.as_os_str(),
         ];
@@ -277,7 +293,8 @@ impl Repo {
             .iter()
             .map(|s| os(s))
             .collect();
-        commit.push(os(message));
+        let message = with_atlas_trailer(message);
+        commit.push(os(&message));
         commit.push(os("--"));
         commit.extend(dirty.iter().map(|p| p.as_os_str()));
         if let Err(err) = self.git(&commit, LOCAL_TIMEOUT) {
@@ -754,7 +771,8 @@ impl Repo {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
-    /// The commits `head` has that `base` doesn't, newest first, as (id, subject).
+    /// The commits `head` has that `base` doesn't, newest first, as (id, subject, whether
+    /// the hub made it: its message carries the [`ATLAS_TRAILER`]).
     ///
     /// # Errors
     /// Not full commit ids, or git fails.
@@ -762,15 +780,18 @@ impl Repo {
         &self,
         base: &str,
         head: &str,
-    ) -> Result<Vec<(String, String)>, GitError> {
+    ) -> Result<Vec<(String, String, bool)>, GitError> {
         check_oid(base)?;
         check_oid(head)?;
+        let format = format!(
+            "--format=%H%x09%(trailers:key={ATLAS_TRAILER_KEY},valueonly,separator=%x2C)%x09%s"
+        );
         let out = self.git(
             &[
                 "log",
                 "--no-color",
                 "--no-show-signature",
-                "--format=%H%x09%s",
+                &format,
                 &format!("{base}..{head}"),
             ],
             LOCAL_TIMEOUT,
@@ -778,8 +799,13 @@ impl Repo {
         Ok(String::from_utf8_lossy(&out.stdout)
             .lines()
             .filter_map(|l| {
-                let (id, subject) = l.split_once('\t')?;
-                Some((id.to_owned(), subject.to_owned()))
+                let (id, rest) = l.split_once('\t')?;
+                let (trailer, subject) = rest.split_once('\t')?;
+                Some((
+                    id.to_owned(),
+                    subject.to_owned(),
+                    !trailer.trim().is_empty(),
+                ))
             })
             .collect())
     }

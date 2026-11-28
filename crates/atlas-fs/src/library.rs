@@ -357,6 +357,68 @@ fn refuse_links_on_the_way(dir: &Dir, rel: &Path) -> Result<(), LibraryError> {
     Ok(())
 }
 
+/// What a path inside a repo held before a change, kept so a failed change can be put
+/// back without git (whose index may be locked when the commit failed).
+#[derive(Clone, Debug)]
+pub enum Saved {
+    Missing,
+    File { bytes: Vec<u8>, executable: bool },
+    Folder(Tree),
+}
+
+/// Keeps what `rel` inside `root` holds now, within the [`read_tree`] limits. A link is
+/// refused: changes never go through one.
+///
+/// # Errors
+/// `rel` escapes or is a link, is too big, or can't be read.
+pub fn save_path(root: &Path, rel: &str) -> Result<Saved, LibraryError> {
+    let rel_p = check_rel(rel)?;
+    let dir = open(root)?;
+    refuse_links_on_the_way(&dir, rel_p)?;
+    let meta = match dir.symlink_metadata(rel_p) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Saved::Missing),
+        Err(e) => return Err(e.into()),
+        Ok(m) => m,
+    };
+    if meta.is_dir() {
+        return Ok(Saved::Folder(read_tree(&root.join(rel_p))?));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(LibraryError::TooBig);
+    }
+    let mut bytes = Vec::new();
+    let file = dir.open(rel_p)?;
+    let executable = file.metadata()?.permissions().mode() & 0o111 != 0;
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok(Saved::File { bytes, executable })
+}
+
+/// Puts `rel` back to exactly what [`save_path`] kept, whatever is there now.
+///
+/// # Errors
+/// A write or removal fails.
+pub fn put_back(root: &Path, rel: &str, saved: &Saved) -> Result<(), LibraryError> {
+    let rel_p = check_rel(rel)?;
+    let dir = open(root)?;
+    refuse_links_on_the_way(&dir, rel_p.parent().unwrap_or(Path::new("")))?;
+    match dir.symlink_metadata(rel_p) {
+        Ok(m) if m.is_dir() && !m.file_type().is_symlink() => dir.remove_dir_all(rel_p)?,
+        Ok(_) => dir.remove_file(rel_p)?,
+        Err(_) => {}
+    }
+    match saved {
+        Saved::Missing => Ok(()),
+        Saved::File { bytes, executable } => {
+            write_file(root, rel, bytes)?;
+            if *executable {
+                dir.set_permissions(rel_p, Permissions::from_mode(0o755))?;
+            }
+            Ok(())
+        }
+        Saved::Folder(tree) => write_tree(root, rel, tree),
+    }
+}
+
 /// Deletes folder `rel` inside `root` and everything in it. Refuses a link, so a
 /// deletion can't reach outside the repo.
 ///

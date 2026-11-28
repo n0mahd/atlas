@@ -63,7 +63,7 @@ fn commits_only_the_file_and_leaves_other_changes_alone() {
     assert_eq!(sh(p, &["show", "HEAD:a.md"]), "a v2\n");
     assert_eq!(
         sh(p, &["log", "-1", "--format=%an <%ae>%n%B"]).trim(),
-        "Test <test@example.invalid>\nEdit a"
+        "Test <test@example.invalid>\nEdit a\n\nAtlas-Change: hub"
     );
     let after = sh(p, &["status", "--porcelain"]);
     assert_eq!(after, " M b.md\nM  c.md\n");
@@ -509,8 +509,13 @@ fn reads_what_changed_between_two_commits() {
     fs::remove_file(p.join("b.md")).unwrap();
     fs::create_dir_all(p.join("hooks/guard")).unwrap();
     fs::write(p.join("hooks/guard/run.sh"), "echo hi\n").unwrap();
-    sh(p, &["add", "-A"]);
-    sh(p, &["commit", "--quiet", "-m", "Edit a in Atlas"]);
+    // Made through Atlas, with a subject that doesn't say so: the trailer does.
+    repo.commit_paths(
+        &[Path::new("a.md"), Path::new("b.md"), Path::new("hooks")],
+        "Bring a into Atlas from elsewhere",
+        None,
+    )
+    .unwrap();
     fs::write(p.join("c.md"), "c v2\n").unwrap();
     sh(p, &["commit", "--quiet", "-am", "by hand"]);
     let head = sh(p, &["rev-parse", "HEAD"]).trim().to_owned();
@@ -572,7 +577,13 @@ fn reads_what_changed_between_two_commits() {
 
     let commits = repo.commits_between(&base, &head).unwrap();
     let subjects: Vec<_> = commits.iter().map(|c| c.1.as_str()).collect();
-    assert_eq!(subjects, vec!["by hand", "Edit a in Atlas"]);
+    assert_eq!(
+        subjects,
+        vec!["by hand", "Bring a into Atlas from elsewhere"]
+    );
+    // Commits Atlas makes carry its trailer whatever their subject; the owner's don't.
+    let by_atlas: Vec<bool> = commits.iter().map(|c| c.2).collect();
+    assert_eq!(by_atlas, vec![false, true]);
     assert_eq!(repo.paths_in_commit(&commits[0].0).unwrap(), vec!["c.md"]);
     assert!(repo.has_commit(&base));
     assert!(!repo.has_commit(&"0".repeat(40)));

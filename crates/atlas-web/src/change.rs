@@ -268,13 +268,39 @@ pub(crate) fn run(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let opened = open_checked(repos)?;
-    // Restores the repos from `from` on, each with its own paths.
+    // What every touched path holds now, so a failure puts back exactly these bytes
+    // without needing git (whose index may be the reason the commit failed).
+    let mut saved: Vec<Vec<(String, atlas_fs::library::Saved)>> = Vec::with_capacity(repos.len());
+    for change in repos {
+        let mut kept = Vec::with_capacity(change.paths.len());
+        for rel in &change.paths {
+            let rel = rel.to_string_lossy().into_owned();
+            let s = atlas_fs::library::save_path(&change.root, &rel).map_err(|e| {
+                refuse(format!(
+                    "{} can't be changed safely ({e}); nothing changed.",
+                    Path::new(&shown(&change.root)).join(&rel).display()
+                ))
+            })?;
+            kept.push((rel, s));
+        }
+        saved.push(kept);
+    }
+    // Restores the repos from `from` on, each with its own paths: the saved bytes first,
+    // then git's index for those paths when git can.
     let restore_from = |from: usize| {
-        for (repo, change) in opened.iter().zip(repos).skip(from) {
+        for ((repo, change), kept) in opened.iter().zip(repos).zip(&saved).skip(from) {
+            for (rel, s) in kept {
+                if let Err(e) = atlas_fs::library::put_back(&change.root, rel, s) {
+                    tracing::error!(
+                        "putting {rel} back in {} after a failed change: {e}",
+                        shown(&change.root)
+                    );
+                }
+            }
             let paths: Vec<&Path> = change.paths.iter().map(PathBuf::as_path).collect();
             if let Err(e) = repo.restore_paths(&paths) {
-                tracing::error!(
-                    "restoring {} after a failed change: {e}",
+                tracing::warn!(
+                    "git's index for {} after a failed change: {e}",
                     shown(&change.root)
                 );
             }
@@ -434,7 +460,9 @@ mod tests {
     #[test]
     fn a_failed_second_commit_restores_only_its_own_paths() {
         let dest = repo(true);
-        let src = repo(false);
+        // The source's commit fails because git's index is locked, and the lock stays
+        // while Atlas restores it, so the restore can't lean on git.
+        let src = repo(true);
         // The owner has an uncommitted file in the source repo at a path the destination
         // part names; restoring the source must never touch it.
         fs::create_dir_all(src.path().join("skills/b")).unwrap();
@@ -456,6 +484,7 @@ mod tests {
                 fs::create_dir_all(d.join("skills/b")).unwrap();
                 fs::write(d.join("skills/b/SKILL.md"), "b\n").unwrap();
                 fs::remove_dir_all(s.join("skills/a")).unwrap();
+                fs::write(s.join(".git/index.lock"), "").unwrap();
                 Ok(())
             }),
         );
@@ -463,6 +492,12 @@ mod tests {
             panic!("{got:?}")
         };
         assert!(msg.contains("already has its part committed"), "{msg}");
+        fs::remove_file(src.path().join(".git/index.lock")).unwrap();
+        assert_eq!(
+            git(src.path(), &["status", "--porcelain", "--", "skills/a"]),
+            "",
+            "skills/a is exactly as committed"
+        );
         // The source is back as HEAD has it, and the owner's draft is untouched.
         assert_eq!(
             fs::read_to_string(src.path().join("skills/a/SKILL.md")).unwrap(),

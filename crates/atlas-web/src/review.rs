@@ -389,14 +389,15 @@ pub(crate) fn review(sources: &Sources, previous: Option<&Manifest>, next: &Mani
     out
 }
 
-/// Paths touched by commits Atlas didn't make (its commit messages end "in Atlas"). None
-/// when that can't be told cheaply.
+/// Paths touched by commits Atlas didn't make: the hub's commits carry the
+/// `Atlas-Change` trailer (older ones a subject ending "in Atlas"). None when that can't
+/// be told cheaply.
 fn outside_paths(repo: &Repo, base: &str, head: &str) -> Option<BTreeSet<String>> {
     let commits = repo.commits_between(base, head).ok()?;
     let theirs: Vec<&String> = commits
         .iter()
-        .filter(|(_, subject)| !subject.ends_with(" in Atlas"))
-        .map(|(id, _)| id)
+        .filter(|(_, subject, by_atlas)| !by_atlas && !subject.ends_with(" in Atlas"))
+        .map(|(id, _, _)| id)
         .collect();
     if theirs.len() > COMMITS_MAX {
         return None;

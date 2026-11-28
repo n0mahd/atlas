@@ -602,6 +602,8 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
   .bulk-bar { top: 52px; padding: 8px 10px; }
   .bulk-bar .select { max-width: 9.5em; }
   .section-head { flex-wrap: wrap; }
+  /* The numeral stays beside a long heading as it wraps; the count may drop below. */
+  .section-head > h2 { flex: 1 1 0; min-width: 0; }
 }
 .ledger-actions { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
 .inline-form { margin: 0; display: inline-flex; }

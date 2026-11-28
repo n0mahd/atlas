@@ -32,7 +32,7 @@
           {{ a.icon|safe }}<span class="toggle-label">{{ a.name }}</span><span class="switch-track" aria-hidden="true"></span>
         </button>
       </form>
-      {% if let Some(why) = a.locked %}<span class="sr" id="why-{{ p.dom }}-{{ a.id }}">{{ why }}</span><details class="info"><summary aria-label="Why {{ a.name }} can't be turned off">i</summary><p>{{ why }}</p></details>{% endif %}
+      {% if let Some(why) = a.locked %}<span class="sr" id="why-{{ p.dom }}-{{ a.id }}">{{ why }}</span><details class="info end"><summary aria-label="Why {{ a.name }} can't be turned off">i</summary><p>{{ why }}</p></details>{% endif %}
       {% if let Some(note) = a.note %}<p class="toggle-why warn">{{ note }}</p>{% endif %}
     </li>
     {% endfor %}
