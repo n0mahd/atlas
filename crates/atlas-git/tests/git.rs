@@ -456,3 +456,19 @@ fn commits_a_folder_move_as_one_commit_and_leaves_the_rest() {
         Err(GitError::InvalidPath(_))
     ));
 }
+
+#[test]
+fn a_named_path_that_was_never_written_does_not_fail_the_commit() {
+    let dir = fixture();
+    let p = dir.path();
+    fs::write(p.join("a.md"), "a v2\n").unwrap();
+    let repo = Repo::open(p).unwrap();
+    // A change may name a file it could write (the placements file) but didn't.
+    repo.commit_paths(
+        &[Path::new("a.md"), Path::new("atlas/placements.toml")],
+        "Edit a",
+        None,
+    )
+    .unwrap();
+    assert_eq!(files_in(p, "HEAD").trim(), "a.md");
+}

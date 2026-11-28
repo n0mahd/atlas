@@ -67,9 +67,12 @@ impl Solved {
 /// readers see it whatever Atlas does. `switchable` says whether an agent can switch a
 /// skill off by its own setting at this reach.
 ///
-/// With every present agent wanted and no `own` folders this picks the same folders as
-/// before placements existed: each agent's first folder, unless a folder it reads already
-/// has the link.
+/// The choice is the best one possible: fewest agents that see a skill they shouldn't,
+/// then fewest switched off by a setting, then fewest wanted agents that see it twice,
+/// then fewest links. The simple pass (each wanted agent's first folder that no unwanted
+/// agent reads, else one whose unwanted readers can be switched off) is kept whenever it
+/// is already best on the first two, so with every present agent wanted and no `own`
+/// folders the links are exactly those atlasd made before placements existed.
 #[must_use]
 pub fn solve(
     present: &[&Layout],
@@ -78,15 +81,129 @@ pub fn solve(
     own: &[&str],
     switchable: impl Fn(HarnessKind) -> bool,
 ) -> Solved {
-    let readers = |dir: &str| -> BTreeSet<HarnessKind> {
-        present
-            .iter()
-            .filter(|l| reach.dirs(l).contains(&dir))
-            .map(|l| l.kind)
-            .collect()
+    let simple = simple_pass(present, wanted, reach, own, &switchable);
+    if simple.stuck_on.is_empty() && simple.switch_off.is_empty() {
+        return simple;
+    }
+    let best = search(present, wanted, reach, own, &switchable);
+    match best {
+        Some(best)
+            if (best.stuck_on.len(), best.switch_off.len())
+                < (simple.stuck_on.len(), simple.switch_off.len()) =>
+        {
+            best
+        }
+        _ => simple,
+    }
+}
+
+/// The agents (present, at this reach) that read `dir`.
+fn readers(present: &[&Layout], reach: Reach, dir: &str) -> BTreeSet<HarnessKind> {
+    present
+        .iter()
+        .filter(|l| reach.dirs(l).contains(&dir))
+        .map(|l| l.kind)
+        .collect()
+}
+
+/// Fills in `switch_off` and `stuck_on` for a set of folders.
+fn finish(
+    folders: Vec<&'static str>,
+    present: &[&Layout],
+    wanted: &BTreeSet<HarnessKind>,
+    reach: Reach,
+    own: &[&str],
+    switchable: &impl Fn(HarnessKind) -> bool,
+) -> Solved {
+    let mut out = Solved {
+        folders,
+        ..Solved::default()
     };
+    let reached: BTreeSet<HarnessKind> = out
+        .folders
+        .iter()
+        .copied()
+        .chain(own.iter().copied())
+        .flat_map(|d| readers(present, reach, d))
+        .filter(|k| !wanted.contains(k))
+        .collect();
+    for kind in reached {
+        if switchable(kind) {
+            out.switch_off.insert(kind);
+        } else {
+            out.stuck_on.insert(kind);
+        }
+    }
+    out
+}
+
+/// Tries every set of folders (there are at most a dozen distinct ones) and returns the
+/// best that reaches every wanted agent, or `None` when there are too many to try.
+fn search(
+    present: &[&Layout],
+    wanted: &BTreeSet<HarnessKind>,
+    reach: Reach,
+    own: &[&str],
+    switchable: &impl Fn(HarnessKind) -> bool,
+) -> Option<Solved> {
+    let mut dirs: Vec<&'static str> = Vec::new();
+    for l in present {
+        for d in reach.dirs(l) {
+            if !dirs.contains(d) && !own.contains(d) {
+                dirs.push(d);
+            }
+        }
+    }
+    if dirs.len() > 16 {
+        return None;
+    }
+    let needs: Vec<&Layout> = present
+        .iter()
+        .copied()
+        .filter(|l| wanted.contains(&l.kind) && !reach.dirs(l).is_empty())
+        .collect();
+    let mut best: Option<((usize, usize, usize, usize), Solved)> = None;
+    for mask in 0_u32..(1 << dirs.len()) {
+        let chosen: Vec<&'static str> = dirs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .map(|(_, d)| *d)
+            .collect();
+        let mut twice = 0;
+        let mut all = true;
+        for l in &needs {
+            let seen = reach
+                .dirs(l)
+                .iter()
+                .filter(|d| chosen.contains(d) || own.contains(d))
+                .count();
+            all &= seen > 0;
+            twice += seen.saturating_sub(1);
+        }
+        if !all {
+            continue;
+        }
+        let n = chosen.len();
+        let solved = finish(chosen, present, wanted, reach, own, switchable);
+        let score = (solved.stuck_on.len(), solved.switch_off.len(), twice, n);
+        // Masks run in layout order, so on a tie the earlier folders win.
+        if best.as_ref().is_none_or(|(s, _)| score < *s) {
+            best = Some((score, solved));
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+fn simple_pass(
+    present: &[&Layout],
+    wanted: &BTreeSet<HarnessKind>,
+    reach: Reach,
+    own: &[&str],
+    switchable: &impl Fn(HarnessKind) -> bool,
+) -> Solved {
     let unwanted_readers = |dir: &str| -> BTreeSet<HarnessKind> {
-        readers(dir)
+        readers(present, reach, dir)
             .into_iter()
             .filter(|k| !wanted.contains(k))
             .collect()
@@ -112,20 +229,7 @@ pub fn solve(
             out.folders.push(dir);
         }
     }
-    let reached: BTreeSet<HarnessKind> = out
-        .folders
-        .iter()
-        .chain(own)
-        .flat_map(|d| unwanted_readers(d))
-        .collect();
-    for kind in reached {
-        if switchable(kind) {
-            out.switch_off.insert(kind);
-        } else {
-            out.stuck_on.insert(kind);
-        }
-    }
-    out
+    finish(out.folders, present, wanted, reach, own, switchable)
 }
 
 #[cfg(test)]
@@ -144,7 +248,7 @@ mod tests {
         p.iter().map(|l| l.kind).collect()
     }
 
-    use HarnessKind::{Antigravity, ClaudeCode, Codex, Grok, OpenCode, Pi};
+    use HarnessKind::{Amp, Antigravity, ClaudeCode, Codex, Grok, Muse, OpenCode, Pi};
 
     #[test]
     fn everyone_wanted_matches_the_old_plan() {
@@ -172,8 +276,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unwanted_reader_is_switched_off_when_it_can_be() {
-        // OpenCode only: every OpenCode folder is shared with Claude Code.
+    fn an_agents_own_folder_avoids_a_shared_one() {
+        // OpenCode only: its own folder isn't Claude Code's.
         let p = present(&[ClaudeCode, OpenCode]);
         let got = solve(&p, &BTreeSet::from([OpenCode]), Reach::Home, &[], |k| {
             k == ClaudeCode
@@ -185,6 +289,90 @@ mod tests {
             k == ClaudeCode
         });
         assert_eq!(got.folders, [".grok/skills"]);
+    }
+
+    #[test]
+    fn an_unwanted_reader_is_switched_off_when_every_folder_is_shared() {
+        // Amp in a project reads .agents/skills (Codex's too) and .claude/skills (Claude
+        // Code's too).
+        let p = present(&[ClaudeCode, Codex, Amp]);
+        let got = solve(&p, &BTreeSet::from([Amp]), Reach::Project, &[], |k| {
+            k == Codex
+        });
+        assert_eq!(got.folders, [".agents/skills"]);
+        assert_eq!(got.switch_off, BTreeSet::from([Codex]));
+        assert!(got.stuck_on.is_empty());
+        let p = present(&[Codex, Amp]);
+        let got = solve(&p, &BTreeSet::from([Amp]), Reach::Project, &[], |_| false);
+        assert_eq!(got.folders, [".claude/skills"]);
+        assert!(got.stuck_on.is_empty() && got.switch_off.is_empty());
+    }
+
+    #[test]
+    fn the_fewest_agents_are_left_seeing_a_skill_they_should_not() {
+        // From review: .agents/skills would reach Amp, Muse and Grok; .codex/skills only Muse.
+        let p = present(&[Codex, Amp, Muse, Grok]);
+        let got = solve(&p, &BTreeSet::from([Codex]), Reach::Home, &[], |_| false);
+        assert_eq!(got.folders, [".codex/skills"]);
+        assert_eq!(got.stuck_on, BTreeSet::from([Muse]));
+        // .agents/skills would also need OpenCode switched off; .codex/skills doesn't.
+        let p = present(&[Codex, OpenCode, Muse]);
+        let got = solve(&p, &BTreeSet::from([Codex]), Reach::Home, &[], |k| {
+            k == OpenCode
+        });
+        assert_eq!(got.folders, [".codex/skills"]);
+        assert!(got.switch_off.is_empty());
+        // A global skill used only in a project, for Amp alone.
+        let p = present(&[Codex, Pi, Antigravity, Amp, Grok]);
+        let got = solve(&p, &BTreeSet::from([Amp]), Reach::Project, &[], |_| false);
+        assert_eq!(got.folders, [".claude/skills"]);
+        assert_eq!(got.stuck_on, BTreeSet::from([Grok]));
+    }
+
+    #[test]
+    fn every_wanted_agent_sees_it_and_no_better_choice_exists() {
+        let agents: Vec<&Layout> = layouts()
+            .iter()
+            .filter(|l| !l.skill_dirs.is_empty())
+            .collect();
+        let switchable = |k: HarnessKind| matches!(k, ClaudeCode | Codex);
+        let cases: [(Reach, &[&str]); 3] = [
+            (Reach::Home, &[]),
+            (Reach::Project, &[]),
+            (Reach::Project, &[".agents/skills"]),
+        ];
+        for (reach, own) in cases {
+            for pmask in 0_u32..(1 << agents.len()) {
+                if pmask.count_ones() > 4 {
+                    continue;
+                }
+                let p: Vec<&Layout> = agents
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| pmask & (1 << i) != 0)
+                    .map(|(_, l)| *l)
+                    .collect();
+                for wmask in 0_u32..(1 << p.len()) {
+                    let wanted: BTreeSet<HarnessKind> = p
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| wmask & (1 << i) != 0)
+                        .map(|(_, l)| l.kind)
+                        .collect();
+                    let got = solve(&p, &wanted, reach, own, switchable);
+                    for k in &wanted {
+                        assert!(got.sees(*k, &p, reach, own), "{k:?} misses it: {got:?}");
+                    }
+                    if let Some(best) = search(&p, &wanted, reach, own, &switchable) {
+                        assert!(
+                            (got.stuck_on.len(), got.switch_off.len())
+                                <= (best.stuck_on.len(), best.switch_off.len()),
+                            "{wanted:?}: {got:?} is worse than {best:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

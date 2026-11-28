@@ -8,14 +8,16 @@
 //!   repo `.claude/settings.local.json` (kept out of git). Strict JSON, so Atlas lists the
 //!   names it switched off under its own top-level key `atlas:skillOverrides`.
 //! - Codex: `[[skills.config]]` tables with `enabled = false` in `~/.codex/config.toml`,
-//!   keyed by the skill's `SKILL.md` path (by `name` when no folder is known). Atlas's
-//!   tables end their header line with the comment `# atlas:<name>`.
-//! - `OpenCode`: `permission.skill.<name> = "deny"` in `opencode.jsonc` (the home config
-//!   folder, or the repo root). The owner's comments are kept; Atlas's entries end with
-//!   the comment `// atlas:<name>`.
-//! - Pi: `-skills/<name>/SKILL.md` in the `skills` list of `~/.pi/agent/settings.json`
-//!   (home only: a repo's `.pi/settings.json` is usually committed). Strict JSON, so
-//!   Atlas lists its names under `atlas:skills`.
+//!   keyed by the skill's `SKILL.md` path, so the home file also switches off a project's
+//!   skills without writing into the repo. Atlas's tables end their header line with the
+//!   comment `# atlas:<name>`.
+//! - `OpenCode`: `permission.skill.<name> = "deny"` in `opencode.jsonc` or `opencode.json`
+//!   in the home config folder. Home only: a repo's `opencode.json` is usually tracked,
+//!   and a switch is the owner's, not the team's. The owner's comments are kept; Atlas's
+//!   entries end with the comment `// atlas:<name>`.
+//! - Pi: `-skills/<name>/SKILL.md` in the `skills` list of `~/.pi/agent/settings.json`,
+//!   home only (a repo's `.pi/settings.json` is usually committed). Strict JSON, so Atlas
+//!   lists its names under `atlas:skills`.
 //!
 //! Every format keeps what the owner wrote: an entry of the owner's for a skill (on or
 //! off) is never changed or removed, and Atlas adds none of its own beside it. Running a
@@ -23,6 +25,12 @@
 //!
 //! Antigravity, Amp, Muse and Grok Build have no such setting known to Atlas, so their
 //! switch is reported instead (`placement::Solved::stuck_on`).
+//!
+//! Several things share some of these files (Claude Code's `settings.json` also holds
+//! Atlas's hooks), so a caller renders every Atlas part onto the same bytes in turn and
+//! writes once. Codex's home and project switches share one file: render it once with
+//! every name that must be off there, as a second call would drop the first one's
+//! entries.
 
 mod claude;
 mod codex;
@@ -39,18 +47,48 @@ use serde_json::{Map, Value};
 use crate::placement::Reach;
 use crate::{Change, FormatError};
 
-/// Where an agent's skill switches live, relative to the home (`Reach::Home`) or the repo.
+/// What a switch file's paths are relative to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Base {
+    /// The login's home folder.
+    Home,
+    /// The repo's top folder.
+    Repo,
+}
+
+/// Where an agent's skill switches for one reach live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SwitchFile {
+    pub base: Base,
+    /// Candidate files, in preference order: the first that exists is edited, and the
+    /// last is created when none does.
+    pub candidates: &'static [&'static str],
+}
+
+/// Where `kind` keeps skill switches for skills it loads at `reach`, if anywhere.
 #[must_use]
-pub const fn switch_file(kind: HarnessKind, reach: Reach) -> Option<&'static str> {
-    match (kind, reach) {
-        (HarnessKind::ClaudeCode, Reach::Home) => Some(".claude/settings.json"),
-        (HarnessKind::ClaudeCode, Reach::Project) => Some(".claude/settings.local.json"),
-        (HarnessKind::Codex, Reach::Home) => Some(".codex/config.toml"),
-        (HarnessKind::OpenCode, Reach::Home) => Some(".config/opencode/opencode.jsonc"),
-        (HarnessKind::OpenCode, Reach::Project) => Some("opencode.jsonc"),
-        (HarnessKind::Pi, Reach::Home) => Some(".pi/agent/settings.json"),
-        _ => None,
+pub const fn switch_file(kind: HarnessKind, reach: Reach) -> Option<SwitchFile> {
+    const fn home(candidates: &'static [&'static str]) -> SwitchFile {
+        SwitchFile {
+            base: Base::Home,
+            candidates,
+        }
     }
+    let file = match (kind, reach) {
+        (HarnessKind::ClaudeCode, Reach::Home) => home(&[".claude/settings.json"]),
+        (HarnessKind::ClaudeCode, Reach::Project) => SwitchFile {
+            base: Base::Repo,
+            candidates: &[".claude/settings.local.json"],
+        },
+        (HarnessKind::Codex, _) => home(&[".codex/config.toml"]),
+        (HarnessKind::OpenCode, Reach::Home) => home(&[
+            ".config/opencode/opencode.jsonc",
+            ".config/opencode/opencode.json",
+        ]),
+        (HarnessKind::Pi, Reach::Home) => home(&[".pi/agent/settings.json"]),
+        _ => return None,
+    };
+    Some(file)
 }
 
 /// Whether Atlas can switch a skill off for `kind` at this reach.
@@ -59,10 +97,18 @@ pub const fn can_switch_off(kind: HarnessKind, reach: Reach) -> bool {
     switch_file(kind, reach).is_some()
 }
 
-/// Rewrites `kind`'s switch file so exactly `off` (skill names) are switched off by
-/// Atlas. Entries Atlas didn't write are kept; Atlas's entries for other names are
-/// removed. `skill_dir` maps a name to the folder the agent loads it from, for formats
-/// that key switches by path (Codex); a link into the skill's folder is fine.
+/// Rewrites one switch file so exactly `off` (skill names) are switched off by Atlas.
+///
+/// - Entries the owner wrote are kept, including the owner's own "off" for a skill.
+/// - `atlas_before` is the set of names Atlas switched off in this file last time
+///   (atlasd keeps it in its state). Every format here marks Atlas's entries in the file
+///   itself (a comment, or for strict JSON a list under Atlas's own key), so they don't
+///   need it: the file is the record, and an entry the owner had before Atlas wanted the
+///   same skill off is never taken for Atlas's.
+/// - `skill_dir` maps a name to the folder the agent loads it from, for formats keyed by
+///   path (Codex); a link into the skill's folder is fine. At `Reach::Project` a name it
+///   doesn't map is skipped, since a name entry would also switch off a global skill.
+/// - `Change::Remove` only when Atlas created the file and nothing else is left in it.
 ///
 /// # Errors
 /// The current file can't be parsed, or holds the setting in a shape Atlas doesn't edit;
@@ -72,14 +118,16 @@ pub fn render_switches(
     reach: Reach,
     current: Option<&[u8]>,
     off: &BTreeSet<String>,
+    atlas_before: &BTreeSet<String>,
     skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> Result<Change, FormatError> {
+    let _ = atlas_before;
     if !can_switch_off(kind, reach) {
         return Ok(Change::Unchanged);
     }
     match kind {
         HarnessKind::ClaudeCode => claude::render(current, off),
-        HarnessKind::Codex => codex::render(current, off, skill_dir),
+        HarnessKind::Codex => codex::render(current, off, reach, skill_dir),
         HarnessKind::OpenCode => opencode::render(current, off),
         HarnessKind::Pi => pi::render(current, off),
         _ => Ok(Change::Unchanged),
@@ -151,11 +199,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_switch_path_stays_inside_and_project_files_are_untracked_by_design() {
+        for kind in HarnessKind::ALL {
+            for reach in [Reach::Home, Reach::Project] {
+                let Some(f) = switch_file(kind, reach) else {
+                    continue;
+                };
+                assert_ne!(f.candidates.len(), 0);
+                for p in f.candidates {
+                    assert!(!p.starts_with('/') && !p.split('/').any(|s| s == ".."));
+                    if f.base == Base::Repo {
+                        assert!(p.contains(".local."), "{p} must be a local-only file");
+                    }
+                }
+            }
+        }
+        assert!(can_switch_off(HarnessKind::Codex, Reach::Project));
+        assert!(!can_switch_off(HarnessKind::OpenCode, Reach::Project));
+    }
+
+    #[test]
     fn harness_facts_table_covers_every_switch_file() {
         let doc = include_str!("../HARNESSES.md");
         for kind in HarnessKind::ALL {
             for reach in [Reach::Home, Reach::Project] {
-                if let Some(p) = switch_file(kind, reach) {
+                for p in switch_file(kind, reach).map_or(&[][..], |f| f.candidates) {
                     assert!(doc.contains(&format!("`{p}`")), "HARNESSES.md lacks {p}");
                 }
             }
@@ -168,12 +236,12 @@ mod tests {
         for (kind, reach) in [
             (HarnessKind::Grok, Reach::Home),
             (HarnessKind::Antigravity, Reach::Home),
-            (HarnessKind::Codex, Reach::Project),
+            (HarnessKind::OpenCode, Reach::Project),
             (HarnessKind::Pi, Reach::Project),
         ] {
             assert!(!can_switch_off(kind, reach));
             assert_eq!(
-                render_switches(kind, reach, Some(b"{}"), &off, &|_| None).unwrap(),
+                render_switches(kind, reach, Some(b"{}"), &off, &off, &|_| None).unwrap(),
                 Change::Unchanged
             );
         }

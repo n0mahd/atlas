@@ -298,3 +298,10 @@ adapted to the hub and many machines. See `documents/skills.md`.
   `atlas_fs::library` (bounded, link-refusing folder writes) and `Repo::commit_paths`.
 - **Not now**: importing items seen only on other machines (they need Local Atlas or a
   reviewed upload) and MCP tools that let agents change skills (writes need the passkey).
+- **After review** (Gemini 4 Neon, of the foundation): the solver picks the best set of
+  folders (fewest agents left seeing a skill they shouldn't, then fewest switched off),
+  keeping the old links whenever they are already best; an "exact copy" excludes any
+  folder holding a link, a `.git` or a special file, and compares execute bits; Codex
+  switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
+  repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
+  one change; public skills are committed and never pushed (0016), not refused.

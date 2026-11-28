@@ -13,6 +13,7 @@ use atlas_core::kernel::Slug;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use super::shape;
+use crate::placement::Reach;
 use crate::{Change, FormatError};
 
 /// What follows `]]` on the header of a table Atlas wrote.
@@ -24,10 +25,19 @@ enum Selector {
     Name(String),
 }
 
-fn selector(name: &str, skill_dir: &dyn Fn(&str) -> Option<PathBuf>) -> Selector {
-    skill_dir(name)
-        .and_then(|dir| dir.join("SKILL.md").to_str().map(str::to_owned))
-        .map_or_else(|| Selector::Name(name.to_owned()), Selector::Path)
+/// How Atlas names the skill: by its `SKILL.md` when the folder is known, else by name
+/// (home only, since a name entry switches off every skill of that name).
+fn selector(
+    name: &str,
+    reach: Reach,
+    skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Option<Selector> {
+    let path = skill_dir(name).and_then(|dir| dir.join("SKILL.md").to_str().map(str::to_owned));
+    match (path, reach) {
+        (Some(p), _) => Some(Selector::Path(p)),
+        (None, Reach::Home) => Some(Selector::Name(name.to_owned())),
+        (None, Reach::Project) => None,
+    }
 }
 
 fn selector_of(t: &Table) -> Option<Selector> {
@@ -73,6 +83,7 @@ fn table(name: &str, sel: &Selector) -> Table {
 pub(super) fn render(
     current: Option<&[u8]>,
     off: &BTreeSet<String>,
+    reach: Reach,
     skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> Result<Change, FormatError> {
     let text = match current {
@@ -98,7 +109,11 @@ pub(super) fn render(
         if !off.contains(&name) || kept.contains(&name) {
             continue;
         }
-        let want = selector(&name, skill_dir);
+        let Some(want) = selector(&name, reach, skill_dir) else {
+            // No folder known this time: keep the table as it is.
+            kept.insert(name);
+            continue;
+        };
         if selector_of(t).as_ref() != Some(&want) {
             let mut fresh = table(&name, &want);
             *fresh.decor_mut() = t.decor().clone();
@@ -119,8 +134,11 @@ pub(super) fn render(
         let owners = config
             .iter()
             .any(|t| ours(t).is_none() && names_skill(t, name));
-        if !kept.contains(name) && !owners {
-            config.push(table(name, &selector(name, skill_dir)));
+        if kept.contains(name) || owners {
+            continue;
+        }
+        if let Some(sel) = selector(name, reach, skill_dir) {
+            config.push(table(name, &sel));
             changed = true;
         }
     }

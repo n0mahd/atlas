@@ -118,8 +118,24 @@
     location.assign(done.next);
   }
 
-  // Save sends: post the form, then send, with one passkey tap. Any failure of the save
-  // itself falls back to a normal submit, which shows the error page.
+  // Shows why a change was refused inside its form and lets the owner try again.
+  function refused(form, button, message) {
+    var note = form.querySelector("[data-error]");
+    if (!note) {
+      note = document.createElement("p");
+      note.className = "marginalia warn-note";
+      note.setAttribute("role", "alert");
+      note.setAttribute("data-error", "");
+      form.insertBefore(note, form.firstChild);
+    }
+    note.hidden = false;
+    note.textContent = message || "That didn't work; nothing changed.";
+    if (button) button.disabled = false;
+  }
+
+  // Save sends: post the form, then send, with one passkey tap. A change refused with a
+  // reason shows it in place; any other failure of the save falls back to a normal
+  // submit, which shows the error page.
   document.addEventListener("submit", function (event) {
     var form = event.target;
     if (!form.matches("form[data-send-on-save]") || form.dataset.plain || !window.PublicKeyCredential || !window.fetch) return;
@@ -133,7 +149,10 @@
       headers: { "Accept": "application/json" },
       body: new URLSearchParams(new FormData(form))
     }).then(function (res) {
-      if (!res.ok || !(res.headers.get("content-type") || "").includes("application/json")) return plain();
+      var json = (res.headers.get("content-type") || "").includes("application/json");
+      // A refused change answers {error}: show it here; posting again would retry it.
+      if (!res.ok && json) return res.json().then(function (failed) { refused(form, button, failed.error); });
+      if (!res.ok || !json) return plain();
       return res.json().then(function (saved) {
         if (!saved.send) return location.assign(saved.next);
         return send(withParam(saved.next, "sent"))

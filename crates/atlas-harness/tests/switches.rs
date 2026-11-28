@@ -40,7 +40,10 @@ fn render(
     current: Option<&[u8]>,
     off: &[&str],
 ) -> Result<Change, FormatError> {
-    render_switches(kind, reach, current, &names(off), &codex_dir)
+    // atlasd's record of what Atlas switched off last time, as it would keep it: every
+    // name Atlas wanted off, including ones the owner had already switched off. The
+    // formats go by the marks in the file instead, so this never costs the owner an entry.
+    render_switches(kind, reach, current, &names(off), &names(&OFF), &codex_dir)
 }
 
 fn written(change: Change) -> Vec<u8> {
@@ -157,8 +160,8 @@ fn a_file_atlas_creates_goes_when_its_entries_do() {
         (ClaudeCode, Home),
         (ClaudeCode, Project),
         (Codex, Home),
+        (Codex, Project),
         (OpenCode, Home),
-        (OpenCode, Project),
         (Pi, Home),
     ] {
         assert_eq!(
@@ -244,16 +247,32 @@ fn codex_follows_the_skills_folder() {
     let first = written(render(Codex, Home, None, &["pdf-tools"]).unwrap());
     // The folder moved: Atlas's table is updated in place, header comment and all.
     let moved = |_: &str| Some(PathBuf::from("/home/u/.codex/skills/pdf-tools"));
-    let got = written(render_switches(Codex, Home, Some(&first), &names(&["pdf-tools"]), &moved).unwrap());
+    let got = written(
+        render_switches(Codex, Home, Some(&first), &names(&["pdf-tools"]), &BTreeSet::new(), &moved)
+            .unwrap(),
+    );
     assert_eq!(
         text(&got),
         "[[skills.config]] # atlas:pdf-tools\npath = \"/home/u/.codex/skills/pdf-tools/SKILL.md\"\nenabled = false\n"
     );
     // No folder known: a name entry, which Codex also honours.
-    let by_name = written(render_switches(Codex, Home, None, &names(&["pdf-tools"]), &|_| None).unwrap());
+    let none = |_: &str| None;
+    let pdf = names(&["pdf-tools"]);
+    let by_name =
+        written(render_switches(Codex, Home, None, &pdf, &BTreeSet::new(), &none).unwrap());
     assert_eq!(
         text(&by_name),
         "[[skills.config]] # atlas:pdf-tools\nname = \"pdf-tools\"\nenabled = false\n"
+    );
+    // For a project's skill a name entry would switch off a global one too: nothing then,
+    // and an existing table is kept rather than guessed at.
+    assert_eq!(
+        render_switches(Codex, Project, None, &pdf, &BTreeSet::new(), &none).unwrap(),
+        Change::Unchanged
+    );
+    assert_eq!(
+        render_switches(Codex, Project, Some(&first), &pdf, &BTreeSet::new(), &none).unwrap(),
+        Change::Unchanged
     );
 }
 
@@ -286,25 +305,18 @@ fn opencode_makes_the_objects_it_needs() {
             "{\n  \"permission\": {\n    \"bash\": \"ask\",\n    \"skill\": {\n      \"pdf\": \"deny\" // atlas:pdf\n    }\n  }\n}\n",
         ),
         (
-            b"{\"permission\": {\"skill\": {}}}",
-            "{\"permission\": {\"skill\": {\n  \"pdf\": \"deny\" // atlas:pdf\n}}}",
+            b"{\"model\": \"x\", \"permission\": {\"skill\": {}}}",
+            "{\"model\": \"x\", \"permission\": {\"skill\": {\n  \"pdf\": \"deny\" // atlas:pdf\n}}}",
         ),
     ];
     for (before, want) in cases {
-        let got = written(render(OpenCode, Project, Some(before), &["pdf"]).unwrap());
+        let got = written(render(OpenCode, Home, Some(before), &["pdf"]).unwrap());
         assert_eq!(text(&got), want);
-        let back = written(render(OpenCode, Project, Some(&got), &[]).unwrap());
-        // Objects Atlas emptied go with its entries; an owner's empty one stays.
-        let expect = if before.starts_with(b"{\"permission\": {\"skill\": {}}}") {
-            "{\"permission\": {\"skill\": {\n}}}".to_owned()
-        } else {
-            text(before).to_owned()
-        };
-        if text(before).contains("skill") {
-            assert_eq!(text(&back), expect.replace("{\"skill\": {\n}}", "{}"));
-        } else {
-            assert_eq!(text(&back), expect);
-        }
+        let back = written(render(OpenCode, Home, Some(&got), &[]).unwrap());
+        // Objects Atlas's removals empty go with them, so only an owner's empty
+        // `"skill": {}` doesn't come back.
+        let expect = text(before).replace(", \"permission\": {\"skill\": {}}", "");
+        assert_eq!(text(&back), expect);
     }
 }
 
