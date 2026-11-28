@@ -43,16 +43,23 @@ made since it was read).
 
 ### Per-agent switches
 
-`atlas_harness::placement::solve` picks the folders for one skill: for each wanted agent,
-the first folder it reads that no unwanted agent reads; else one whose unwanted readers can
-switch the skill off by their own setting; else its first folder, reporting the unwanted
-readers as `stuck_on`. With nothing off it picks exactly what atlasd picked before.
+`atlas_harness::placement::solve` picks the best set of folders for one skill: fewest
+agents left seeing a skill they shouldn't (`stuck_on`), then fewest switched off by their
+own setting, then fewest wanted agents seeing it twice, then fewest links. When the simple
+choice (each wanted agent's first folder that no unwanted agent reads) is already best, it
+is kept, so with nothing off the links are exactly what atlasd made before.
 
-Agents with a setting (`atlas_harness::switches`): Claude Code `skillOverrides`
-(`~/.claude/settings.json`; in a repo `.claude/settings.local.json`, kept out of git),
-Codex `[[skills.config]]` in `~/.codex/config.toml`, OpenCode `permission.skill` in
-`opencode.json(c)` (comments kept), Pi its settings file. Atlas writes only entries it
-manages and keeps the owner's. Others have no switch; the UI says so and why.
+A global skill limited to some projects is solved as linked into each project, not the
+home folders, so the page's reasons match where the links really go. Turning a skill off
+for two or more agents at once asks first.
+
+Agents with a setting (`atlas_harness::switches`; formats and sources in
+`crates/atlas-harness/HARNESSES.md`): Claude Code `skillOverrides` (`~/.claude/settings.json`;
+in a repo `.claude/settings.local.json`), Codex `[[skills.config]]` in `~/.codex/config.toml`
+for home and project skills alike (keyed by the skill's path), OpenCode `permission.skill`
+in the home `opencode.json` or `opencode.jsonc` (`.jsonc` is created when neither exists),
+Pi `skills` in `~/.pi/agent/settings.json`. Atlas marks its own entries and never changes
+the owner's. Others have no switch; the UI says so and why.
 
 ## Projects on each machine
 
