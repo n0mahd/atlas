@@ -55,6 +55,7 @@ your machines yet" and offers a **Send** button.
 | Global skills, instructions | Your knowledge repo | The next update (Save sends) |
 | Public skills | Your public skills repo | The next update, after you push that repo yourself |
 | Memory | Your knowledge repo | Through git; atlasd doesn't install memory pages |
+| Subagents (`agents/<name>.md`) | Your knowledge repo | The next update; atlasd links them for Claude Code only, for now |
 | Project skills, instructions | That project's repo, on `main` | Through the project repo itself |
 
 Atlas never pushes the public skills repo. Check it for private details, then push it by
