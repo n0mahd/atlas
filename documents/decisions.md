@@ -504,3 +504,47 @@ exclusive lock on `<file>.lock` in the state folder, since `atlas-hub` commands 
 same files. Setup links keep their 64-character form and have no rate limit: they are
 made on the hub itself and can't be guessed. The install script joins its arguments, so a
 code pasted with a space still works.
+
+## 00XX · 2026-11-28 · atlasd runs every minute because an idle run writes nothing
+A run with nothing new now writes nothing on the machine, so `deploy/atlasd.timer`
+(`OnCalendar=*:*:00`, still `OnBootSec=2min` and `Persistent=true`) and the launchd
+agent (`StartInterval` 60) run atlasd every minute instead of every 10, and the UI,
+install script and guide say "within a minute".
+
+- **Copies left alone.** `Repo::checkout_detached` first runs one
+  `git --no-optional-locks status --porcelain=v2 --branch --untracked-files=all
+  --ignored=matching`. If HEAD is detached at the pinned commit and it lists nothing
+  (no change, staged file, untracked or ignored file), the checkout and `clean -ffdx` are
+  skipped; any drift still gets both. The status takes no lock and doesn't refresh the
+  index, so it writes nothing. The tree check before it is unchanged. `clone_or_open`
+  sets `origin`'s URL only when it differs, because `git remote set-url` rewrites
+  `.git/config` every time. An empty folder left in a copy is no longer removed on an
+  idle run (status can't see it); it holds no files, so no harness sees anything.
+- **Hub writes.** `clients.json` is rewritten at once when a report says something new
+  (anything but its `at`), and otherwise at most once a minute per client, for both the
+  report POST and `GET /api/release`. The newer `last_seen` stays in memory in between;
+  a hub restart can lose up to a minute of it, which is fine. CLI tokens already did the
+  same (decision 0038).
+- **Machines page.** A machine that is behind, or has applied no update while one exists,
+  reads "Applies at the next check, within a minute" when it was seen in the last five
+  minutes, else "Applies when this machine next checks in".
+
+Measured on a laptop (real `atlasd` and `atlas-hub` release builds, real git, a temp HOME
+with every XDG variable inside it, the hub on a throwaway socket behind a local HTTPS
+proxy that adds the Tailscale login header; knowledge repo of 30 skills, an `AGENTS.md`,
+a hook, a subagent and 40 memory notes, plus a public repo of 5 skills; Claude Code,
+Codex, OpenCode and Pi present; 15 no-change runs each):
+
+| | Before | After |
+|---|---|---|
+| Wall time, median (min–max) | 66 ms (65–69) | 65 ms (62–73) |
+| Hub requests | GET release, POST report | the same |
+| git processes | 12 (incl. 2 `checkout --force`, 2 `clean -ffdxq`, 2 `remote set-url`) | 10 (2 `status`, 2 `config --get`, no writes) |
+| Files written on the machine | `.git/index`, `.git/config` (and their folder) in both copies | none |
+| Hub `clients.json` rewrites | 2 per run | at most 1 a minute |
+
+Time barely moved: on a small copy one `git status` costs about what a checkout does.
+What changed is that an idle run is now read-only on the machine, and a minute's worth
+of runs costs the hub one small file write. Each run still logs a line ("Release N is
+applied.") to the journal, or to `~/Library/Logs/atlasd.log` on a Mac, which grows by
+about 30 KB a day there.

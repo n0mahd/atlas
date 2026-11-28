@@ -66,6 +66,9 @@ skills work about to land):
    `Secret<T>`, `VerifiedRelease`, Tailscale WhoIs, cargo-deny, signed binaries.
 
 Then the standing items:
+- atlasd runs every minute (decision 00XX) and logs a line each time: to the journal on
+  Linux, and to `~/Library/Logs/atlasd.log` on a Mac, which nothing rotates (about 30 KB a
+  day). Printing nothing on an idle run would fix both.
 - Reading trusts the `Tailscale-User-Login` header from `tailscale serve` (decision 0012);
   writes need a passkey (0016). Any process running as the hub's user can reach the socket.
 - Passkey ceremonies, confirmation grants and a just-created CLI token waiting to be
