@@ -472,3 +472,14 @@ skill row flags only agents the owner wants to have it (`Placement::wants`) that
 an agent switched off, or a skill used only in some projects, isn't flagged in the home
 folders. The hub can't tell "not applied yet" from "applied, then changed by hand" while a
 newer update is pending; it shows nothing then, as before the first send.
+
+## 0038 · 2026-11-27 · One count for "outside Atlas"
+Home counted importable outside skills (exact copies included), the Skills page's offer
+counted "things" (outside skills without exact copies, plus project items), the Outside
+Atlas header counted every outside row (tools' and broken links too) and the Tidy page
+counted what could be brought in or compared: four numbers for one idea. Now one rule,
+`import::actionable` (can be brought in or compared), drives the Outside Atlas section on
+the Skills and Tidy pages; tools' and broken links and copies Atlas already has go under the
+folded **Built in and others**. Home and the Skills page show the same sentence
+(`tidy::offer`): "N skills on this machine aren't in Atlas", and, when the projects have
+something to tidy, "; M project skills could be tidier".

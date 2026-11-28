@@ -39,7 +39,7 @@
 {% endif %}
 
 <div id="results" class="sections">
-  {% if outside.tidy > 0 %}<p class="marginalia tidy-offer">{% if outside.tidy == 1 %}One thing{% else %}{{ outside.tidy }} things{% endif %} about your skills could be tidier. <a class="link-cap" href="/skills/tidy">Tidy up</a></p>{% endif %}
+  {% if let Some(t) = outside.tidy %}<p class="marginalia tidy-offer">{{ t }} <a class="link-cap" href="/skills/tidy">Tidy up</a></p>{% endif %}
   {% for s in v.sections %}
   <section class="section" id="{{ s.id }}">
     <div class="section-head">

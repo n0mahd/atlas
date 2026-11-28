@@ -68,6 +68,8 @@ pub struct SkillRow {
     pub key: String,
     pub name: String,
     pub source: String,
+    /// The full path when `source` shortens it.
+    pub source_title: String,
     pub flag: String,
     pub marks: Vec<AgentMark>,
     pub all: bool,
@@ -82,13 +84,24 @@ pub struct SkillRow {
     pub left_out: String,
 }
 
+/// A skill on this machine that Atlas lists and leaves where it is: built into an agent,
+/// from a plugin or a tool, already in Atlas (atlasd swaps it for Atlas's link), or broken.
 #[derive(Debug, Clone)]
 pub struct BuiltInRow {
-    pub icon: &'static str,
-    pub agent: &'static str,
     pub name: String,
+    /// One short flag, such as "Installed by toolbox"; empty for an agent's own skill.
+    pub flag: String,
+    pub marks: Vec<AgentMark>,
+    pub all: bool,
+    /// Where it comes from, for the drawer.
     pub source: String,
+    /// The full path when `source` shortens it.
+    pub source_title: String,
     pub path: String,
+    /// An outside item's key, which Leave it outside takes; empty for built-in skills.
+    pub key: String,
+    /// `same` (Atlas has it already) or `blocked`; empty for built-in skills.
+    pub state: &'static str,
 }
 
 /// The Outside Atlas and Built in parts of the Skills page.
@@ -96,21 +109,50 @@ pub struct BuiltInRow {
 pub struct SkillsOutside {
     /// Shown only on the Global scope: these are the login's own folders.
     pub show: bool,
+    /// What the owner can bring in or compare ([`actionable`]).
     pub rows: Vec<SkillRow>,
     pub built_in: Vec<BuiltInRow>,
     /// Rows Bring all in would copy.
     pub importable: usize,
     pub kept: usize,
-    /// Things Tidy up can do; the link shows when there are any.
-    pub tidy: usize,
+    /// Tidy up's offer ([`crate::tidy::offer`]); the link shows when there is one.
+    pub tidy: Option<String>,
 }
 
-fn skill_source(item: &OutsideSkill) -> String {
-    match &item.origin {
-        Origin::OwnFolder => format!("Its own folder in {}", parent_of(&item.entries[0])),
-        Origin::Linked { target } | Origin::Tool { target, .. } => format!("Linked from {target}"),
-        Origin::Broken { target } => format!("Broken link to {target}"),
+/// Whether an outside skill is one the owner can act on: bring it in, or compare it with
+/// Atlas's other copy. The one definition behind every "outside Atlas" count (Home, the
+/// Skills page's section and Tidy up offer, the Tidy page); the rest (tools' and broken
+/// links, exact copies Atlas already has) is listed with the built-in skills.
+#[must_use]
+pub(crate) fn actionable(item: &OutsideSkill) -> bool {
+    !item.kept && item.blocked().is_none() && item.clash.as_ref().is_none_or(|c| !c.same)
+}
+
+/// Where an outside skill comes from, in words, and the full path when the words shorten
+/// it (for a `title`): a path outside the home shows only its folder's name.
+fn skill_source(item: &OutsideSkill) -> (String, String) {
+    let (words, path) = match &item.origin {
+        Origin::OwnFolder => ("Its own folder in", parent_of(&item.entries[0])),
+        Origin::Linked { target } | Origin::Tool { target, .. } => ("Linked from", target.as_str()),
+        Origin::Broken { target } => ("Broken link to", target.as_str()),
+    };
+    let (shown, full) = shown_path(path);
+    (format!("{words} {shown}"), full)
+}
+
+/// A path as a row shows it: `~/…` as it is; anything else by its last part, with the
+/// whole path returned second for a `title`.
+#[must_use]
+pub(crate) fn shown_path(path: &str) -> (String, String) {
+    if !path.starts_with('/') {
+        return (path.to_owned(), String::new());
     }
+    let last = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path);
+    (format!("…/{last}"), path.to_owned())
 }
 
 fn parent_of(shown: &str) -> &str {
@@ -125,10 +167,12 @@ fn skill_row(snap: &Snapshot, item: &OutsideSkill) -> SkillRow {
         (Some(_), None) => ("differs", "Atlas has another copy".to_owned()),
         (None, None) => ("import", String::new()),
     };
+    let (source, source_title) = skill_source(item);
     SkillRow {
         key: item.key.clone(),
         name: item.name.clone(),
-        source: skill_source(item),
+        source,
+        source_title,
         flag,
         marks,
         all,
@@ -167,7 +211,7 @@ pub(crate) fn skills_outside(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsO
         rows: o
             .skills
             .iter()
-            .filter(|s| !s.kept && wanted(&s.name))
+            .filter(|s| actionable(s) && wanted(&s.name))
             .map(|s| skill_row(snap, s))
             .collect(),
         built_in: o
@@ -175,16 +219,42 @@ pub(crate) fn skills_outside(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsO
             .iter()
             .filter(|b| wanted(&b.name))
             .map(|b| BuiltInRow {
-                icon: icons::icon(b.agent),
-                agent: views::short(b.agent),
+                marks: vec![AgentMark {
+                    icon: icons::icon(b.agent),
+                    label: views::short(b.agent).to_owned(),
+                }],
+                all: false,
+                flag: String::new(),
                 name: b.name.clone(),
                 source: b.source.clone(),
+                source_title: String::new(),
                 path: b.path.clone(),
+                key: String::new(),
+                state: "",
             })
+            .chain(
+                o.skills
+                    .iter()
+                    .filter(|s| !s.kept && !actionable(s) && wanted(&s.name))
+                    .map(|s| {
+                        let row = skill_row(snap, s);
+                        BuiltInRow {
+                            name: row.name,
+                            flag: row.flag,
+                            marks: row.marks,
+                            all: row.all,
+                            source: row.source,
+                            source_title: row.source_title,
+                            path: row.entries,
+                            key: row.key,
+                            state: row.state,
+                        }
+                    }),
+            )
             .collect(),
         importable: o.skills.iter().filter(|s| plain_import(s)).count(),
         kept: o.skills.iter().filter(|s| s.kept).count(),
-        tidy: crate::tidy::count(snap),
+        tidy: crate::tidy::offer(snap),
     }
 }
 
@@ -335,14 +405,10 @@ pub(crate) fn hooks_outside(snap: &Snapshot) -> HooksOutside {
     }
 }
 
-/// The Home page's notice: how many outside skills could come in, linking to Tidy up.
+/// How many outside skills the owner can act on ([`actionable`]).
 #[must_use]
-pub(crate) fn overview_count(snap: &Snapshot) -> usize {
-    snap.outside
-        .skills
-        .iter()
-        .filter(|s| !s.kept && s.origin.importable())
-        .count()
+pub(crate) fn outside_count(snap: &Snapshot) -> usize {
+    snap.outside.skills.iter().filter(|s| actionable(s)).count()
 }
 
 // ---------------------------------------------------------------- writing

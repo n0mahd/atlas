@@ -157,6 +157,18 @@ h2 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 15px; 
 .section-head .count { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .empty { margin-block: 10px 0; color: var(--muted); font-style: italic; }
 .marginalia { margin-block: 8px 0; padding: 7px 12px; border-left: 3px solid var(--gilt-orn); background: var(--ground-deep); font-style: italic; color: var(--ink-soft); }
+/* ⓘ: one short explanation behind a tap (a <details>), so keyboards, touch and screen
+   readers reach it too. On phones the note sits at the bottom of the screen. */
+.info { display: inline-block; position: relative; vertical-align: middle; margin-left: 4px; font-family: var(--serif); text-transform: none; letter-spacing: normal; font-weight: 400; }
+.info > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid var(--hair); border-radius: 50%; font-size: 12px; font-style: italic; line-height: 1; color: var(--muted); }
+.info > summary::-webkit-details-marker { display: none; }
+.info > summary:hover, .info[open] > summary { color: var(--ink); border-color: var(--ink); }
+.info > summary:focus-visible { outline: 2px solid var(--verdigris); outline-offset: 2px; }
+.info > p { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; width: max-content; max-width: 320px; margin: 0; padding: 7px 12px; border-left: 3px solid var(--gilt-orn); background: var(--ground-deep); box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); font-size: 14px; font-style: italic; line-height: 1.4; color: var(--ink-soft); white-space: normal; text-align: left; }
+.info.end > p { left: auto; right: 0; }
+@media (max-width: 720px) {
+  .info > p, .info.end > p { position: fixed; top: auto; bottom: 16px; left: 16px; right: 16px; width: auto; max-width: none; }
+}
 
 .rows { list-style: none; margin: 0; padding: 0; }
 .rows > li { border-bottom: 1px solid var(--hair); }

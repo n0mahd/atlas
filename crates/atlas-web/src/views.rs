@@ -361,14 +361,9 @@ pub fn overview(snap: &Snapshot) -> Overview {
     let store_memory = c.memory.iter().filter(|m| m.scope == Scope::Global).count();
     let found_hooks: usize = snap.harnesses.iter().map(|h| h.hooks.len()).sum();
     let mut notices = Vec::new();
-    let outside = crate::import::overview_count(snap);
-    if outside > 0 {
+    if let Some(text) = crate::tidy::offer(snap) {
         notices.push(Notice {
-            text: if outside == 1 {
-                "1 skill on this machine isn't in Atlas.".to_owned()
-            } else {
-                format!("{outside} skills on this machine aren't in Atlas.")
-            },
+            text,
             href: "/skills/tidy".to_owned(),
             action: "Tidy up",
         });
