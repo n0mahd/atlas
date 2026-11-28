@@ -248,7 +248,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 32px; align-items: start; }
 .aside { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 14px; }
 .aside-head { margin-top: 6px; font-size: 13px; }
-.machine-diff > summary { display: list-item; cursor: pointer; color: var(--oxblood); font-family: var(--display); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.machine-diff > summary { display: list-item; cursor: pointer; margin-top: 6px; font-size: 15px; color: var(--oxblood); }
 .machine-diff .agent-states { margin-top: 8px; }
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 15px; }
 .facts dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }

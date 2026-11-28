@@ -15,7 +15,7 @@
     {% include "skill_place.html" %}
     {% if !differs.is_empty() %}
     <details class="machine-diff">
-      <summary class="aside-head">On this machine: {{ differs|join("; ") }}</summary>
+      <summary>On this machine: {{ differs|join("; ") }}</summary>
       <ul class="agent-states">
         {% for a in v.agents %}<li class="agent-state {{ a.class }}"><span class="agent-state-mark" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</span></li>{% endfor %}
       </ul>

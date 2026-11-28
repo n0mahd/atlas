@@ -327,12 +327,6 @@ impl AgentState {
             _ => icons::BADGE_ABSENT,
         }
     }
-
-    /// Whether the state says more than the badge does, so it's worth showing as text.
-    #[must_use]
-    pub fn needs_words(&self) -> bool {
-        self.class == "warn" && !matches!(self.state.as_str(), "doesn't have it" | "missing")
-    }
 }
 
 // ---------------------------------------------------------------- overview
