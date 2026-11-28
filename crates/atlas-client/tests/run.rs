@@ -446,6 +446,35 @@ fn a_tree_mismatch_is_refused() {
 }
 
 #[test]
+fn a_run_with_nothing_new_leaves_the_copies_alone_but_restores_a_drifted_one() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    let release = signed(&w.manifest(1, &[&key]), &key);
+    assert!(!w.run(&release, false).failed);
+
+    let index = |w: &World| {
+        fs::metadata(w.copy("knowledge/.git/index"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    let before = index(&w);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert!(!w.run(&release, false).failed);
+    assert_eq!(index(&w), before, "no checkout when nothing changed");
+
+    let skill = w.copy("knowledge/skills/alpha/SKILL.md");
+    write(&skill, "edited by hand\n");
+    write(&w.copy("knowledge/skills/alpha/stray.md"), "x\n");
+    assert!(!w.run(&release, false).failed);
+    assert_eq!(
+        fs::read_to_string(&skill).unwrap(),
+        "---\nname: alpha\n---\n"
+    );
+    assert!(!w.copy("knowledge/skills/alpha/stray.md").exists());
+}
+
+#[test]
 fn new_keys_are_trusted_only_once_their_release_applied() {
     let old = Key::new(1, "Old");
     let new = Key::new(2, "New");
