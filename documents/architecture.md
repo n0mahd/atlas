@@ -55,7 +55,8 @@ query the store directly instead of going through use cases.
 2. The scanner flags anything risky (it never blocks silently).
 3. Save sends (decision 0024): the hub pushes Knowledge if needed and builds update N
    (a signed release underneath), pinning Knowledge and public skills at their upstream
-   commits and tree hashes. Project repos aren't in it.
+   commits and tree hashes. Project repos aren't pinned: the update only names each
+   project and its remote, so atlasd can find its checkouts (decision 0027).
 4. The same Save asks for one passkey tap, which signs the update; the hub checks the
    signature before storing it. The UI calls these "updates", never "releases".
 5. atlasd pulls the update and checks the signature, that N is higher than the last
@@ -90,7 +91,7 @@ Display or Serialize; zeroed on drop), `Plan`, `ScopedPath`, `Untrusted<Markdown
 - Pairing: the Machines page (or `atlas-hub pair-code`) issues a one-time code and shows
   `curl <hub>/install | sh -s -- <code>`. With a passkey session the hub can also run it
   on a machine itself over SSH (`atlas_web::remote`, used by the page and by
-  `atlas-hub add-machine`; decision 0027).
+  `atlas-hub add-machine`; decision 0025).
 
 ## Local Atlas
 - Edits local files. Global edits go to the hub as proposals the user signs.
@@ -115,7 +116,7 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 |---|---|
 | Hub compromise | Hub cannot sign releases; keys stay in the keystore and are never shown. |
 | Another tailnet device | Tailscale WhoIs plus passkey sign-in; per-login client tokens. |
-| Hub web process starting SSH sessions | Only behind a passkey session and CSRF; the target is checked strictly and passed after `--`, never through a shell (decision 0027). |
+| Hub web process starting SSH sessions | Only behind a passkey session and CSRF; the target is checked strictly and passed after `--`, never through a shell (decision 0025). |
 | Poisoned content (skills, memory, hooks) | Scanner flags; `Untrusted<Markdown>`; sanitised rendering. |
 | Secret leaks | `Secret<T>`; secrets never in git or logs. |
 | Bad client writes | Pure plans, dry runs, managed entries only, atomic writes. |
@@ -129,7 +130,8 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 | Global skills | `<knowledge>/skills/<name>/SKILL.md`, public ones in a separate skills repo |
 | Project skills | `<repo>/.agents/skills/<name>/SKILL.md` |
 | Instructions | `<knowledge>/AGENTS.md`; each project's `AGENTS.md` / `CLAUDE.md` |
-| Memory | `<knowledge>/memory/**.md` (frontmatter: name, description, metadata.type/host) |
+| Memory | `<knowledge>/memory/**.md` (frontmatter: name, description, metadata.type/host); Claude Code's per-repo notes under `memory/projects/<project>/` |
+| Where each skill goes | `<knowledge>/atlas/placements.toml`: only exceptions (agents off, only-projects, items kept outside); see `documents/skills.md` |
 | Hooks | `<knowledge>/hooks/<name>/` and `<repo>/.agents/hooks/<name>/`: a manifest (event, matcher, harnesses) plus its script |
 | MCP servers | `mcp.toml` (phase 4), secrets in the hub keystore |
 | Projects, machines | `atlas.toml` in the hub's data repo |

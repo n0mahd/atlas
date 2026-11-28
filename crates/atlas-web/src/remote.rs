@@ -1,4 +1,4 @@
-//! Installing atlasd on another machine from the hub, over SSH (decision 0027).
+//! Installing atlasd on another machine from the hub, over SSH (decision 0025).
 //!
 //! The hub runs the hub account's own `ssh` (Tailscale SSH or a key the owner added) and
 //! on the far side the same command the Machines page shows. User input never reaches a
