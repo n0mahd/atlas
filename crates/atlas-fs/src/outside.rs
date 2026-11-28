@@ -546,13 +546,7 @@ fn is_md(name: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
-fn is_real_dir(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
-}
-
-fn has_skill_md(folder: &Path) -> bool {
-    fs::symlink_metadata(folder.join("SKILL.md")).is_ok_and(|m| m.is_file())
-}
+use crate::library::{has_skill_md, is_real_dir};
 
 fn store_homes(sources: &Sources) -> Vec<PathBuf> {
     let mut homes = vec![sources.knowledge.join("skills")];
@@ -780,7 +774,7 @@ fn built_in(ctx: &Ctx, out: &mut Outside) {
                 continue;
             }
             for (name, folder) in list_dir(&skills) {
-                if name.starts_with('.') || !folder.is_dir() || !folder.join("SKILL.md").is_file() {
+                if name.starts_with('.') || !is_real_dir(&folder) || !has_skill_md(&folder) {
                     continue;
                 }
                 let item = BuiltIn {

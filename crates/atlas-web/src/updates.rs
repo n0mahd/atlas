@@ -25,6 +25,9 @@
 mod github;
 mod plan;
 
+/// GitHub's API, which the hub reads skill sources from.
+pub(crate) const GITHUB_API: &str = github::API;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -110,12 +113,11 @@ enum Found {
 }
 
 impl Updates {
+    /// The `skills` CLI's global lock at its default place under the home. The hub binary
+    /// passes the real place (it reads the environment) with
+    /// [`crate::AppState::with_skills_lock`].
     pub(crate) fn new(sources: &Sources) -> Self {
-        let xdg = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from);
-        Self::with(
-            github::API,
-            lock::global_lock_path(&sources.home, xdg.as_deref()),
-        )
+        Self::with(github::API, lock::global_lock_path(&sources.home, None))
     }
 
     /// Where the `skills` CLI's global lock is read from (the skill library uses it too).
