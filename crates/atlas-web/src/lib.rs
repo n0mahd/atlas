@@ -5,21 +5,19 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
-// Used by the skills, instructions and import pages as they land (decision 0027).
-#[allow(dead_code)]
 mod change;
 pub mod clients;
 mod distribute;
 mod edit;
 mod icons;
 mod install;
+mod instructions_manage;
 mod library;
 mod library_pages;
 mod markdown;
 pub mod release;
 pub mod remote;
 mod skill_ops;
-#[allow(dead_code, clippy::unused_async)]
 mod skills_place;
 mod updates;
 pub mod views;
@@ -179,14 +177,30 @@ pub fn router(state: AppState, access: Access) -> Router {
             get(library_pages::file_view),
         )
         .route("/skills/{home}/{name}", get(skill_detail))
+        .route(
+            "/skills/{home}/{name}/agents",
+            post(skills_place::post_agents),
+        )
+        .route("/skills/{home}/{name}/use", post(skills_place::post_use))
         .route("/skills/updates", get(updates::list))
         .route("/skills/updates/check", post(updates::check))
         .route(
             "/skills/{home}/{name}/update",
             get(updates::preview).post(updates::apply),
         )
-        .route("/instructions", get(instructions))
-        .route("/instructions/{scope}/{file}", get(instruction_detail))
+        .route("/instructions", get(instructions_manage::list))
+        .route(
+            "/instructions/{scope}/{file}",
+            get(instructions_manage::detail),
+        )
+        .route(
+            "/instructions/{scope}/{file}/{action}",
+            get(instructions_manage::confirm).post(instructions_manage::run),
+        )
+        .route(
+            "/instructions/claude-agents-md",
+            post(instructions_manage::claude_option),
+        )
         .route("/memory", get(memory))
         .route("/memory/{name}", get(memory_detail))
         .route("/hooks", get(hooks))
@@ -331,6 +345,7 @@ struct OverviewPage {
 struct SkillsPage {
     page: Page,
     v: views::SkillsList,
+    place: skills_place::ListPlace,
 }
 
 #[derive(Template)]
@@ -339,20 +354,8 @@ struct SkillPage {
     page: Page,
     v: views::SkillDetail,
     files: library_pages::FileTree,
-}
-
-#[derive(Template)]
-#[template(path = "instructions.html")]
-struct InstructionsPage {
-    page: Page,
-    sections: Vec<views::InstructionSection>,
-}
-
-#[derive(Template)]
-#[template(path = "instruction.html")]
-struct InstructionPage {
-    page: Page,
-    v: views::InstructionDetail,
+    /// Who gets the skill: the switches and "Use in…".
+    p: skills_place::SkillPlace,
 }
 
 #[derive(Template)]
@@ -396,6 +399,8 @@ pub(crate) struct SshResult {
     pub ok: bool,
     pub message: String,
     pub output: String,
+    /// The address typed, offered again after a failure so it needn't be retyped.
+    pub target: String,
 }
 
 // ---------------------------------------------------------------- handlers
@@ -433,6 +438,16 @@ struct ListQuery {
     sent: Option<String>,
     #[serde(default)]
     notsent: Option<String>,
+    /// After a skill's switch or "Use in…": what changed (`turned` and `agent`, or `used`).
+    #[serde(default)]
+    turned: String,
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    used: String,
+    /// The Skills list row to open, as `<home>/<name>`.
+    #[serde(default)]
+    open: String,
 }
 
 impl ListQuery {
@@ -443,6 +458,15 @@ impl ListQuery {
                 "Nothing changed, so nothing was committed.".to_owned(),
                 false,
             );
+        }
+        if let Some(did) = skills_place::did_text(&self.turned, &self.agent, &self.used) {
+            if self.sent.is_some() {
+                return (format!("{did} · on your machines within 10 minutes"), false);
+            }
+            if self.notsent.is_some() {
+                return (format!("{did}. Not on your machines yet"), true);
+            }
+            return (did, false);
         }
         let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
         if self.sent.is_some() {
@@ -520,7 +544,8 @@ async fn skills(
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page);
-    Ok(Html(SkillsPage { page, v }.render()?))
+    let place = skills_place::list(&s, &snap, &scope, &page, &q.open).await?;
+    Ok(Html(SkillsPage { page, v, place }.render()?))
 }
 
 async fn skill_detail(
@@ -531,7 +556,14 @@ async fn skill_detail(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &home);
+    let skill = snap
+        .catalog
+        .skills
+        .iter()
+        .find(|s| s.home.key() == home && s.name.as_str() == name)
+        .ok_or(AppError::NotFound)?;
+    // A link from a project's list carries it, so "This project only" means that one.
+    let scope = views::resolve_scope(&snap, if q.scope.is_empty() { &home } else { &q.scope });
     let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
     q.apply(&mut page);
     page.edit_href = s
@@ -539,58 +571,8 @@ async fn skill_detail(
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
     let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
-    Ok(Html(SkillPage { page, v, files }.render()?))
-}
-
-async fn instructions(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let scope = views::resolve_scope(&snap, &q.scope);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        "Instructions",
-        &snap,
-        &scope,
-        true,
-    );
-    page.totals = format!("{} files", snap.catalog.instructions.len());
-    q.apply(&mut page);
-    Ok(Html(
-        InstructionsPage {
-            page,
-            sections: views::instructions(&snap, &scope),
-        }
-        .render()?,
-    ))
-}
-
-async fn instruction_detail(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((scope_key, file)): Path<(String, String)>,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let v = views::instruction_detail(&snap, &scope_key, &file).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &scope_key);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        v.title.clone(),
-        &snap,
-        &scope,
-        false,
-    );
-    q.apply(&mut page);
-    page.edit_href = s
-        .writer
-        .is_some()
-        .then(|| format!("/instructions/{scope_key}/{file}/edit"));
-    Ok(Html(InstructionPage { page, v }.render()?))
+    let p = skills_place::detail(&s, &snap, skill, &scope, &page).await?;
+    Ok(Html(SkillPage { page, v, files, p }.render()?))
 }
 
 async fn memory(

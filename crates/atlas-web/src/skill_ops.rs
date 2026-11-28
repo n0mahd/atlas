@@ -833,7 +833,7 @@ fn carry_record(
     };
     let leave = |plan: &mut Plan, why: String| {
         plan.notes.push(format!(
-            "The skills CLI's record of {name}{from_words} stays in {}: {why}, so Atlas changes neither lock.",
+            "The skills CLI's record of {name}{from_words} stays in {}{why}, so Atlas changes neither lock.",
             fl.shown
         ));
     };
@@ -842,7 +842,12 @@ fn carry_record(
     }
     let outside = [fl, tl].into_iter().find(|l| l.repo.is_none());
     if let Some(o) = outside {
-        leave(plan, format!("{} isn't in a repo Atlas commits", o.shown));
+        let why = if o.abs == fl.abs {
+            ", which isn't in a repo Atlas commits".to_owned()
+        } else {
+            format!(": {} isn't in a repo Atlas commits", o.shown)
+        };
+        leave(plan, why);
         return;
     }
     let from_ok = matches!(&locks.get(fl).1, ReadLock::Found(l) if l.writable());
@@ -855,7 +860,7 @@ fn carry_record(
         let bad = if from_ok { tl } else { fl };
         leave(
             plan,
-            format!("{} isn't a lock Atlas can rewrite safely", bad.shown),
+            format!(": {} isn't a lock Atlas can rewrite safely", bad.shown),
         );
         return;
     }

@@ -651,7 +651,7 @@ async fn uncommitted_edits_refuse_the_change_and_nothing_changes() {
 }
 
 #[tokio::test]
-async fn switching_many_goes_through_set_agents_and_shows_its_refusal() {
+async fn switching_many_asks_first_and_is_one_commit() {
     let hub = hub();
     let before = commits(&hub.knowledge);
     // Turning several off asks first.
@@ -678,20 +678,43 @@ async fn switching_many_goes_through_set_agents_and_shows_its_refusal() {
         "{}",
         page.body
     );
-    // Turning on goes straight to set_agents; a refusal comes back with its reason and
-    // changes nothing (until switches are built, set_agents refuses every call).
+    // Confirmed, the switch goes through set_agents as one commit.
+    let off = post(
+        &hub,
+        "/skills/bulk",
+        &[
+            ("action", "off"),
+            ("s", "private/a"),
+            ("s", "private/b"),
+            ("agent", "codex"),
+            ("confirmed", "1"),
+        ],
+    )
+    .await;
+    assert_eq!(off.status, StatusCode::SEE_OTHER, "{}", off.body);
+    let p = placements(&hub);
+    assert!(p.contains("[global.a]") && p.contains("[global.b]"), "{p}");
+    assert_eq!(commits(&hub.knowledge), before + 1);
+    // Turning on needs no confirmation and puts them back, again as one commit.
     let on = post(
         &hub,
         "/skills/bulk",
-        &[("action", "on"), ("s", "private/a"), ("s", "private/b")],
+        &[
+            ("action", "on"),
+            ("s", "private/a"),
+            ("s", "private/b"),
+            ("agent", "codex"),
+        ],
     )
     .await;
-    if on.status == StatusCode::CONFLICT {
-        assert_ne!(on.body.trim(), "");
-        assert_eq!(commits(&hub.knowledge), before);
-    } else {
-        assert_eq!(on.status, StatusCode::SEE_OTHER, "{}", on.body);
-    }
+    assert_eq!(on.status, StatusCode::SEE_OTHER, "{}", on.body);
+    assert!(
+        !placements(&hub).contains("[global.a]"),
+        "{}",
+        placements(&hub)
+    );
+    assert_eq!(commits(&hub.knowledge), before + 2);
+    let before = commits(&hub.knowledge);
     let bad_agent = post(
         &hub,
         "/skills/bulk",

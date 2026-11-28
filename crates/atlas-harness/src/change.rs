@@ -16,6 +16,16 @@ pub enum Change {
 pub enum FormatError {
     #[error("the file isn't valid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
+    #[error("the file isn't valid JSONC: expected {expected} at line {line}, column {column}")]
+    InvalidJsonc {
+        line: usize,
+        column: usize,
+        expected: &'static str,
+    },
+    #[error("the file isn't valid TOML: {0}")]
+    InvalidToml(#[from] toml_edit::TomlError),
+    #[error("the file isn't UTF-8 text")]
+    NotText(#[from] std::str::Utf8Error),
     #[error("expected {expected} at {at}")]
     UnexpectedShape { at: String, expected: &'static str },
 }

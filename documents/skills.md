@@ -43,16 +43,23 @@ made since it was read).
 
 ### Per-agent switches
 
-`atlas_harness::placement::solve` picks the folders for one skill: for each wanted agent,
-the first folder it reads that no unwanted agent reads; else one whose unwanted readers can
-switch the skill off by their own setting; else its first folder, reporting the unwanted
-readers as `stuck_on`. With nothing off it picks exactly what atlasd picked before.
+`atlas_harness::placement::solve` picks the best set of folders for one skill: fewest
+agents left seeing a skill they shouldn't (`stuck_on`), then fewest switched off by their
+own setting, then fewest wanted agents seeing it twice, then fewest links. When the simple
+choice (each wanted agent's first folder that no unwanted agent reads) is already best, it
+is kept, so with nothing off the links are exactly what atlasd made before.
 
-Agents with a setting (`atlas_harness::switches`): Claude Code `skillOverrides`
-(`~/.claude/settings.json`; in a repo `.claude/settings.local.json`, kept out of git),
-Codex `[[skills.config]]` in `~/.codex/config.toml`, OpenCode `permission.skill` in
-`opencode.json(c)` (comments kept), Pi its settings file. Atlas writes only entries it
-manages and keeps the owner's. Others have no switch; the UI says so and why.
+A global skill limited to some projects is solved as linked into each project, not the
+home folders, so the page's reasons match where the links really go. Turning a skill off
+for two or more agents at once asks first.
+
+Agents with a setting (`atlas_harness::switches`; formats and sources in
+`crates/atlas-harness/HARNESSES.md`): Claude Code `skillOverrides` (`~/.claude/settings.json`;
+in a repo `.claude/settings.local.json`), Codex `[[skills.config]]` in `~/.codex/config.toml`
+for home and project skills alike (keyed by the skill's path), OpenCode `permission.skill`
+in the home `opencode.json` or `opencode.jsonc` (`.jsonc` is created when neither exists),
+Pi `skills` in `~/.pi/agent/settings.json`. Atlas marks its own entries and never changes
+the owner's. Others have no switch; the UI says so and why.
 
 ## Projects on each machine
 
@@ -80,8 +87,21 @@ owner's rule: after an import the original is gone and agents read Atlas's copy.
 - **Skills**: real folders and links to folders outside Atlas. Links into folders a tool
   installed (`/usr/share/...`, a tool's own home such as `~/.cua-driver`) and agents' own
   built-in and plugin skills are listed under **Built in and plugins** and never imported.
-- **Instructions**: an agent's own home file offers **Use Global instead** (its text is
-  added to Global first); a project's `CLAUDE.md` can move or merge into `AGENTS.md`.
+- **Instructions**: the page shows, for each file, which agents read it directly,
+  through a link, through Claude's `@` import or through Claude's AGENTS.md option, and
+  why the others don't (`atlas_harness::readers`, sourced in `HARNESSES.md`; computed for
+  the hub's own machine). An agent's own home file offers **Use Global instead**: its text
+  is appended to Global and committed; atlasd then swaps the file for the link (Claude's
+  `CLAUDE.md` for just the import) on each machine only where every non-blank line of it
+  is in Global (`instructions::contained`, re-checked when applied). A project's
+  `CLAUDE.md` can become `AGENTS.md` or merge into it, and the same confirmation offers
+  Claude's option when Claude would still skip `AGENTS.md`; **Move to Global** and **Copy
+  to this project** move text the other ways. Moved text is appended after a blank line
+  and `<!-- atlas: from <where> -->`, and nothing is added that the target already holds.
+  A new `CLAUDE.local.md` goes in Atlas's block of `.git/info/exclude`, so it is never
+  committed (and git can't undo it; the confirmation says so). Claude's choice lives in
+  `atlas/placements.toml` as `[instructions] claude-reads-agents-md = "when-no-claude-md" |
+  "alongside" | "never"`; without it atlasd leaves Claude's setting alone.
 - **Memory**: Claude Code's `~/.claude/projects/<repo>/memory/*.md` become
   `<knowledge>/memory/projects/<project>/<note>.md` with `metadata.host` and
   `metadata.project`; then atlasd makes the per-repo folder a link to that store folder, so
@@ -98,6 +118,21 @@ installed with `npx skills`), select with bulk on/off, move and delete, a **Conf
 for same-named skills with different text, a **Needs attention** filter with a plain reason,
 the folder's file tree with a read-only viewer, and **Check for updates** for skills
 installed from GitHub (preview, keep-your-edits merge, the `skills` CLI's lock updated).
+
+How it works (`atlas-web::skill_ops`, `library`, `library_pages`):
+- Every create, delete, move or bulk switch is one change through `atlas-web::change`: one
+  commit per repo, the destination repo first; the placements file is read and written
+  inside the change. Turning several skills off, moving and deleting go through a
+  confirmation page that lists each folder, record and entry that changes.
+- A skill's `skills` CLI record moves with it (`atlas_fs::lock::convert_record`, as T3
+  Code's `convertRecord`) only when both locks sit in repos Atlas commits. The global lock
+  usually lives in `~/.agents`, outside git: then Atlas changes neither lock and the
+  confirmation says so. A delete drops the record only from a lock Atlas commits.
+- Groups, Conflict marks and Needs attention are worked out once per read of the store
+  (`library::Index`): conflicts compare exact folder fingerprints of same-named copies in
+  the store and in agents' own folders.
+- The file viewer opens only a file the catalog listed for that skill, refuses links, shows
+  at most 256 KB, and renders `.md` through the sanitiser; scripts are flagged, never run.
 
 ## Updates
 

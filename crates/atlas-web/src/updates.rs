@@ -706,7 +706,7 @@ fn require_session(s: &AppState, headers: &HeaderMap, next: &str) -> Option<Resp
         .auth
         .session(headers)
         .is_none()
-        .then(|| Redirect::to(&format!("/signin?next={next}")).into_response())
+        .then(|| Redirect::to(&crate::auth::signin_href(next)).into_response())
 }
 
 async fn locate(s: &AppState) -> Result<Vec<Locked>, AppError> {

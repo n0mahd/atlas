@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="instr-confirm" method="post" action="{{ c.action }}"{% if send_on_save %} data-send-on-save{% endif %}>
+  <input type="hidden" name="csrf" value="{{ page.csrf }}">
+  <input type="hidden" name="base" value="{{ c.base }}">
+  {% for l in c.lines %}<p>{{ l }}</p>{% endfor %}
+  {% if c.create %}
+  <label class="sr" for="instr-text">The new file's text</label>
+  <textarea id="instr-text" class="instr-text" name="text" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+  {% else %}{% if !c.preview.is_empty() %}
+  <h2 class="aside-head">The text</h2>
+  <pre class="instr-preview">{{ c.preview }}</pre>
+  {% endif %}{% endif %}
+  {% if !c.offer_claude.is_empty() %}
+  <label class="switch"><input type="checkbox" name="claude" value="1"><span class="switch-track" aria-hidden="true"></span><span class="row-main"><span class="row-name">Also let Claude read AGENTS.md beside CLAUDE.md</span><span class="row-desc">{{ c.offer_claude }} This sets Claude's AGENTS.md option on every machine.</span></span></label>
+  {% endif %}
+  <p class="marginalia">{{ c.undo }}</p>
+  <p class="marginalia warn-note" data-error hidden role="alert"></p>
+  <div class="editor-bar">
+    <a class="link-cap" href="{{ c.back }}">Cancel</a>
+    <button class="button-ink" type="submit">{{ c.button }}</button>
+  </div>
+</form>
+{% endblock %}

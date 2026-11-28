@@ -239,6 +239,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .list-plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
 .ink-block { background: #16181D; color: #ECEAE3; margin: 0; padding: 10px 12px; box-shadow: inset 0 0 0 1px var(--gilt-orn); font-family: var(--mono); font-size: 12.5px; line-height: 1.55; overflow-x: auto; white-space: pre; }
+.ink-block.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .prose { max-width: 46em; overflow-wrap: anywhere; }
 .prose > .lede { margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
 .prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--display); letter-spacing: 0.04em; line-height: 1.25; margin: 1.3em 0 0.4em; text-transform: none; }
@@ -331,6 +332,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .field .search { width: 100%; flex: none; text-transform: none; letter-spacing: normal; }
 .field.grow { flex: 1 1 220px; width: auto; }
 .setting-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 8px; }
+.setting-row .row-desc { white-space: normal; }
 .switch { display: flex; align-items: center; gap: 12px; flex: 1 1 300px; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .switch-track { flex: none; width: 34px; height: 18px; border: 1px solid var(--ink); position: relative; background: transparent; }
@@ -349,6 +351,60 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 
 .client-row { border-top: 1px solid var(--hair); }
 
+/* placement: per-agent switches and "Use in…" (decision 0027). The switches are submit
+   buttons with role="switch", so they work as plain form posts without script. */
+
+.place { display: flex; flex-direction: column; gap: 8px; }
+.place-form { margin: 0; }
+.place-none { margin: 0; font-size: 14px; font-style: italic; color: var(--muted); }
+.place-badge { color: var(--gilt); }
+.toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 10px; border: 1px solid var(--hair); background: var(--ground); color: var(--icon); font: inherit; cursor: pointer; text-align: left; }
+.toggle:hover:not(:disabled) { border-color: var(--ink); }
+.toggle:disabled { cursor: not-allowed; }
+.toggle .agent-icon { width: 15px; height: 15px; flex: none; }
+.toggle-label { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+.toggle-state { font-size: 14px; font-style: italic; color: var(--muted); }
+.toggle .switch-track { width: 30px; height: 16px; }
+.toggle .switch-track::after { width: 10px; height: 10px; }
+.toggle[aria-checked="true"] .switch-track { background: var(--verdigris); border-color: var(--verdigris); }
+.toggle[aria-checked="true"] .switch-track::after { left: 16px; background: var(--ground); }
+.toggle:disabled .switch-track { opacity: 0.45; border-style: dashed; }
+.toggle-all { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ground), inset 0 0 0 2px var(--gilt-orn); gap: 10px; }
+.toggle-all .toggle-label { font-family: var(--display); font-weight: 700; font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+.toggles { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.toggle-item { display: flex; flex-direction: column; gap: 3px; max-width: 100%; }
+.toggle-item.locked { flex-basis: 100%; }
+.toggle-why { margin: 0; padding-left: 10px; border-left: 2px solid var(--gilt-orn); font-size: 14px; font-style: italic; color: var(--ink-soft); }
+.toggle-why.warn { border-left-color: var(--oxblood); color: var(--oxblood); }
+
+.use-in { align-self: flex-start; max-width: 100%; }
+.use-in > summary { list-style: none; min-height: 32px; padding: 0 12px; }
+.use-in > summary::-webkit-details-marker { display: none; }
+.use-in > summary::after { content: ""; width: 5px; height: 5px; margin-left: 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translateY(-2px); }
+.use-in[open] > summary::after { transform: rotate(-135deg) translateY(-1px); }
+.use-form { margin-top: 6px; padding: 10px 12px; border: 1px solid var(--ink); background: var(--field); box-shadow: inset 0 0 0 2px var(--field), inset 0 0 0 3px var(--gilt-orn); display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.use-form fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.use-form legend { padding: 0 0 4px; font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
+.use-choice { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.use-choice select { max-width: 100%; font: inherit; font-size: 14px; background: var(--ground); color: var(--ink); border: 1px solid var(--hair); }
+.use-form input[type="radio"], .use-form input[type="checkbox"] { accent-color: var(--verdigris); margin: 0; }
+.use-projects { list-style: none; margin: 0; padding: 0 0 0 24px; display: flex; flex-direction: column; gap: 4px; }
+.use-projects label { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px; }
+
+.aside .place { margin-bottom: 4px; }
+.place-step { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.place-step > * { max-width: 620px; }
+.place-step .marginalia { margin: 0; }
+.place-step-form { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+
+@media (max-width: 720px) {
+  .toggle-all { width: 100%; flex-wrap: wrap; }
+  .toggle-item { flex: 1 1 calc(50% - 6px); }
+  .toggle-item .toggle { width: 100%; }
+  .toggle-item .switch-track { margin-left: auto; }
+  .use-in { align-self: stretch; }
+}
+
 /* updates */
 .updates-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 12px; }
 .section .updates-check { margin: 10px 0 0; }
@@ -365,6 +421,26 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .diff .del { color: #E6A0A8; }
 .diff .hunk { color: #B08A3E; }
 .update-state { white-space: normal; }
+
+/* instructions */
+.instr-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0 0; padding: 0 8px; }
+.instr-go { flex: none; }
+.instr-readers, .instr-change { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.instr-readers .agent-note { align-items: flex-start; font-size: 12px; line-height: 1.4; }
+.instr-readers .agent-note svg { flex: none; margin-top: 1px; }
+.instr-readers .ok { color: var(--ink); }
+.instr-readers .warn { color: var(--oxblood); }
+.instr-readers .muted { color: var(--muted); }
+.instr-agent { font-weight: 500; }
+.instr-confirm { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.instr-confirm p { margin: 0; }
+.instr-preview { margin: 0; max-height: 50vh; overflow: auto; padding: 12px 14px; background: #16181D; color: #ECEAE3; box-shadow: inset 0 0 0 1px var(--gilt-orn); font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instr-text { width: 100%; min-height: 40vh; padding: 14px 16px; resize: vertical; background: var(--field); color: var(--ink); border: 1px solid var(--hair); border-radius: 0; font-family: var(--mono); font-size: 13px; line-height: 1.6; }
+.instr-text:focus { border-color: var(--ink); outline: none; box-shadow: inset 0 0 0 1px var(--gilt-orn); }
+.instr-select { width: 100%; min-width: 0; }
+.instr-error { flex: 1 1 100%; }
+@media (max-width: 640px) {
+  .instr-go { display: none; }
 
 /* library */
 
@@ -413,8 +489,8 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .new-skill { display: flex; flex-direction: column; gap: 10px; max-width: 520px; }
 .new-skill .field .search { width: 100%; flex: none; text-transform: none; letter-spacing: normal; }
 .field-hint { margin-top: -6px; font-size: 14px; font-style: italic; color: var(--muted); }
-.place { border: 0; margin: 0; padding: 0; gap: 6px; }
-.place legend { padding: 0 0 4px; }
+.new-place { border: 0; margin: 0; padding: 0; gap: 6px; }
+.new-place legend { padding: 0 0 4px; }
 .choice { display: flex; align-items: center; gap: 8px; min-height: 30px; font-family: var(--serif); font-size: 16px; letter-spacing: normal; text-transform: none; color: var(--ink); cursor: pointer; }
 .choice input { accent-color: var(--verdigris); width: 16px; height: 16px; }
 .new-skill .editor-actions { margin-top: 4px; }
