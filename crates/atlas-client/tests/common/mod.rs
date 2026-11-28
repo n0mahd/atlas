@@ -11,9 +11,10 @@ use std::process::Command;
 
 use atlas_client::config::{Config, Paths, State};
 use atlas_client::pass::{self, Fetched, Pass};
+use atlas_core::kernel::Slug;
 use atlas_core::kernel::TreeHash;
 use atlas_core::release::{
-    CommitId, FORMAT, Manifest, OwnerKey, Signature, SignedRelease, Source, SourceId,
+    CommitId, FORMAT, Manifest, OwnerKey, ProjectRef, Signature, SignedRelease, Source, SourceId,
 };
 use atlas_verify::encode;
 use p256::ecdsa::SigningKey;
@@ -121,6 +122,8 @@ pub struct World {
     pub state: State,
     pub sources: Vec<Source>,
     pub adopt: PathBuf,
+    /// Registered projects the manifest names.
+    pub projects: Vec<ProjectRef>,
 }
 
 pub const HOOK: &str =
@@ -177,6 +180,7 @@ impl World {
             },
             sources: vec![knowledge, public],
             adopt,
+            projects: Vec::new(),
         }
     }
 
@@ -207,6 +211,43 @@ impl World {
         self.sources[0] = source_at(&dir, SourceId::Knowledge);
     }
 
+    /// A checkout of project `name` at `~/Projects/<dir>`, its `origin` in scp form while
+    /// the manifest names it in https form; `files` are committed, and the project is
+    /// registered (once).
+    pub fn checkout(&mut self, name: &str, dir: &str, files: &[(&str, &str)]) -> PathBuf {
+        let root = self.home().join("Projects").join(dir);
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "--quiet"]);
+        let origin = format!("git@git.example:me/{name}.git");
+        git(&root, &["remote", "add", "origin", &origin]);
+        for (path, text) in files {
+            write(&root.join(path), text);
+        }
+        git(&root, &["add", "-A"]);
+        git(
+            &root,
+            &["commit", "--quiet", "--allow-empty", "-m", "start"],
+        );
+        if !self.projects.iter().any(|p| p.name.as_str() == name) {
+            self.projects.push(ProjectRef {
+                name: Slug::new(name).unwrap(),
+                remote: format!("https://git.example/me/{name}"),
+            });
+        }
+        root
+    }
+
+    /// The owner's own clone of the knowledge repo at `~/Knowledge`.
+    pub fn owner_knowledge(&self) -> PathBuf {
+        let dir = self.home().join("Knowledge");
+        let remote = self.knowledge_remote();
+        git(
+            self.home(),
+            &["clone", "--quiet", remote.to_str().unwrap(), "Knowledge"],
+        );
+        dir
+    }
+
     pub fn manifest(&self, number: u64, keys: &[&Key]) -> Manifest {
         Manifest {
             format: FORMAT,
@@ -215,7 +256,7 @@ impl World {
             hub: HUB.into(),
             sources: self.sources.clone(),
             owner_keys: keys.iter().map(|k| k.owner()).collect(),
-            projects: Vec::new(),
+            projects: self.projects.clone(),
         }
     }
 
@@ -291,4 +332,9 @@ pub fn link(path: &Path) -> PathBuf {
 /// Whether `path` is a link (or anything at all), without following it.
 pub fn exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
+}
+
+/// `git status --porcelain` in `dir`: empty when the owner's checkout looks untouched.
+pub fn status(dir: &Path) -> String {
+    git(dir, &["status", "--porcelain", "--untracked-files=all"])
 }

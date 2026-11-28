@@ -1057,6 +1057,51 @@ mod tests {
     }
 
     #[test]
+    fn claudes_hooks_switches_and_agents_md_option_share_one_write() {
+        // The real formats, in the order plan_machine runs them on settings.json.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "{\n  \"model\": \"opus\"\n}\n").unwrap();
+        let hook = ManagedHook {
+            name: atlas_core::kernel::Slug::new("guard").unwrap(),
+            event: atlas_core::catalog::HookEvent::PreToolUse,
+            matcher: Some("Bash".into()),
+            script: "/srv/guard.sh".into(),
+            timeout: None,
+        };
+        let off = BTreeMap::from([("pdf".to_owned(), PathBuf::from("/u/.claude/skills/pdf"))]);
+        let mut plan = Plan::default();
+        let steps = [
+            hook_step(HarnessKind::ClaudeCode, vec![hook]).unwrap(),
+            switch_step(HarnessKind::ClaudeCode, Reach::Home, off),
+            agents_md_step(ClaudeAgentsMd::Alongside),
+        ];
+        edit_config(&mut plan, dir.path(), &file, &steps);
+        let [Action::WriteFile { bytes, why, .. }] = &plan.actions[..] else {
+            panic!("one write: {:?}", plan.actions);
+        };
+        assert_eq!(
+            *why,
+            "update Atlas's hooks, skill switches and Claude Code's AGENTS.md option"
+        );
+        let v: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        assert_eq!(v["model"], "opus", "the owner's setting stays");
+        assert!(v["hooks"]["PreToolUse"].is_array(), "{v}");
+        assert_eq!(v["skillOverrides"]["pdf"], "off", "{v}");
+        assert_eq!(
+            v["pluginConfigs"]["cc-plugin-agents-md@builtin"]["options"]["instructionFiles"],
+            "claude-md-and-agents-md",
+            "{v}"
+        );
+
+        // Applied, the same three steps have nothing left to do.
+        fs::write(&file, bytes).unwrap();
+        let mut again = Plan::default();
+        edit_config(&mut again, dir.path(), &file, &steps);
+        assert_eq!(again.actions, [], "{:?}", again.conflicts);
+    }
+
+    #[test]
     fn a_failing_format_leaves_the_whole_file() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
