@@ -328,7 +328,7 @@ fn prepare(
     if public_unpushed {
         notes.push("Public skills reach your machines after you push them.".to_owned());
     }
-    let (manifest, skipped) = release::build(sources, number, origin, keys, crate::clients::now());
+    let (manifest, skipped) = release::build(sources, number, origin, keys, crate::clients::now())?;
     notes.extend(
         skipped
             .iter()
