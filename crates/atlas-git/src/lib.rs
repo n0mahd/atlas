@@ -189,6 +189,142 @@ impl Repo {
         Ok(trimmed(&out.stdout))
     }
 
+    /// Commits exactly the working-tree state of `paths` (files or folders, including
+    /// additions and deletions under them) as one commit. Other changes in the repo stay
+    /// as they were and are not part of the commit. For changes that span files, such as
+    /// creating, moving or deleting a skill folder.
+    ///
+    /// # Errors
+    /// `InvalidPath`, `WrongBranch` (checked before anything is changed),
+    /// `NothingToCommit` if none of `paths` changed, or git failures (the index is then
+    /// put back as it was for those paths).
+    pub fn commit_paths(
+        &self,
+        paths: &[&Path],
+        message: &str,
+        require_branch: Option<&str>,
+    ) -> Result<String, GitError> {
+        if paths.is_empty() {
+            return Err(GitError::NothingToCommit);
+        }
+        for rel in paths {
+            check_rel(rel)?;
+        }
+        if let Some(expected) = require_branch {
+            let actual = self.current_branch()?;
+            if actual.as_deref() != Some(expected) {
+                return Err(GitError::WrongBranch {
+                    expected: expected.to_owned(),
+                    actual,
+                });
+            }
+        }
+        // Only paths that changed: git refuses a pathspec that matches nothing, such as a
+        // file the change could have written but didn't.
+        let mut dirty: Vec<&Path> = Vec::with_capacity(paths.len());
+        for rel in paths {
+            if !self.status_of(rel)?.is_empty() {
+                dirty.push(rel);
+            }
+        }
+        if dirty.is_empty() {
+            return Err(GitError::NothingToCommit);
+        }
+        let with_paths = |head: &[&'static str]| -> Vec<&OsStr> {
+            head.iter()
+                .map(|s| os(s))
+                .chain(dirty.iter().map(|p| p.as_os_str()))
+                .collect()
+        };
+        self.git(&with_paths(&["add", "-A", "--"]), LOCAL_TIMEOUT)?;
+        let mut commit: Vec<&OsStr> = ["commit", "--no-verify", "--quiet", "-m"]
+            .iter()
+            .map(|s| os(s))
+            .collect();
+        commit.push(os(message));
+        commit.push(os("--"));
+        commit.extend(dirty.iter().map(|p| p.as_os_str()));
+        if let Err(err) = self.git(&commit, LOCAL_TIMEOUT) {
+            // Best effort: leave the index for these paths as it was.
+            let undo: &[&'static str] = if self.head_exists()? {
+                &["reset", "-q", "HEAD", "--"]
+            } else {
+                &["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"]
+            };
+            let _ = self.run(&with_paths(undo), LOCAL_TIMEOUT);
+            return Err(err);
+        }
+        let out = self.git(&["rev-parse", "HEAD"], LOCAL_TIMEOUT)?;
+        Ok(trimmed(&out.stdout))
+    }
+
+    /// Puts `paths` back exactly as HEAD has them: tracked files restored, files git
+    /// doesn't track removed, the index for them reset. Only for paths that were clean
+    /// before a change began, so nothing of the owner's is lost.
+    ///
+    /// # Errors
+    /// `InvalidPath`, or git failures.
+    pub fn restore_paths(&self, paths: &[&Path]) -> Result<(), GitError> {
+        for rel in paths {
+            check_rel(rel)?;
+        }
+        let head = self.head_exists()?;
+        // Every path is attempted even when one fails; the first error is returned.
+        let mut first_err = None;
+        for rel in paths {
+            if let Err(e) = self.restore_one(rel, head) {
+                first_err.get_or_insert(e);
+            }
+        }
+        first_err.map_or(Ok(()), Err)
+    }
+
+    fn restore_one(&self, rel: &Path, head: bool) -> Result<(), GitError> {
+        let undo_index = if head {
+            [os("reset"), os("-q"), os("HEAD"), os("--")].to_vec()
+        } else {
+            [
+                os("rm"),
+                os("-r"),
+                os("-q"),
+                os("--cached"),
+                os("--ignore-unmatch"),
+                os("--"),
+            ]
+            .to_vec()
+        };
+        let mut undo_index = undo_index;
+        undo_index.push(rel.as_os_str());
+        let _ = self.run(&undo_index, LOCAL_TIMEOUT);
+        let in_head = head && {
+            let listed = self.git(
+                &[
+                    os("ls-tree"),
+                    os("--name-only"),
+                    os("HEAD"),
+                    os("--"),
+                    rel.as_os_str(),
+                ],
+                LOCAL_TIMEOUT,
+            )?;
+            !listed.stdout.is_empty()
+        };
+        // The path was clean before the change, so untracked files under it are the
+        // change's. Remove them first (git clean spares ignored files, which may be the
+        // owner's), so a file the change turned into a folder or back can be checked out.
+        self.git(
+            &[os("clean"), os("-fdq"), os("--"), rel.as_os_str()],
+            LOCAL_TIMEOUT,
+        )?;
+        if in_head {
+            self.git(
+                &[os("checkout"), os("HEAD"), os("--"), rel.as_os_str()],
+                LOCAL_TIMEOUT,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Clones `remote` into `dir` (no checkout) the first time; afterwards opens the clone
     /// and points `origin` at `remote`. For a client's local copies of release sources.
     ///

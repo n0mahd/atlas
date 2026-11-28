@@ -5,6 +5,9 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
+// Used by the skills, instructions and import pages as they land (decision 0027).
+#[allow(dead_code)]
+mod change;
 pub mod clients;
 mod distribute;
 mod edit;
@@ -13,6 +16,11 @@ mod install;
 mod markdown;
 pub mod release;
 pub mod remote;
+// Stubs until the library and placement work lands (decision 0027).
+#[allow(dead_code, clippy::unused_async)]
+mod skill_ops;
+#[allow(dead_code, clippy::unused_async)]
+mod skills_place;
 pub mod views;
 
 use std::sync::Arc;
@@ -455,6 +463,7 @@ async fn skills(
     let v = views::skills(&snap, &scope, &q.q);
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
+    q.apply(&mut page);
     Ok(Html(SkillsPage { page, v }.render()?))
 }
 
@@ -492,6 +501,7 @@ async fn instructions(
         true,
     );
     page.totals = format!("{} files", snap.catalog.instructions.len());
+    q.apply(&mut page);
     Ok(Html(
         InstructionsPage {
             page,
@@ -536,6 +546,7 @@ async fn memory(
     let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
+    q.apply(&mut page);
     Ok(Html(MemoryPage { page, v }.render()?))
 }
 
@@ -556,11 +567,16 @@ async fn memory_detail(
     Ok(Html(MemoryDetailPage { page, v }.render()?))
 }
 
-async fn hooks(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
+async fn hooks(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::hooks(&snap);
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
+    q.apply(&mut page);
     Ok(Html(HooksPage { page, v }.render()?))
 }
 

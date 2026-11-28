@@ -8,7 +8,9 @@
 pub mod change;
 pub mod hooks;
 pub mod instructions;
+pub mod placement;
 pub mod skills;
+pub mod switches;
 
 use std::path::{Path, PathBuf};
 

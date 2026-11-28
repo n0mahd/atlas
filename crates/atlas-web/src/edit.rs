@@ -139,7 +139,7 @@ impl Writer {
             .div_ceil(60)
     }
 
-    fn settings(&self) -> Settings {
+    pub(crate) fn settings(&self) -> Settings {
         self.settings
             .lock()
             .map_or_else(|_| Settings::default(), |s| s.clone())
@@ -189,11 +189,11 @@ pub(crate) fn decorate(page: &mut Page, state: &AppState, headers: &HeaderMap) {
     }
 }
 
-fn writer(state: &AppState) -> Result<&Arc<Writer>, AppError> {
+pub(crate) fn writer(state: &AppState) -> Result<&Arc<Writer>, AppError> {
     state.writer.as_ref().ok_or(AppError::NotFound)
 }
 
-fn forbidden(msg: &'static str) -> Response {
+pub(crate) fn forbidden(msg: &'static str) -> Response {
     (StatusCode::FORBIDDEN, msg).into_response()
 }
 
@@ -884,7 +884,7 @@ struct SavedJson {
     send: bool,
 }
 
-fn wants_json(headers: &HeaderMap) -> bool {
+pub(crate) fn wants_json(headers: &HeaderMap) -> bool {
     headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())

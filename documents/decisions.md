@@ -272,6 +272,40 @@ otherwise every hook meant for Grok. When Claude Code appears later the duplicat
 `atlas.json`, and the file is removed once it holds nothing. Replaces 0022's "Atlas writes
 no hooks for Grok".
 
+## 0027 · 2026-11-27 · Where each skill goes, and bringing things into Atlas
+Atlas reaches parity with the owner's T3 Code Skills page (skills series parts 1–3),
+adapted to the hub and many machines. See `documents/skills.md`.
+- **Placements** live in the knowledge repo as `atlas/placements.toml`, listing only
+  exceptions: agents a skill is off for, and `only-projects` for a global skill used in some
+  projects only. In git so they reach every machine in the signed update; not inside skill
+  folders, so `npx skills` updates and the public repo stay untouched.
+- **Folders per skill** come from one pure solver (`atlas_harness::placement::solve`): a
+  folder no unwanted agent reads, else switch the unwanted reader off by its own setting
+  (`atlas_harness::switches`: Claude Code, Codex, OpenCode, Pi), else report that the agent
+  can't be excluded. With nothing off it gives the links atlasd made before.
+- **Projects reach machines**: an update names each project and its remote, unpinned;
+  atlasd finds the project's checkouts under `project_roots` and makes repo-local links
+  (kept out of git by `.git/info/exclude`) and switches there.
+- **Import moves** (owner's answer): the hub copies the item into the store and commits; on
+  each machine atlasd swaps a real folder or file for Atlas's link only when it is an exact
+  copy of what Atlas holds, and reports anything else. Tool-installed, built-in and plugin
+  skills are listed but never imported.
+- **Memory links** (owner's answer): Claude Code's per-repo memory folders become links into
+  `<knowledge>/memory/projects/<project>/` after their notes are imported, so new notes go
+  straight to git (0008).
+- **One way to change several files**: `atlas-web::change` (session, CSRF, git lock, `main`
+  for projects, clean paths, one commit per repo, restore on failure) over
+  `atlas_fs::library` (bounded, link-refusing folder writes) and `Repo::commit_paths`.
+- **Not now**: importing items seen only on other machines (they need Local Atlas or a
+  reviewed upload) and MCP tools that let agents change skills (writes need the passkey).
+- **After review** (Gemini 4 Neon, of the foundation): the solver picks the best set of
+  folders (fewest agents left seeing a skill they shouldn't, then fewest switched off),
+  keeping the old links whenever they are already best; an "exact copy" excludes any
+  folder holding a link, a `.git` or a special file, and compares execute bits; Codex
+  switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
+  repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
+  one change; public skills are committed and never pushed (0016), not refused.
+
 ## 0028 · 2026-11-27 · atlasd links Claude Code's subagents
 atlasd links each `<knowledge>/agents/<name>.md` in an update's pinned knowledge copy into
 `~/.claude/agents/<name>.md` when Claude Code is set up for the login (`~/.claude` exists).
