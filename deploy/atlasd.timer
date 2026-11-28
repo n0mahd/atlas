@@ -1,10 +1,11 @@
-# Runs atlasd.service every 10 minutes. See atlasd.service for install steps.
+# Runs atlasd.service every minute. See atlasd.service for install steps. A run with
+# nothing new is one release GET and one report POST and writes nothing on this machine.
 [Unit]
-Description=Run atlasd every 10 minutes
+Description=Run atlasd every minute
 
 [Timer]
 OnBootSec=2min
-OnCalendar=*:0/10
+OnCalendar=*:*:00
 Persistent=true
 
 [Install]
