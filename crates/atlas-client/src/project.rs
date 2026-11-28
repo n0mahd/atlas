@@ -53,7 +53,7 @@ fn holders(harnesses: &[&'static Layout], co: &Checkout, name: &str) -> Vec<&'st
 pub(crate) fn place(harnesses: &[&'static Layout], desired: &Desired, co: &Checkout) -> Placed {
     let mut placer = Placer::new(harnesses, Reach::Project, &co.root);
     let mut conflicts = Vec::new();
-    let own_skills = desired::skills_in(&co.root.join(OWN), &mut Vec::new());
+    let own_skills = desired::skills_in(&co.root.join(OWN), &mut conflicts);
     let home = SkillHome::Project(co.project.clone());
     for (name, source) in &own_skills {
         let off = Slug::new(name.as_str()).map_or_else(

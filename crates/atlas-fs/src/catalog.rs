@@ -292,7 +292,14 @@ impl Reader<'_> {
             let (fm, body): (SkillFrontmatter, String) = self.parse_front(&skill_md, &text);
             let declared_name = fm.name.filter(|n| n != slug.as_str());
             let mut files = Vec::new();
-            self.walk(&folder, &shown, "", 0, MAX_LISTED_FILES, &mut files);
+            self.walk(
+                &folder,
+                &shown,
+                "",
+                0,
+                (MAX_LISTED_FILES, false),
+                &mut files,
+            );
             files.retain(|f| f != "SKILL.md");
             self.catalog.skills.push(Skill {
                 name: slug,
@@ -323,7 +330,8 @@ impl Reader<'_> {
             root.join(rel)
         };
         let mut files = Vec::new();
-        self.walk(&memory, &base, "", 0, MAX_MEMORY_PAGES, &mut files);
+        // Notes may be links: the read follows a link and flags one to a hidden file.
+        self.walk(&memory, &base, "", 0, (MAX_MEMORY_PAGES, true), &mut files);
         if files.len() >= MAX_MEMORY_PAGES {
             self.problem(
                 &base,
@@ -464,14 +472,16 @@ impl Reader<'_> {
         out
     }
 
-    /// Collects regular files under `dir`, as paths relative to where the walk began.
+    /// Collects regular files under `dir`, as paths relative to where the walk began, at
+    /// most `limit`; with `md_links`, also links named `*.md`, so the read that follows
+    /// decides about them (it follows a link and flags one to a hidden file).
     fn walk(
         &mut self,
         dir: &Dir,
         shown: &Path,
         prefix: &str,
         depth: usize,
-        limit: usize,
+        (limit, md_links): (usize, bool),
         out: &mut Vec<String>,
     ) {
         for (name, kind) in self.list(dir, shown) {
@@ -485,10 +495,15 @@ impl Reader<'_> {
             };
             match kind {
                 EntryKind::File => out.push(rel),
+                EntryKind::Symlink
+                    if md_links && Path::new(&name).extension().is_some_and(|e| e == "md") =>
+                {
+                    out.push(rel);
+                }
                 EntryKind::Dir if depth + 1 < MAX_DEPTH => {
                     let sub_shown: PathBuf = shown.join(&name);
                     if let Some(sub) = self.open_sub(dir, shown, &name) {
-                        self.walk(&sub, &sub_shown, &rel, depth + 1, limit, out);
+                        self.walk(&sub, &sub_shown, &rel, depth + 1, (limit, md_links), out);
                     }
                 }
                 EntryKind::Dir | EntryKind::Symlink => {}

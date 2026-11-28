@@ -70,9 +70,19 @@ pub(crate) fn skills_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<Stri
             continue;
         };
         let path = entry.path();
-        // Only real folders: a link in a repo could point anywhere.
-        let real = atlas_fs::library::is_real_dir(&path);
-        if name.starts_with('.') || !real || !atlas_fs::library::has_skill_md(&path) {
+        if name.starts_with('.') {
+            continue;
+        }
+        let link = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        let has_entry = fs::symlink_metadata(path.join("SKILL.md")).is_ok();
+        if !link && (!atlas_fs::library::is_real_dir(&path) || !has_entry) {
+            // Not a skill at all (a stray file or a folder without SKILL.md).
+            continue;
+        }
+        // The installable rule (atlas-fs): a real folder whose files and links all stay
+        // inside it.
+        if let Err(why) = atlas_fs::library::installable_folder(&path, "SKILL.md") {
+            problems.push(format!("skill {name} skipped: {why}"));
             continue;
         }
         if Slug::new(name.as_str()).is_err() {
@@ -101,9 +111,8 @@ fn agents_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf
             continue;
         }
         let path = entry.path();
-        // Only real files: a link in a repo could point anywhere.
-        if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
-            problems.push(format!("subagent {name} skipped: it isn't a regular file"));
+        if let Err(why) = atlas_fs::library::installable_file(&path, dir) {
+            problems.push(format!("subagent {name} skipped: {why}"));
             continue;
         }
         if Slug::new(stem).is_err() {
@@ -120,9 +129,10 @@ fn agents_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf
 fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
     let slug = Slug::new(name).map_err(|e| e.to_string())?;
     let file = dir.join("hook.toml");
-    let meta = fs::symlink_metadata(&file).map_err(|e| format!("no hook.toml ({e})"))?;
-    if !meta.is_file() || meta.len() > MAX_HOOK_TOML {
-        return Err("hook.toml isn't a small regular file".to_owned());
+    atlas_fs::library::installable_file(&file, dir)
+        .map_err(|why| format!("its hook.toml: {why}"))?;
+    if fs::metadata(&file).map_or(true, |m| m.len() > MAX_HOOK_TOML) {
+        return Err("hook.toml is larger than 64 KiB".to_owned());
     }
     let text = fs::read_to_string(&file).map_err(|e| e.to_string())?;
     let manifest: HookManifest = toml::from_str(&text).map_err(|e| e.message().to_owned())?;
@@ -133,9 +143,8 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
         ));
     }
     let script = dir.join(run);
-    if !fs::symlink_metadata(&script).is_ok_and(|m| m.is_file()) {
-        return Err(format!("its script {run} is missing"));
-    }
+    atlas_fs::library::installable_file(&script, dir)
+        .map_err(|why| format!("its script {run}: {why}"))?;
     Ok(HookSpec {
         hook: ManagedHook {
             name: slug,

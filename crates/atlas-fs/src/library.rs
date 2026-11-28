@@ -79,6 +79,77 @@ pub fn has_skill_md(folder: &Path) -> bool {
     std::fs::symlink_metadata(folder.join("SKILL.md")).is_ok_and(|m| m.is_file())
 }
 
+/// Whether a link at `link` resolves to somewhere inside `within` (both looked up on
+/// disk). A broken link resolves nowhere, so it doesn't.
+fn resolves_inside(link: &Path, within: &Path) -> bool {
+    let (Ok(target), Ok(root)) = (std::fs::canonicalize(link), std::fs::canonicalize(within))
+    else {
+        return false;
+    };
+    target.starts_with(&root)
+}
+
+/// The rule for anything Atlas installs from a repo (a skill folder, a subagent file, a
+/// hook's manifest and script): a regular file, or a link that resolves inside `within`,
+/// the item's own folder. `Err` says why not, for the machine's report.
+///
+/// # Errors
+/// Missing, not a regular file, or a link that leads out of `within`.
+pub fn installable_file(file: &Path, within: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(file) {
+        Err(_) => Err("it is missing".to_owned()),
+        Ok(m) if m.file_type().is_symlink() => {
+            if resolves_inside(file, within) && std::fs::metadata(file).is_ok_and(|m| m.is_file()) {
+                Ok(())
+            } else {
+                Err("it is a link to somewhere else".to_owned())
+            }
+        }
+        Ok(m) if m.is_file() => Ok(()),
+        Ok(_) => Err("it isn't a regular file".to_owned()),
+    }
+}
+
+/// The same rule for a whole folder Atlas links agents to (a skill): a real folder whose
+/// `required` file passes [`installable_file`], and no link anywhere inside it that leads
+/// out of the folder, since agents read through the folder's links. Bounded like
+/// [`read_tree`].
+///
+/// # Errors
+/// The first reason the folder can't be installed, naming the entry.
+pub fn installable_folder(folder: &Path, required: &str) -> Result<(), String> {
+    if !is_real_dir(folder) {
+        return Err("it is a link to somewhere else".to_owned());
+    }
+    installable_file(&folder.join(required), folder)
+        .map_err(|why| format!("its {required}: {why}"))?;
+    let mut stack = vec![folder.to_path_buf()];
+    let mut seen = 0_usize;
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            seen += 1;
+            if seen > MAX_ENTRIES {
+                return Err("it holds too many files".to_owned());
+            }
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let ft = entry.file_type().map_err(|e| e.to_string())?;
+            if ft.is_symlink() {
+                if !resolves_inside(&path, folder) {
+                    let rel = path.strip_prefix(folder).unwrap_or(&path);
+                    return Err(format!(
+                        "{} inside it is a link to somewhere else",
+                        rel.display()
+                    ));
+                }
+            } else if ft.is_dir() && entry.file_name() != ".git" {
+                stack.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One regular file of a folder, relative to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeFile {

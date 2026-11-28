@@ -381,6 +381,33 @@ fn links_to_hidden_files_in_a_repo_are_refused() {
 }
 
 #[test]
+fn a_memory_note_that_links_to_a_hidden_file_is_flagged_not_silently_skipped() {
+    let (_tmp, sources) = fixture();
+    let k = &sources.knowledge;
+    write(&k.join(".secret"), "TOKEN=hunter2\n");
+    fs::create_dir_all(k.join("memory")).unwrap();
+    symlink("../.secret", k.join("memory/leak.md")).unwrap();
+    write(
+        &k.join("memory/plain.md"),
+        "---\nname: plain\n---\nA note.\n",
+    );
+    symlink("plain.md", k.join("memory/alias.md")).unwrap();
+
+    let catalog = load_catalog(&sources);
+    assert!(!format!("{catalog:?}").contains("hunter2"));
+    assert!(
+        catalog
+            .problems
+            .iter()
+            .any(|p| p.path.ends_with("leak.md") && p.message.contains("hidden file")),
+        "{:#?}",
+        catalog.problems
+    );
+    // A link to another note is read like the note.
+    assert!(catalog.memory.iter().filter(|m| m.name == "plain").count() >= 1);
+}
+
+#[test]
 fn reads_claude_project_memory_and_project_agents() {
     let (_tmp, sources) = fixture();
     let repo = sources.projects[0].root.clone();
