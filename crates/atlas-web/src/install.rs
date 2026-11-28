@@ -53,12 +53,27 @@ pub(crate) async fn script(State(s): State<AppState>) -> Result<Response, AppErr
             "This hub has no atlasd builds to hand out yet.".into(),
         ));
     }
-    let body = format!(
+    Ok((
+        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
+        script_text(&origin, &sums),
+    )
+        .into_response())
+}
+
+/// The install script for a hub at `origin`; `sums` holds one `  <arch>) sum=<hex> ;;`
+/// line per atlasd build. It must run under any POSIX `sh`, macOS's bash 3.2 included.
+fn script_text(origin: &str, sums: &str) -> String {
+    format!(
         r#"#!/bin/sh
 # Installs atlasd for this account and pairs it with the Atlas hub at {origin}.
 # Usage: curl -fsSL {origin}/install | sh -s -- <pairing code>
 set -eu
-code="${{1:?Give the pairing code from the hub's Machines page}}"
+# No apostrophes inside ${{...}}: macOS's /bin/sh (bash 3.2) reads one as an open quote.
+if [ -z "${{1:-}}" ]; then
+  echo "Give the pairing code from the hub's Machines page." >&2
+  exit 1
+fi
+code="$1"
 hub="{origin}"
 case "$(uname -s)" in
   Linux) ;;
@@ -103,12 +118,7 @@ echo
 echo "Done. atlasd checks for changes every 10 minutes."
 echo "To see what it would change now: atlasd run --dry-run"
 "#
-    );
-    Ok((
-        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
-        body,
     )
-        .into_response())
 }
 
 /// A client build, by architecture.
@@ -132,4 +142,50 @@ pub(crate) async fn binary(
         bytes,
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn script() -> String {
+        script_text("https://hub.example.ts.net:7443", "  x86_64) sum=00 ;;\n")
+    }
+
+    /// macOS's /bin/sh (bash 3.2) treats an apostrophe inside `${...}` as an open quote and
+    /// fails to parse the whole script, so pairing a Mac said "unexpected EOF" instead of
+    /// that macOS isn't supported.
+    #[test]
+    fn no_apostrophe_inside_a_parameter_expansion() {
+        let text = script();
+        for (n, line) in text.lines().enumerate() {
+            let mut rest = line;
+            while let Some(start) = rest.find("${") {
+                let inner = &rest[start + 2..];
+                let end = inner.find('}').unwrap_or(inner.len());
+                assert!(!inner[..end].contains('\''), "line {}: {line}", n + 1);
+                rest = &inner[end..];
+            }
+        }
+    }
+
+    #[test]
+    fn parses_and_asks_for_a_code() {
+        let text = script();
+        let parse = Command::new("sh")
+            .args(["-n", "-c", &text])
+            .output()
+            .unwrap();
+        assert!(parse.status.success(), "{parse:?}");
+        let run = Command::new("sh")
+            .args(["-c", &text, "sh"])
+            .output()
+            .unwrap();
+        assert_eq!(run.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&run.stderr).contains("Give the pairing code"),
+            "{run:?}"
+        );
+    }
 }
