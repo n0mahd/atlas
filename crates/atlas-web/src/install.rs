@@ -2,8 +2,13 @@
 //! `curl -fsSL <hub>/install | sh -s -- <pairing code>`.
 //!
 //! The hub serves the script and the client builds it keeps in `<state>/dist/`
-//! (`atlasd-linux-x86_64`, `atlasd-linux-aarch64`), behind the same Tailscale login check
-//! as every page. The script checks each download against the SHA-256 the hub computed.
+//! (`atlasd-linux-x86_64`, `atlasd-linux-aarch64`, `atlasd-macos-x86_64`,
+//! `atlasd-macos-aarch64`), behind the same Tailscale login check as every page. The
+//! script checks each download against the SHA-256 the hub computed.
+//!
+//! The script checks that the machine can run atlasd on a timer before it pairs, runs the
+//! first pass in the foreground and prints its summary, then starts the timer (decisions:
+//! "The install script runs the first pass in the foreground").
 
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
@@ -19,12 +24,26 @@ const PLIST: &str = include_str!("../../../deploy/atlasd.plist");
 /// Operating systems atlasd is built for, as they appear in build names (`atlasd-<os>-<arch>`).
 const OSES: [&str; 2] = ["linux", "macos"];
 
+/// Said wherever an install can't go ahead because the hub has no builds to hand out.
+pub const NO_BUILDS: &str = "This hub has no atlasd builds to hand out yet. Add one with the build step in the hub guide (documents/guide/install-hub.md, \"Give the hub atlasd builds to hand out\").";
+
 fn dist(s: &AppState) -> Result<std::path::PathBuf, AppError> {
     Ok(s.writer
         .as_ref()
         .ok_or(AppError::NotFound)?
         .state_dir
         .join("dist"))
+}
+
+/// Whether `<state_dir>/dist` holds at least one atlasd build the script hands out.
+#[must_use]
+pub fn has_builds(state_dir: &std::path::Path) -> bool {
+    let dir = state_dir.join("dist");
+    OSES.iter().any(|os| {
+        ARCHES
+            .iter()
+            .any(|arch| dir.join(format!("atlasd-{os}-{arch}")).is_file())
+    })
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -37,7 +56,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
+fn shell(body: String) -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
+        body,
+    )
+        .into_response()
+}
+
 /// The install script, with this hub's address and each build's checksum filled in.
+///
+/// With no builds it is a script that says so and exits 1: the documented command runs
+/// `curl -f`, which would hide an error status's body behind "error: 400".
 pub(crate) async fn script(State(s): State<AppState>) -> Result<Response, AppError> {
     let dir = dist(&s)?;
     let origin = s
@@ -54,15 +84,16 @@ pub(crate) async fn script(State(s): State<AppState>) -> Result<Response, AppErr
         }
     }
     if sums.is_empty() {
-        return Err(AppError::Bad(
-            "This hub has no atlasd builds to hand out yet.".into(),
-        ));
+        return Ok(shell(no_builds_script()));
     }
-    Ok((
-        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
-        script_text(&origin, &sums),
+    Ok(shell(script_text(&origin, &sums)))
+}
+
+fn no_builds_script() -> String {
+    format!(
+        "#!/bin/sh\necho '{}' >&2\necho 'Nothing was installed or paired.' >&2\nexit 1\n",
+        NO_BUILDS.replace('\'', r"'\''")
     )
-        .into_response())
 }
 
 /// The install script for a hub at `origin`; `sums` holds one `  <os>-<arch>) sum=<hex> ;;`
@@ -94,10 +125,36 @@ case "$os-$arch" in
 {sums}  *) echo "This hub has no atlasd build for $os on $arch." >&2; exit 1 ;;
 esac
 
+# atlasd runs from a user service. Check for one before pairing, so a machine that
+# can't run it is never left paired and silent.
+uid="$(id -u)"
+if [ "$os" = macos ]; then
+  if ! launchctl print "user/$uid" >/dev/null 2>&1 && ! launchctl print "gui/$uid" >/dev/null 2>&1; then
+    echo "launchd has no session for this account, so atlasd couldn't run on its own." >&2
+    echo "Nothing was installed or paired." >&2
+    exit 1
+  fi
+elif ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
+  echo "This machine has no systemd user services (WSL and containers often don't), so atlasd couldn't run on its own." >&2
+  echo "Nothing was installed or paired." >&2
+  exit 1
+fi
+
 echo "Downloading atlasd for $os on $arch…"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-curl -fsSL "$hub/install/atlasd-$os-$arch" -o "$tmp"
+# Not curl -f, which hides why: show the hub's own message when it refuses.
+status="$(curl -sSL -w '%{{http_code}}' -o "$tmp" "$hub/install/atlasd-$os-$arch")" || {{
+  echo "Couldn't download atlasd from $hub. Nothing was installed or paired." >&2
+  exit 1
+}}
+if [ "$status" != 200 ]; then
+  echo "The hub refused the download (HTTP $status):" >&2
+  head -c 2000 "$tmp" >&2
+  echo >&2
+  echo "Nothing was installed or paired." >&2
+  exit 1
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   echo "$sum  $tmp" | sha256sum -c --quiet -
 else
@@ -106,12 +163,14 @@ fi
 mkdir -p "$HOME/.local/bin"
 install -m 755 "$tmp" "$HOME/.local/bin/atlasd"
 
-# Folders an older setup linked from, so atlasd may take those links over.
-set --
-for dir in "$HOME/Knowledge" "$HOME/Skills"; do
-  [ -d "$dir" ] && set -- "$@" --adopt "$dir"
-done
-"$HOME/.local/bin/atlasd" pair "$hub" "$code" "$@"
+"$HOME/.local/bin/atlasd" pair "$hub" "$code"
+
+# The first pass, here, so its summary shows; then the timer or agent takes over.
+echo
+if ! "$HOME/.local/bin/atlasd" run --summary; then
+  echo "The first run had problems (above). atlasd tries again every 10 minutes." >&2
+fi
+echo
 
 if [ "$os" = macos ]; then
   # A launchd agent for this login runs atlasd every 10 minutes (atlasd.timer on Linux).
@@ -119,14 +178,11 @@ if [ "$os" = macos ]; then
   mkdir -p "$agents" "$HOME/Library/Logs"
   cat <<'PLIST' | sed "s|__HOME__|$HOME|g" > "$agents/atlasd.plist"
 {PLIST}PLIST
-  uid="$(id -u)"
   launchctl bootout "gui/$uid/atlasd" 2>/dev/null || launchctl bootout "user/$uid/atlasd" 2>/dev/null || true
   # gui/ is the logged-in desktop session; over SSH with nobody logged in, only user/ exists.
   launchctl bootstrap "gui/$uid" "$agents/atlasd.plist" 2>/dev/null ||
     launchctl bootstrap "user/$uid" "$agents/atlasd.plist"
-  echo
-  echo "Done. atlasd checks for changes every 10 minutes (log: ~/Library/Logs/atlasd.log)."
-  echo "To see what it would change now: ~/.local/bin/atlasd run --dry-run"
+  echo "Done. atlasd checks for updates every 10 minutes (log: ~/Library/Logs/atlasd.log)."
   exit 0
 fi
 
@@ -138,16 +194,10 @@ cat > "$units/atlasd.timer" <<'UNIT'
 {TIMER}UNIT
 systemctl --user daemon-reload
 systemctl --user enable --now atlasd.timer
-systemctl --user start --no-block atlasd.service 2>/dev/null || true
-loginctl enable-linger "$USER" 2>/dev/null || true
-# A first run now, so the hub's Machines page shows this machine within seconds rather
-# than at the next timer tick. Through systemd, so it runs under the same unit as every
-# later run and never alongside one; --no-block so the install doesn't wait for it.
-systemctl --user start --no-block atlasd.service
-
-echo
-echo "Done. atlasd is making its first run now, then checks for changes every 10 minutes."
-echo "To see what it would change now: atlasd run --dry-run"
+if ! loginctl enable-linger "${{USER:-$(id -un)}}" >/dev/null 2>&1; then
+  echo "Couldn't turn on lingering (loginctl enable-linger), so atlasd only runs while you're logged in."
+fi
+echo "Done. atlasd checks for updates every 10 minutes (log: journalctl --user -u atlasd)."
 "#
     )
 }
@@ -225,5 +275,83 @@ mod tests {
             String::from_utf8_lossy(&run.stderr).contains("Give the pairing code"),
             "{run:?}"
         );
+    }
+
+    fn at(text: &str, needle: &str) -> usize {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in the script"))
+    }
+
+    /// The script's commands, without its comments or the unit files it writes.
+    fn commands(text: &str) -> String {
+        text.lines()
+            .map(str::trim_start)
+            .filter(|l| !l.starts_with('#') && !l.starts_with("<!--"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The owner's old folders aren't everyone's: the served script adopts nothing.
+    #[test]
+    fn adopts_no_folders() {
+        let run = commands(&script());
+        assert!(!run.contains("--adopt"), "{run}");
+        assert!(!run.contains("Knowledge"), "{run}");
+    }
+
+    /// A machine without user services stops before pairing, so it never sits paired
+    /// and silent; the first pass runs in the foreground before the timer starts.
+    #[test]
+    fn checks_services_then_pairs_then_runs_then_starts_the_timer() {
+        let text = script();
+        let check = at(&text, "systemctl --user show-environment");
+        let launchd = at(&text, "launchctl print \"user/$uid\"");
+        let download = at(&text, "curl -sSL");
+        let pair = at(&text, "atlasd\" pair \"$hub\" \"$code\"");
+        let run = at(&text, "atlasd\" run --summary");
+        let timer = at(&text, "systemctl --user enable --now atlasd.timer");
+        let agent = at(&text, "launchctl bootstrap");
+        assert!(check < download && launchd < download && download < pair);
+        assert!(pair < run && run < timer && run < agent);
+        assert!(!text.contains("start --no-block"), "no second first run");
+    }
+
+    #[test]
+    fn says_what_failed_lingering_means() {
+        let text = script();
+        let linger = at(&text, "if ! loginctl enable-linger");
+        assert!(text[linger..].contains("atlasd only runs while you're logged in"));
+    }
+
+    /// The binary download shows the hub's message instead of curl -f's bare status,
+    /// and the checksum is still checked.
+    #[test]
+    fn a_refused_download_shows_the_hubs_message() {
+        let text = script();
+        assert!(
+            !commands(&text).contains("curl -f"),
+            "only the documented command uses -f"
+        );
+        let status = at(&text, "-w '%{http_code}'");
+        let shown = at(&text, "head -c 2000 \"$tmp\" >&2");
+        let sum = at(&text, "sha256sum -c");
+        assert!(status < shown && shown < sum);
+    }
+
+    #[test]
+    fn with_no_builds_the_script_says_so() {
+        let text = no_builds_script();
+        let run = Command::new("sh")
+            .args(["-c", &text, "sh", "code"])
+            .output()
+            .unwrap();
+        assert_eq!(run.status.code(), Some(1));
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert!(err.contains("no atlasd builds"), "{err}");
+        assert!(
+            err.contains("Give the hub atlasd builds to hand out"),
+            "{err}"
+        );
+        assert!(err.contains("Nothing was installed or paired."), "{err}");
     }
 }

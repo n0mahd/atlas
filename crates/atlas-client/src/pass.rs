@@ -247,8 +247,7 @@ fn summarise(
     };
     let name = |path: &Path| {
         path.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
     };
     let mut skills = BTreeSet::new();
     let mut subagents = BTreeSet::new();
@@ -312,6 +311,18 @@ fn summarise(
         and_list(&names)
     )];
 
+    lines.extend(yours_lines(&replaced, &removed, &imports, left_alone));
+    lines
+}
+
+/// The summary's lines about the person's own things: what was replaced or removed, and
+/// what was left alone.
+fn yours_lines(
+    replaced: &[String],
+    removed: &[String],
+    imports: &[String],
+    left_alone: usize,
+) -> Vec<String> {
     let first = |items: &[String]| {
         let shown: Vec<String> = items.iter().take(3).cloned().collect();
         match items.len() {
@@ -319,22 +330,25 @@ fn summarise(
             _ => and_list(&shown),
         }
     };
+    let mut lines = Vec::new();
     let mut yours = Vec::new();
     if !replaced.is_empty() {
         yours.push(format!(
             "Replaced by links to Atlas's copies: {}.",
-            first(&replaced)
+            first(replaced)
         ));
     }
     if !removed.is_empty() {
         yours.push(format!(
             "Removed older links no longer wanted: {}.",
-            first(&removed)
+            first(removed)
         ));
     }
-    let import = (!imports.is_empty())
-        .then(|| format!("; {} gained one import line", and_list(&imports)))
-        .unwrap_or_default();
+    let import = if imports.is_empty() {
+        String::new()
+    } else {
+        format!("; {} gained one import line", and_list(imports))
+    };
     if yours.is_empty() {
         lines.push(format!("Nothing of yours was deleted or replaced{import}."));
     } else {

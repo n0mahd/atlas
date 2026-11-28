@@ -1299,20 +1299,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_install_script_starts_a_first_run_at_once() {
+    async fn the_install_script_makes_the_first_run_before_the_timer() {
         let hub = SendHub::new();
+        let (status, script) = call(&hub.app, hub.get("/install")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a script that says why, for curl -f"
+        );
+        assert!(script.contains("no atlasd builds"), "{script}");
+        assert!(script.contains("exit 1"), "{script}");
+
         let dist = hub.home.join("state/dist");
         std::fs::create_dir_all(&dist).unwrap();
         std::fs::write(dist.join("atlasd-linux-x86_64"), b"build").unwrap();
         let (status, script) = call(&hub.app, hub.get("/install")).await;
         assert_eq!(status, StatusCode::OK);
+        let run = script
+            .find("atlasd\" run --summary")
+            .expect("first run in the foreground");
         let enable = script
             .find("systemctl --user enable --now atlasd.timer\n")
             .expect("timer enabled");
-        let start = script
-            .find("\nsystemctl --user start --no-block atlasd.service\n")
-            .expect("first run started");
-        assert!(enable < start, "{script}");
+        assert!(run < enable, "{script}");
     }
 
     #[tokio::test]
