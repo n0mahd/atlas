@@ -233,20 +233,41 @@ impl Lock {
         text
     }
 
+    /// Takes `name`'s record out, returning it.
+    pub fn remove(&mut self, name: &str) -> Option<Value> {
+        self.data
+            .get_mut("skills")
+            .and_then(Value::as_object_mut)?
+            .shift_remove(name)
+    }
+
+    /// Sets `name`'s record.
+    pub fn insert(&mut self, name: &str, entry: Value) {
+        if let Some(skills) = self.data.get_mut("skills").and_then(Value::as_object_mut) {
+            skills.insert(name.to_owned(), entry);
+        }
+    }
+
+    /// The file's text as it now stands, in the file's own formatting.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.render(self.skills().cloned().unwrap_or_default())
+    }
+
     /// The file's text without `name`'s record.
     #[must_use]
     pub fn render_without(&self, name: &str) -> String {
-        let mut skills = self.skills().cloned().unwrap_or_default();
-        skills.shift_remove(name);
-        self.render(skills)
+        let mut copy = self.clone();
+        copy.remove(name);
+        copy.text()
     }
 
     /// The file's text with `name`'s record set to `entry`.
     #[must_use]
     pub fn render_with(&self, name: &str, entry: Value) -> String {
-        let mut skills = self.skills().cloned().unwrap_or_default();
-        skills.insert(name.to_owned(), entry);
-        self.render(skills)
+        let mut copy = self.clone();
+        copy.insert(name, entry);
+        copy.text()
     }
 }
 

@@ -305,6 +305,7 @@ dependencies = [
  "atlas-signer",
  "atlas-verify",
  "axum",
+ "form_urlencoded",
  "p256",
  "pulldown-cmark",
  "serde",

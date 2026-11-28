@@ -5,13 +5,25 @@
 //! CONTRACT (decision 0027): these signatures are shared by the placement page ("Use
 //! in…" moves a skill between Global and a project) and the list page (bulk move and
 //! delete). The library worker implements them; callers may rely on them as written.
+//!
+//! The `skills` CLI's record of where a skill came from (`atlas_fs::lock`) goes with it
+//! when both locks involved sit in repos Atlas commits. A lock outside git (the global
+//! one usually is, in `~/.agents`) is never written; [`preview_move`] and
+//! [`preview_delete`] say so, for the confirmation page.
 
-use atlas_core::catalog::SkillHome;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use atlas_core::catalog::edit::RepoKind;
+use atlas_core::catalog::{PLACEMENTS_FILE, Placements, SkillHome};
 use atlas_core::kernel::Slug;
+use atlas_fs::library::{self, Tree, TreeFile};
+use atlas_fs::lock::{self, Lock, LockKind, ReadLock};
 use axum::http::HeaderMap;
 
 use crate::AppState;
-use crate::change::{ChangeError, Outcome};
+use crate::change::{Apply, ChangeError, Outcome, RepoChange, commit_change};
+use crate::views::Snapshot;
 
 /// Creates `<home>/<name>/SKILL.md` with a frontmatter `name` and `description`, on for
 /// every agent. Refuses a name that isn't a slug or is taken by any skill folder any agent
@@ -24,10 +36,47 @@ pub(crate) async fn create_skill(
     name: Slug,
     description: String,
 ) -> Result<Outcome, ChangeError> {
-    let _ = (s, headers, csrf, home, name, description);
-    Err(ChangeError::Refused(
-        "Creating skills isn't built yet.".to_owned(),
-    ))
+    authorise(s, headers, csrf)?;
+    let description = check_description(&description).map_err(ChangeError::Refused)?;
+    if matches!(home, SkillHome::Public) {
+        return Err(refused(
+            "New skills start private. Making one public is done by hand after a privacy check.",
+        ));
+    }
+    let snap = s
+        .snapshot()
+        .await
+        .map_err(|_| refused("Atlas couldn't read the store."))?;
+    if let Some(at) = name_taken(&snap, name.as_str()) {
+        return Err(ChangeError::Refused(format!(
+            "A skill named {name} already exists ({at}). Pick another name; agents tell skills apart by name."
+        )));
+    }
+    let st = s.clone();
+    let plan = blocking(move || {
+        let at = home_at(&st, &home)?;
+        let rel = format!("{}/{name}", at.dir);
+        let mut plan = Plan::new(format!("Create skill {name} in Atlas"));
+        plan.touch(&at.kind, &at.root, &rel);
+        plan.writes.push(Write::NewTree {
+            root: at.root.clone(),
+            rel,
+            tree: Tree {
+                files: vec![TreeFile {
+                    rel: PathBuf::from("SKILL.md"),
+                    bytes: skill_text(name.as_str(), &description).into_bytes(),
+                }],
+                skipped: Vec::new(),
+            },
+        });
+        // A leftover entry for the same name would switch the new skill off somewhere.
+        let mut placements = PlacementEdit::read(&st)?;
+        placements.now.remove(&home, &name);
+        placements.finish(&st, &mut plan);
+        Ok(plan)
+    })
+    .await?;
+    plan.commit(s, headers, csrf).await
 }
 
 /// Deletes a skill's folder and its placement entry. atlasd removes the links on each
@@ -40,10 +89,7 @@ pub(crate) async fn delete_skill(
     home: SkillHome,
     name: Slug,
 ) -> Result<Outcome, ChangeError> {
-    let _ = (s, headers, csrf, home, name);
-    Err(ChangeError::Refused(
-        "Deleting skills isn't built yet.".to_owned(),
-    ))
+    delete_skills(s, headers, csrf, vec![(home, name)]).await
 }
 
 /// Moves a skill's folder to another home (Global ↔ a project, private ↔ project),
@@ -59,8 +105,749 @@ pub(crate) async fn move_skill(
     name: Slug,
     to: SkillHome,
 ) -> Result<Outcome, ChangeError> {
-    let _ = (s, headers, csrf, from, name, to);
-    Err(ChangeError::Refused(
-        "Moving skills isn't built yet.".to_owned(),
-    ))
+    move_skills(s, headers, csrf, vec![(from, name)], to).await
+}
+
+/// Deletes several skills as one change: one commit per repo involved.
+pub(crate) async fn delete_skills(
+    s: &AppState,
+    headers: &HeaderMap,
+    csrf: &str,
+    skills: Vec<(SkillHome, Slug)>,
+) -> Result<Outcome, ChangeError> {
+    authorise(s, headers, csrf)?;
+    let st = s.clone();
+    let plan = blocking(move || plan_delete(&st, &skills)).await?;
+    plan.commit(s, headers, csrf).await
+}
+
+/// Moves several skills to `to` as one change: one commit per repo, destination first.
+pub(crate) async fn move_skills(
+    s: &AppState,
+    headers: &HeaderMap,
+    csrf: &str,
+    skills: Vec<(SkillHome, Slug)>,
+    to: SkillHome,
+) -> Result<Outcome, ChangeError> {
+    authorise(s, headers, csrf)?;
+    let st = s.clone();
+    let plan = blocking(move || plan_move(&st, &skills, &to)).await?;
+    plan.commit(s, headers, csrf).await
+}
+
+/// What a confirmation page shows before a change: one line per thing that changes, and
+/// notes such as a lock file Atlas leaves alone.
+#[derive(Debug, Default)]
+pub(crate) struct Preview {
+    pub lines: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+/// What deleting `skills` would do, or why it would be refused.
+pub(crate) async fn preview_delete(
+    s: &AppState,
+    skills: Vec<(SkillHome, Slug)>,
+) -> Result<Preview, String> {
+    let st = s.clone();
+    match blocking(move || plan_delete(&st, &skills)).await {
+        Ok(plan) => Ok(plan.preview()),
+        Err(ChangeError::Refused(m)) => Err(m),
+        Err(ChangeError::Forbidden) => Err("Sign in again.".to_owned()),
+    }
+}
+
+/// What moving `skills` to `to` would do, or why it would be refused.
+pub(crate) async fn preview_move(
+    s: &AppState,
+    skills: Vec<(SkillHome, Slug)>,
+    to: SkillHome,
+) -> Result<Preview, String> {
+    let st = s.clone();
+    match blocking(move || plan_move(&st, &skills, &to)).await {
+        Ok(plan) => Ok(plan.preview()),
+        Err(ChangeError::Refused(m)) => Err(m),
+        Err(ChangeError::Forbidden) => Err("Sign in again.".to_owned()),
+    }
+}
+
+// ---------------------------------------------------------------- checks
+
+fn refused(msg: &str) -> ChangeError {
+    ChangeError::Refused(msg.to_owned())
+}
+
+fn authorise(s: &AppState, headers: &HeaderMap, csrf: &str) -> Result<(), ChangeError> {
+    match &s.writer {
+        Some(w) if w.authorised(headers, csrf) => Ok(()),
+        _ => Err(ChangeError::Forbidden),
+    }
+}
+
+/// The longest description agents accept (Claude Code's limit).
+pub(crate) const MAX_DESCRIPTION: usize = 1024;
+
+/// A one-line description, trimmed.
+pub(crate) fn check_description(text: &str) -> Result<String, String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Err(
+            "Add a one-line description: agents read it to decide when to use the skill."
+                .to_owned(),
+        );
+    }
+    if t.contains(['\n', '\r']) || t.chars().any(char::is_control) {
+        return Err("Keep the description to one line.".to_owned());
+    }
+    if t.chars().count() > MAX_DESCRIPTION {
+        return Err(format!(
+            "Keep the description under {MAX_DESCRIPTION} characters."
+        ));
+    }
+    Ok(t.to_owned())
+}
+
+/// Where `name` is already used by a skill folder any agent reads, if anywhere.
+pub(crate) fn name_taken(snap: &Snapshot, name: &str) -> Option<String> {
+    if let Some(s) = snap.catalog.skills.iter().find(|s| s.name.as_str() == name) {
+        return Some(s.path.trim_end_matches("/SKILL.md").to_owned());
+    }
+    for h in &snap.harnesses {
+        for d in &h.skill_dirs {
+            if d.entries.iter().any(|e| e.name() == name) {
+                return Some(format!("{}/{name}", d.path));
+            }
+        }
+    }
+    for p in &snap.projects {
+        if p.harnesses
+            .iter()
+            .any(|h| h.skills.iter().any(|s| s == name))
+        {
+            return Some(format!("in {}", p.project));
+        }
+    }
+    None
+}
+
+/// The new `SKILL.md`. The description is written as a JSON string, which YAML reads
+/// back as the same text whatever it holds.
+pub(crate) fn skill_text(name: &str, description: &str) -> String {
+    let quoted = serde_json::to_string(description).unwrap_or_else(|_| "\"\"".to_owned());
+    format!(
+        "---\nname: {name}\ndescription: {quoted}\n---\n\n# {name}\n\nWrite the steps the agent should follow when it uses this skill.\n"
+    )
+}
+
+// ---------------------------------------------------------------- plans
+
+/// A home's repo and where its skill folders are inside it.
+struct HomeAt {
+    kind: RepoKind,
+    root: PathBuf,
+    dir: &'static str,
+    shown: String,
+}
+
+fn home_at(s: &AppState, home: &SkillHome) -> Result<HomeAt, ChangeError> {
+    let src = &s.sources;
+    let (kind, root, dir) = match home {
+        SkillHome::Private => (RepoKind::Knowledge, src.knowledge.clone(), "skills"),
+        SkillHome::Public => (
+            RepoKind::PublicSkills,
+            src.public_skills
+                .clone()
+                .ok_or_else(|| refused("This hub has no public skills repo."))?,
+            "",
+        ),
+        SkillHome::Project(p) => {
+            let project = src
+                .projects
+                .iter()
+                .find(|x| &x.name == p)
+                .ok_or_else(|| refused("That project isn't registered."))?;
+            (
+                RepoKind::Project(p.clone()),
+                project.root.clone(),
+                ".agents/skills",
+            )
+        }
+    };
+    let shown = src.display(&if dir.is_empty() {
+        root.clone()
+    } else {
+        root.join(dir)
+    });
+    Ok(HomeAt {
+        kind,
+        root,
+        dir,
+        shown,
+    })
+}
+
+impl HomeAt {
+    fn rel(&self, name: &str) -> String {
+        if self.dir.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{}/{name}", self.dir)
+        }
+    }
+
+    /// The skill's real folder, if it is one (not a link, not a file).
+    fn has(&self, name: &str) -> bool {
+        std::fs::symlink_metadata(self.root.join(self.rel(name))).is_ok_and(|m| m.is_dir())
+    }
+
+    fn occupied(&self, name: &str) -> bool {
+        std::fs::symlink_metadata(self.root.join(self.rel(name))).is_ok()
+    }
+}
+
+fn home_words(home: &SkillHome) -> String {
+    match home {
+        SkillHome::Private => "Global".to_owned(),
+        SkillHome::Public => "Global (public)".to_owned(),
+        SkillHome::Project(p) => p.to_string(),
+    }
+}
+
+const PUBLIC_REFUSED: &str = "Public skills are changed by hand after a privacy check, like every public change; Atlas doesn't delete or move them.";
+
+enum Write {
+    NewTree {
+        root: PathBuf,
+        rel: String,
+        tree: Tree,
+    },
+    Move {
+        from_root: PathBuf,
+        from_rel: String,
+        to_root: PathBuf,
+        to_rel: String,
+    },
+    Remove {
+        root: PathBuf,
+        rel: String,
+    },
+    File {
+        root: PathBuf,
+        rel: String,
+        bytes: Vec<u8>,
+    },
+    Placements {
+        knowledge: PathBuf,
+        placements: Placements,
+        expected: String,
+    },
+}
+
+impl Write {
+    fn run(self) -> Result<(), String> {
+        let r = match self {
+            Self::NewTree { root, rel, tree } => library::write_tree(&root, &rel, &tree),
+            Self::Move {
+                from_root,
+                from_rel,
+                to_root,
+                to_rel,
+            } => atlas_fs::skill_folder::move_folder(&from_root, &from_rel, &to_root, &to_rel),
+            Self::Remove { root, rel } => library::remove_tree(&root, &rel),
+            Self::File { root, rel, bytes } => library::write_file(&root, &rel, &bytes),
+            Self::Placements {
+                knowledge,
+                placements,
+                expected,
+            } => library::write_placements(&knowledge, &placements, &expected).map(|_| ()),
+        };
+        r.map_err(|e| {
+            let mut t = e.to_string();
+            if let Some(first) = t.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            format!("{t}.")
+        })
+    }
+}
+
+struct Plan {
+    repos: Vec<RepoChange>,
+    writes: Vec<Write>,
+    message: String,
+    lines: Vec<String>,
+    notes: Vec<String>,
+}
+
+impl Plan {
+    fn new(message: String) -> Self {
+        Self {
+            repos: Vec::new(),
+            writes: Vec::new(),
+            message,
+            lines: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    /// Adds `rel` of the repo at `root` to the change. Repos commit in the order they are
+    /// first touched, so callers touch the repo that gains files first.
+    fn touch(&mut self, kind: &RepoKind, root: &Path, rel: &str) {
+        let rel = PathBuf::from(rel);
+        if let Some(r) = self.repos.iter_mut().find(|r| r.root == root) {
+            if !r.paths.contains(&rel) {
+                r.paths.push(rel);
+            }
+        } else {
+            self.repos.push(RepoChange {
+                kind: kind.clone(),
+                root: root.to_path_buf(),
+                paths: vec![rel],
+                message: self.message.clone(),
+            });
+        }
+    }
+
+    fn preview(self) -> Preview {
+        Preview {
+            lines: self.lines,
+            notes: self.notes,
+        }
+    }
+
+    async fn commit(
+        self,
+        s: &AppState,
+        headers: &HeaderMap,
+        csrf: &str,
+    ) -> Result<Outcome, ChangeError> {
+        if self.repos.is_empty() {
+            return Ok(Outcome::Unchanged);
+        }
+        let writes = self.writes;
+        let apply: Apply = Box::new(move || {
+            for w in writes {
+                w.run()?;
+            }
+            Ok(())
+        });
+        commit_change(s, headers, csrf, self.repos, apply).await
+    }
+}
+
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, ChangeError> + Send + 'static,
+) -> Result<T, ChangeError> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|_| refused("Atlas stopped unexpectedly; nothing changed."))?
+}
+
+/// The placements file as read, and as the change leaves it.
+struct PlacementEdit {
+    before: Placements,
+    now: Placements,
+    expected: String,
+}
+
+impl PlacementEdit {
+    fn read(s: &AppState) -> Result<Self, ChangeError> {
+        let (before, expected) = library::read_placements(&s.sources.knowledge)
+            .map_err(|e| ChangeError::Refused(format!("{e}. Nothing changed.")))?;
+        Ok(Self {
+            now: before.clone(),
+            before,
+            expected,
+        })
+    }
+
+    fn finish(self, s: &AppState, plan: &mut Plan) {
+        if self.now != self.before {
+            plan.touch(&RepoKind::Knowledge, &s.sources.knowledge, PLACEMENTS_FILE);
+            plan.writes.push(Write::Placements {
+                knowledge: s.sources.knowledge.clone(),
+                placements: self.now,
+                expected: self.expected,
+            });
+        }
+    }
+}
+
+/// Where a home's `skills` CLI lock is, and whether Atlas commits it.
+#[derive(Clone, Debug)]
+struct LockAt {
+    kind: LockKind,
+    abs: PathBuf,
+    shown: String,
+    /// The repo it is in, when that is a repo Atlas commits.
+    repo: Option<(RepoKind, PathBuf, String)>,
+}
+
+fn lock_at(s: &AppState, home: &SkillHome) -> Option<LockAt> {
+    let src = &s.sources;
+    match home {
+        SkillHome::Project(p) => {
+            let project = src.projects.iter().find(|x| &x.name == p)?;
+            let abs = project.root.join(lock::PROJECT_LOCK_FILE);
+            Some(LockAt {
+                kind: LockKind::Project,
+                shown: src.display(&abs),
+                abs,
+                repo: Some((
+                    RepoKind::Project(p.clone()),
+                    project.root.clone(),
+                    lock::PROJECT_LOCK_FILE.to_owned(),
+                )),
+            })
+        }
+        SkillHome::Private | SkillHome::Public => {
+            let abs = s.global_skill_lock.as_ref().clone();
+            let shown = src.display(&abs);
+            let mut repos: Vec<(RepoKind, PathBuf)> =
+                vec![(RepoKind::Knowledge, src.knowledge.clone())];
+            if let Some(p) = &src.public_skills {
+                repos.push((RepoKind::PublicSkills, p.clone()));
+            }
+            repos.extend(
+                src.projects
+                    .iter()
+                    .map(|p| (RepoKind::Project(p.name.clone()), p.root.clone())),
+            );
+            let parent = abs.parent().and_then(|p| std::fs::canonicalize(p).ok());
+            let file = abs.file_name().map(PathBuf::from);
+            let repo = parent.zip(file).and_then(|(parent, file)| {
+                repos.into_iter().find_map(|(kind, root)| {
+                    let root = std::fs::canonicalize(&root).ok()?;
+                    let rel = parent.strip_prefix(&root).ok()?.join(&file);
+                    let plain = rel
+                        .components()
+                        .all(|c| matches!(c, std::path::Component::Normal(_)));
+                    (plain && !rel.starts_with(".git"))
+                        .then(|| (kind, root, rel.to_string_lossy().into_owned()))
+                })
+            });
+            Some(LockAt {
+                kind: LockKind::Global,
+                abs,
+                shown,
+                repo,
+            })
+        }
+    }
+}
+
+/// Locks read so far in one plan, edited in memory and written once at the end.
+#[derive(Default)]
+struct Locks {
+    read: BTreeMap<PathBuf, (LockAt, ReadLock, bool)>,
+}
+
+impl Locks {
+    fn get(&mut self, at: &LockAt) -> &mut (LockAt, ReadLock, bool) {
+        self.read
+            .entry(at.abs.clone())
+            .or_insert_with(|| (at.clone(), lock::read_lock(&at.abs, at.kind), false))
+    }
+
+    /// Writes every lock that changed. Locks that gain records go in first, as their
+    /// repos were touched first.
+    fn finish(self, plan: &mut Plan) {
+        for (_, (at, read, changed)) in self.read {
+            let (true, ReadLock::Found(lock), Some((kind, root, rel))) = (changed, read, at.repo)
+            else {
+                continue;
+            };
+            plan.touch(&kind, &root, &rel);
+            plan.writes.push(Write::File {
+                root,
+                rel,
+                bytes: lock.text().into_bytes(),
+            });
+        }
+    }
+}
+
+fn source_words(entry: &serde_json::Value) -> String {
+    lock::source_of(entry).map_or_else(String::new, |s| format!(" (from {s})"))
+}
+
+fn plan_delete(s: &AppState, skills: &[(SkillHome, Slug)]) -> Result<Plan, ChangeError> {
+    if skills.is_empty() {
+        return Err(refused("Pick at least one skill."));
+    }
+    let names: Vec<&str> = skills.iter().map(|(_, n)| n.as_str()).collect();
+    let mut plan = Plan::new(format!("Delete {} in Atlas", list_names(&names)));
+    let mut placements = PlacementEdit::read(s)?;
+    let mut locks = Locks::default();
+    for (home, name) in skills {
+        if matches!(home, SkillHome::Public) {
+            return Err(refused(PUBLIC_REFUSED));
+        }
+        let at = home_at(s, home)?;
+        if !at.has(name.as_str()) {
+            return Err(ChangeError::Refused(format!(
+                "{name} isn't a folder in {} any more. Nothing changed.",
+                at.shown
+            )));
+        }
+        let rel = at.rel(name.as_str());
+        plan.touch(&at.kind, &at.root, &rel);
+        plan.writes.push(Write::Remove {
+            root: at.root.clone(),
+            rel,
+        });
+        plan.lines.push(format!("{}/{name}", at.shown));
+        placements.now.remove(home, name);
+        if let Some(lat) = lock_at(s, home) {
+            let (lat, read, changed) = locks.get(&lat);
+            if let ReadLock::Found(l) = read
+                && let Some(entry) = l.entry(name.as_str()).cloned()
+            {
+                let from = source_words(&entry);
+                if lat.repo.is_some() && l.writable() {
+                    l.remove(name.as_str());
+                    *changed = true;
+                    plan.lines.push(format!(
+                        "The skills CLI's record of {name}{from} in {}",
+                        lat.shown
+                    ));
+                } else {
+                    plan.notes.push(format!(
+                        "The skills CLI still lists {name}{from} in {}, which {}; Atlas leaves it as it is.",
+                        lat.shown,
+                        if lat.repo.is_some() { "has a version Atlas doesn't write" } else { "isn't in a repo Atlas commits" }
+                    ));
+                }
+            }
+        }
+    }
+    if placements.now != placements.before {
+        plan.lines
+            .push(format!("Their entries in {PLACEMENTS_FILE}"));
+    }
+    // Folders first, then lock records, then placements: the order writes happen in.
+    locks.finish(&mut plan);
+    placements.finish(s, &mut plan);
+    Ok(plan)
+}
+
+fn plan_move(
+    s: &AppState,
+    skills: &[(SkillHome, Slug)],
+    to: &SkillHome,
+) -> Result<Plan, ChangeError> {
+    if skills.is_empty() {
+        return Err(refused("Pick at least one skill."));
+    }
+    if matches!(to, SkillHome::Public) {
+        return Err(refused(
+            "Making a skill public is done by hand after a privacy check; Atlas doesn't move skills into the public repo.",
+        ));
+    }
+    let dest = home_at(s, to)?;
+    let names: Vec<&str> = skills.iter().map(|(_, n)| n.as_str()).collect();
+    let mut plan = Plan::new(format!(
+        "Move {} to {} in Atlas",
+        list_names(&names),
+        home_words(to)
+    ));
+    let mut seen = std::collections::BTreeSet::new();
+    // Touch the destination first, so it commits first.
+    for (_, name) in skills {
+        plan.touch(&dest.kind, &dest.root, &dest.rel(name.as_str()));
+    }
+    let mut placements = PlacementEdit::read(s)?;
+    let mut locks = Locks::default();
+    let to_lock = lock_at(s, to);
+    let now = iso_now();
+    for (from, name) in skills {
+        if matches!(from, SkillHome::Public) {
+            return Err(refused(PUBLIC_REFUSED));
+        }
+        if from == to {
+            return Err(ChangeError::Refused(format!(
+                "{name} is already in {}.",
+                home_words(to)
+            )));
+        }
+        if !seen.insert(name.clone()) {
+            return Err(ChangeError::Refused(format!(
+                "Two of the chosen skills are named {name}; they can't both move to {}.",
+                home_words(to)
+            )));
+        }
+        let src = home_at(s, from)?;
+        if !src.has(name.as_str()) {
+            return Err(ChangeError::Refused(format!(
+                "{name} isn't a folder in {} any more. Nothing changed.",
+                src.shown
+            )));
+        }
+        if dest.occupied(name.as_str()) {
+            return Err(ChangeError::Refused(format!(
+                "{}/{name} already exists. Atlas never merges or overwrites a skill; rename or delete one first.",
+                dest.shown
+            )));
+        }
+        // Private and public skills share one namespace.
+        if matches!(to, SkillHome::Private)
+            && let Ok(public) = home_at(s, &SkillHome::Public)
+            && public.occupied(name.as_str())
+        {
+            return Err(ChangeError::Refused(format!(
+                "A public skill is already named {name}. Rename one first."
+            )));
+        }
+        let from_rel = src.rel(name.as_str());
+        plan.writes.push(Write::Move {
+            from_root: src.root.clone(),
+            from_rel: from_rel.clone(),
+            to_root: dest.root.clone(),
+            to_rel: dest.rel(name.as_str()),
+        });
+        plan.touch(&src.kind, &src.root, &from_rel);
+        plan.lines
+            .push(format!("{}/{name} → {}/{name}", src.shown, dest.shown));
+        let carried = placements.now.of(from, name).clone();
+        placements.now.remove(from, name);
+        placements.now.set(to, name, carried);
+        if let (Some(fl), Some(tl)) = (lock_at(s, from), to_lock.as_ref()) {
+            carry_record(&mut plan, &mut locks, &fl, tl, &src, name, &now);
+        }
+    }
+    if placements.now != placements.before {
+        plan.lines
+            .push(format!("Their switches carried in {PLACEMENTS_FILE}"));
+    }
+    locks.finish(&mut plan);
+    placements.finish(s, &mut plan);
+    Ok(plan)
+}
+
+/// Moves `name`'s record from lock `fl` to lock `tl` when both are in repos Atlas
+/// commits and both can be written; otherwise leaves both and says why.
+fn carry_record(
+    plan: &mut Plan,
+    locks: &mut Locks,
+    fl: &LockAt,
+    tl: &LockAt,
+    src: &HomeAt,
+    name: &Slug,
+    now: &str,
+) {
+    let entry = match &locks.get(fl).1 {
+        ReadLock::Found(l) => match l.entry(name.as_str()) {
+            Some(e) => e.clone(),
+            None => return,
+        },
+        _ => return,
+    };
+    let from_words = source_words(&entry);
+    let leave = |plan: &mut Plan, why: String| {
+        plan.notes.push(format!(
+            "The skills CLI's record of {name}{from_words} stays in {}: {why}, so Atlas changes neither lock.",
+            fl.shown
+        ));
+    };
+    if fl.abs == tl.abs {
+        return;
+    }
+    let outside = [fl, tl].into_iter().find(|l| l.repo.is_none());
+    if let Some(o) = outside {
+        leave(plan, format!("{} isn't in a repo Atlas commits", o.shown));
+        return;
+    }
+    let from_ok = matches!(&locks.get(fl).1, ReadLock::Found(l) if l.writable());
+    let to_ok = match &locks.get(tl).1 {
+        ReadLock::Missing => true,
+        ReadLock::Found(l) => l.writable(),
+        ReadLock::Unusable => false,
+    };
+    if !from_ok || !to_ok {
+        let bad = if from_ok { tl } else { fl };
+        leave(
+            plan,
+            format!("{} isn't a lock Atlas can rewrite safely", bad.shown),
+        );
+        return;
+    }
+    let hashes = (fl.kind == LockKind::Global && tl.kind == LockKind::Project)
+        .then(|| lock::hash_folder(&src.root.join(src.rel(name.as_str()))))
+        .flatten();
+    let converted = lock::convert(&entry, fl.kind, tl.kind, hashes.as_ref(), now);
+    if let Some(record) = converted {
+        let slot = locks.get(tl);
+        if matches!(slot.1, ReadLock::Missing) {
+            slot.1 = ReadLock::Found(Lock::fresh(tl.kind));
+        }
+        if let ReadLock::Found(l) = &mut slot.1 {
+            l.insert(name.as_str(), record);
+            slot.2 = true;
+        }
+        plan.lines.push(format!(
+            "The skills CLI's record of {name}{from_words}: {} → {}",
+            fl.shown, tl.shown
+        ));
+    } else {
+        plan.notes.push(format!(
+            "The skills CLI's record of {name}{from_words} can't be carried to {} (its files no longer match what was installed), so it is dropped; npx skills will treat the skill as added by hand.",
+            tl.shown
+        ));
+    }
+    let slot = locks.get(fl);
+    if let ReadLock::Found(l) = &mut slot.1 {
+        l.remove(name.as_str());
+        slot.2 = true;
+    }
+}
+
+fn list_names(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, c] => format!("{a}, {b} and {c}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} more", rest.len()),
+    }
+}
+
+/// Now as the CLI writes it: `2026-11-27T10:00:00.000Z`.
+fn iso_now() -> String {
+    let secs = crate::clients::now();
+    let day = crate::edit::day(secs);
+    let t = secs % 86_400;
+    format!(
+        "{day}T{:02}:{:02}:{:02}.000Z",
+        t / 3600,
+        t % 3600 / 60,
+        t % 60
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descriptions_are_one_trimmed_line() {
+        assert_eq!(check_description("  Reads PDFs ").unwrap(), "Reads PDFs");
+        assert!(check_description("").is_err());
+        assert!(check_description("a\nb").is_err());
+        assert!(check_description(&"x".repeat(MAX_DESCRIPTION + 1)).is_err());
+    }
+
+    #[test]
+    fn new_skill_text_quotes_the_description() {
+        let text = skill_text("pdf", "Reads \"PDFs\": fast");
+        assert!(
+            text.starts_with("---\nname: pdf\ndescription: \"Reads \\\"PDFs\\\": fast\"\n---\n"),
+            "{text}"
+        );
+        assert!(text.contains("\n# pdf\n"));
+    }
+
+    #[test]
+    fn names_read_as_a_list() {
+        assert_eq!(list_names(&["a"]), "a");
+        assert_eq!(list_names(&["a", "b", "c", "d"]), "a, b and 2 more");
+    }
 }

@@ -13,11 +13,11 @@ mod distribute;
 mod edit;
 mod icons;
 mod install;
+mod library;
+mod library_pages;
 mod markdown;
 pub mod release;
 pub mod remote;
-// Stubs until the library and placement work lands (decision 0027).
-#[allow(dead_code, clippy::unused_async)]
 mod skill_ops;
 #[allow(dead_code, clippy::unused_async)]
 mod skills_place;
@@ -70,6 +70,8 @@ pub struct AppState {
     writer: Option<Arc<Writer>>,
     /// The last read of the store, shared by requests for a few seconds.
     cache: Arc<tokio::sync::Mutex<Option<Cached>>>,
+    /// The `skills` CLI's global lock on this hub (`atlas_fs::lock`).
+    global_skill_lock: Arc<std::path::PathBuf>,
 }
 
 /// A read of the store and when it was made.
@@ -82,13 +84,24 @@ const SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 impl AppState {
     #[must_use]
     pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
+        let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from);
+        let global_skill_lock = atlas_fs::lock::global_lock_path(&sources.home, state.as_deref());
         Self {
+            global_skill_lock: Arc::new(global_skill_lock),
             sources: Arc::new(sources),
             hub: Arc::from(hub),
             others: others.into(),
             writer: writer.map(Arc::new),
             cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// Reads the `skills` CLI's global lock from `path` instead of where the CLI keeps it
+    /// for this login (`$XDG_STATE_HOME/skills` or `~/.agents`).
+    #[must_use]
+    pub fn with_global_skill_lock(mut self, path: std::path::PathBuf) -> Self {
+        self.global_skill_lock = Arc::new(path);
+        self
     }
 
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
@@ -101,10 +114,17 @@ impl AppState {
             return Ok(Arc::clone(snap));
         }
         let sources = Arc::clone(&self.sources);
-        let snap = tokio::task::spawn_blocking(move || Snapshot {
-            catalog: atlas_fs::load_catalog(&sources),
-            harnesses: atlas_fs::scan_harnesses(&sources),
-            projects: atlas_fs::scan_projects(&sources),
+        let lock = Arc::clone(&self.global_skill_lock);
+        let snap = tokio::task::spawn_blocking(move || {
+            let catalog = atlas_fs::load_catalog(&sources);
+            let harnesses = atlas_fs::scan_harnesses(&sources);
+            let library = library::Index::read(&sources, &lock, &catalog, &harnesses);
+            Snapshot {
+                catalog,
+                harnesses,
+                projects: atlas_fs::scan_projects(&sources),
+                library,
+            }
         })
         .await
         .map(Arc::new)
@@ -139,6 +159,16 @@ pub fn router(state: AppState, access: Access) -> Router {
     Router::new()
         .route("/", get(overview))
         .route("/skills", get(skills))
+        .route(
+            "/skills/new",
+            get(library_pages::new_form).post(library_pages::new_save),
+        )
+        .route("/skills/confirm", get(library_pages::confirm))
+        .route("/skills/bulk", post(library_pages::bulk))
+        .route(
+            "/skills/{home}/{name}/files/{*path}",
+            get(library_pages::file_view),
+        )
         .route("/skills/{home}/{name}", get(skill_detail))
         .route("/instructions", get(instructions))
         .route("/instructions/{scope}/{file}", get(instruction_detail))
@@ -293,6 +323,7 @@ struct SkillsPage {
 struct SkillPage {
     page: Page,
     v: views::SkillDetail,
+    files: library_pages::FileTree,
 }
 
 #[derive(Template)]
@@ -364,6 +395,15 @@ struct ListQuery {
     kind: String,
     #[serde(default)]
     host: String,
+    /// Skills: only those that need attention.
+    #[serde(default)]
+    attention: Option<String>,
+    /// Skills: show checkboxes and the bulk bar.
+    #[serde(default)]
+    select: Option<String>,
+    /// After a change through `change`: it was committed.
+    #[serde(default)]
+    changed: Option<String>,
     /// After a save: the commit, and what happened to the push.
     #[serde(default)]
     saved: String,
@@ -393,6 +433,16 @@ impl ListQuery {
             );
         }
         let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
+        if self.changed.is_some() && self.sent.is_none() {
+            return (
+                if self.notsent.is_some() {
+                    "Done. Not on your machines yet".to_owned()
+                } else {
+                    "Done. Git keeps the old version if you need it back.".to_owned()
+                },
+                self.notsent.is_some(),
+            );
+        }
         if self.sent.is_some() {
             let text = if saved {
                 "Saved · on your machines within 10 minutes"
@@ -458,9 +508,16 @@ async fn skills(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
-    let v = views::skills(&snap, &scope, &q.q);
+    let v = views::skills_library(
+        &snap,
+        &scope,
+        &q.q,
+        q.attention.is_some(),
+        q.select.is_some(),
+    );
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
+    q.apply(&mut page);
     Ok(Html(SkillsPage { page, v }.render()?))
 }
 
@@ -479,7 +536,8 @@ async fn skill_detail(
         .writer
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
-    Ok(Html(SkillPage { page, v }.render()?))
+    let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
+    Ok(Html(SkillPage { page, v, files }.render()?))
 }
 
 async fn instructions(

@@ -15,6 +15,8 @@ pub struct Snapshot {
     pub catalog: Catalog,
     pub harnesses: Vec<HarnessView>,
     pub projects: Vec<ProjectView>,
+    /// Sources, copies and conflicts of skills, worked out once per read.
+    pub library: crate::library::Index,
 }
 
 /// The agents Atlas shows marks for. T3 Code and Herdr run the others, so they have none
@@ -412,6 +414,50 @@ pub struct SkillRow {
     pub files: usize,
     /// A project skill with the same name as a global one.
     pub also_global: bool,
+    /// The skill's home key (`private`, `public` or a project); empty outside Atlas.
+    pub home: String,
+    /// Where the `skills` CLI installed it from, as `owner/repo`.
+    pub source: Option<String>,
+    /// A same-named copy elsewhere has different text.
+    pub conflict: bool,
+    /// Why it needs attention, in plain words; empty when it doesn't.
+    pub reasons: Vec<String>,
+}
+
+impl SkillRow {
+    fn new(name: String, description: String, home: String) -> Self {
+        Self {
+            name,
+            description,
+            href: None,
+            marks: Vec::new(),
+            all: false,
+            flag: String::new(),
+            agents: Vec::new(),
+            path: String::new(),
+            files: 0,
+            also_global: false,
+            home,
+            source: None,
+            conflict: false,
+            reasons: Vec::new(),
+        }
+    }
+
+    /// The value a checkbox or hidden field carries: `home/name`.
+    #[must_use]
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.home, self.name)
+    }
+}
+
+/// Skills in one section installed from the same source.
+#[derive(Debug)]
+pub struct SkillGroup {
+    pub id: String,
+    /// `owner/repo`.
+    pub source: String,
+    pub rows: Vec<SkillRow>,
 }
 
 #[derive(Debug)]
@@ -421,6 +467,29 @@ pub struct SkillSection {
     pub title: String,
     pub rows: Vec<SkillRow>,
     pub notice: Option<String>,
+    /// Rows installed from one source, after `rows`.
+    pub groups: Vec<SkillGroup>,
+}
+
+impl SkillSection {
+    /// Every row, grouped or not.
+    pub fn all_rows(&self) -> impl Iterator<Item = &SkillRow> {
+        self.rows
+            .iter()
+            .chain(self.groups.iter().flat_map(|g| &g.rows))
+    }
+
+    /// How many rows it shows.
+    #[must_use]
+    pub fn shown(&self) -> usize {
+        self.all_rows().count()
+    }
+
+    /// Whether its skills are Atlas's own, so they can be selected and switched.
+    #[must_use]
+    pub fn in_atlas(&self) -> bool {
+        self.id != "outside"
+    }
 }
 
 #[derive(Debug)]
@@ -428,6 +497,24 @@ pub struct SkillsList {
     pub sections: Vec<SkillSection>,
     pub total: usize,
     pub q: String,
+    /// Only rows that need attention are shown.
+    pub attention: bool,
+    /// How many rows need attention (after the search).
+    pub attention_count: usize,
+    /// Checkboxes and the bulk bar are shown.
+    pub select: bool,
+    /// Agents a bulk switch can name.
+    pub agents: Vec<Choice>,
+    /// Homes a bulk move can go to.
+    pub destinations: Vec<Choice>,
+    /// This list's own address, to come back to after a change, and the same encoded
+    /// for a query string.
+    pub back: String,
+    pub back_enc: String,
+    /// The Needs attention and Select switches, and New skill.
+    pub attention_href: String,
+    pub select_href: String,
+    pub new_href: String,
 }
 
 fn agent_states(have: &[HarnessKind], present: &[HarnessKind]) -> Vec<AgentState> {
@@ -464,6 +551,10 @@ fn global_row(snap: &Snapshot, skill: &Skill, present: &[HarnessKind]) -> SkillR
         .collect();
     let (marks, all) = marks(&have, present);
     SkillRow {
+        home: skill.home.key().to_owned(),
+        source: None,
+        conflict: false,
+        reasons: Vec::new(),
         name: skill.name.to_string(),
         description: skill.description.clone(),
         href: Some(format!("/skills/{}/{}", skill.home.key(), skill.name)),
@@ -586,6 +677,10 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
                 .collect();
             let (marks, all) = marks(&have, &present);
             SkillRow {
+                home: s.home.key().to_owned(),
+                source: None,
+                conflict: false,
+                reasons: Vec::new(),
                 name: s.name.to_string(),
                 description: s.description.clone(),
                 href: Some(format!("/skills/{}/{}", s.home.key(), s.name)),
@@ -613,6 +708,7 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
         num: "I",
         title: "This project".to_owned(),
         rows,
+        groups: Vec::new(),
         notice: (n > 0).then(|| {
             if n == 1 {
                 "Claude can't use 1 of this project's skills: it sits only in .agents/skills."
@@ -650,6 +746,7 @@ pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
         title: "Global".to_owned(),
         rows: global,
         notice: None,
+        groups: Vec::new(),
     });
 
     if scope == &Scope::Global {
@@ -657,22 +754,16 @@ pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
             .into_iter()
             .map(|o| {
                 let (marks, all) = marks(&o.kinds, &present);
-                SkillRow {
-                    flag: if o.broken {
-                        "Broken link".to_owned()
-                    } else {
-                        String::new()
-                    },
-                    description: o.source,
-                    agents: agent_states(&o.kinds, &present),
-                    name: o.name,
-                    href: None,
-                    marks,
-                    all,
-                    path: String::new(),
-                    files: 0,
-                    also_global: false,
-                }
+                let mut row = SkillRow::new(o.name, o.source, String::new());
+                row.flag = if o.broken {
+                    "Broken link".to_owned()
+                } else {
+                    String::new()
+                };
+                row.agents = agent_states(&o.kinds, &present);
+                row.marks = marks;
+                row.all = all;
+                row
             })
             .collect();
         total += outside.len();
@@ -683,6 +774,7 @@ pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
                 title: "Outside Atlas".to_owned(),
                 rows: outside,
                 notice: None,
+                groups: Vec::new(),
             });
         }
     }
@@ -694,7 +786,76 @@ pub fn skills(snap: &Snapshot, scope: &Scope, q: &str) -> SkillsList {
         sections,
         total,
         q: q.to_owned(),
+        attention: false,
+        attention_count: 0,
+        select: false,
+        agents: Vec::new(),
+        destinations: Vec::new(),
+        back: "/skills".to_owned(),
+        back_enc: "%2Fskills".to_owned(),
+        attention_href: String::new(),
+        select_href: String::new(),
+        new_href: String::new(),
     }
+}
+
+/// The Skills page as the library shows it: [`skills`] plus sources, conflicts, the
+/// Needs attention filter and what the Select bar offers.
+#[must_use]
+pub fn skills_library(
+    snap: &Snapshot,
+    scope: &Scope,
+    q: &str,
+    attention: bool,
+    select: bool,
+) -> SkillsList {
+    let mut list = skills(snap, scope, q);
+    list.attention_count = crate::library::decorate(snap, &mut list.sections, attention);
+    list.attention = attention;
+    list.select = select;
+    let mut agents = vec![Choice {
+        value: String::new(),
+        label: "every agent".to_owned(),
+        checked: true,
+        disabled: false,
+    }];
+    agents.extend(present_agents(snap).into_iter().map(|k| Choice {
+        value: k.id().to_owned(),
+        label: k.display_name().to_owned(),
+        checked: false,
+        disabled: false,
+    }));
+    list.agents = agents;
+    list.destinations = crate::library::destinations(snap);
+    let href = |attention: bool, select: bool, q: &str| {
+        let mut query = Vec::new();
+        if let Some(p) = scope.project() {
+            query.push(format!("scope={p}"));
+        }
+        if !q.trim().is_empty() {
+            query.push(format!("q={}", crate::library::pct(q.trim())));
+        }
+        if attention {
+            query.push("attention=1".to_owned());
+        }
+        if select {
+            query.push("select=1".to_owned());
+        }
+        if query.is_empty() {
+            "/skills".to_owned()
+        } else {
+            format!("/skills?{}", query.join("&"))
+        }
+    };
+    list.back = href(attention, false, "");
+    list.back_enc = crate::library::pct(&list.back);
+    list.attention_href = href(!attention, select, q);
+    list.select_href = href(attention, !select, q);
+    list.new_href = scope.project().map_or_else(
+        || "/skills/new".to_owned(),
+        |p| format!("/skills/new?scope={p}"),
+    );
+    list
 }
 
 #[derive(Debug)]

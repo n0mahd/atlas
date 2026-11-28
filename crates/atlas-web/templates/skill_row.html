@@ -1,0 +1,29 @@
+<li{% if v.select && page.signed_in && !r.home.is_empty() %} class="pick"{% endif %}>
+  {% if v.select && page.signed_in && !r.home.is_empty() %}<input class="pick-box" type="checkbox" form="bulk" name="s" value="{{ r.key() }}" id="pick-{{ r.home }}-{{ r.name }}"><label class="sr" for="pick-{{ r.home }}-{{ r.name }}">Choose {{ r.name }}</label>{% endif %}
+  <details class="row">
+    <summary>
+      <span class="row-main">
+        <span class="row-name">{{ r.name }}</span>
+        {% if v.attention && !r.reasons.is_empty() %}<span class="row-desc warn">{{ r.reasons|join("; ") }}</span>{% else %}<span class="row-desc">{{ r.description }}</span>{% endif %}
+      </span>
+      {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
+      {% if r.conflict %}<span class="row-flag">Conflict</span>{% endif %}
+      {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
+      <span class="marks{% if r.all %} all{% endif %}">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
+      <span class="chev" aria-hidden="true"></span>
+    </summary>
+    <div class="drawer">
+      {% if !r.reasons.is_empty() %}<ul class="reasons">{% for why in r.reasons %}<li>{{ why }}</li>{% endfor %}</ul>{% endif %}
+      <ul class="agent-states">
+        {% for a in r.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
+      </ul>
+      <div class="drawer-foot">
+        {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files > 0 %} · {{ r.files }} more files{% endif %}</span>{% endif %}
+        <span class="drawer-links">
+          {% if let Some(href) = r.href %}<a class="link-cap" href="{{ href }}">Read the skill</a>{% endif %}
+          {% if page.signed_in && !r.home.is_empty() && r.home != "public" %}<a class="link-cap warn" href="/skills/confirm?action=delete&amp;s={{ r.home }}%2F{{ r.name }}&amp;back={{ v.back_enc }}">Delete…</a>{% endif %}
+        </span>
+      </div>
+    </div>
+  </details>
+</li>
