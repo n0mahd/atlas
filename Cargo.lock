@@ -301,6 +301,7 @@ dependencies = [
  "atlas-core",
  "atlas-fs",
  "atlas-git",
+ "atlas-harness",
  "atlas-signer",
  "atlas-verify",
  "axum",

@@ -5,8 +5,6 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
-// Used by the skills, instructions and import pages as they land (decision 0027).
-#[allow(dead_code)]
 mod change;
 pub mod clients;
 mod distribute;
@@ -19,7 +17,6 @@ pub mod remote;
 // Stubs until the library and placement work lands (decision 0027).
 #[allow(dead_code, clippy::unused_async)]
 mod skill_ops;
-#[allow(dead_code, clippy::unused_async)]
 mod skills_place;
 pub mod views;
 
@@ -140,6 +137,11 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/", get(overview))
         .route("/skills", get(skills))
         .route("/skills/{home}/{name}", get(skill_detail))
+        .route(
+            "/skills/{home}/{name}/agents",
+            post(skills_place::post_agents),
+        )
+        .route("/skills/{home}/{name}/use", post(skills_place::post_use))
         .route("/instructions", get(instructions))
         .route("/instructions/{scope}/{file}", get(instruction_detail))
         .route("/memory", get(memory))
@@ -286,6 +288,7 @@ struct OverviewPage {
 struct SkillsPage {
     page: Page,
     v: views::SkillsList,
+    place: skills_place::ListPlace,
 }
 
 #[derive(Template)]
@@ -293,6 +296,8 @@ struct SkillsPage {
 struct SkillPage {
     page: Page,
     v: views::SkillDetail,
+    /// Who gets the skill: the switches and "Use in…".
+    p: skills_place::SkillPlace,
 }
 
 #[derive(Template)]
@@ -381,6 +386,16 @@ struct ListQuery {
     sent: Option<String>,
     #[serde(default)]
     notsent: Option<String>,
+    /// After a skill's switch or "Use in…": what changed (`turned` and `agent`, or `used`).
+    #[serde(default)]
+    turned: String,
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    used: String,
+    /// The Skills list row to open, as `<home>/<name>`.
+    #[serde(default)]
+    open: String,
 }
 
 impl ListQuery {
@@ -391,6 +406,15 @@ impl ListQuery {
                 "Nothing changed, so nothing was committed.".to_owned(),
                 false,
             );
+        }
+        if let Some(did) = skills_place::did_text(&self.turned, &self.agent, &self.used) {
+            if self.sent.is_some() {
+                return (format!("{did} · on your machines within 10 minutes"), false);
+            }
+            if self.notsent.is_some() {
+                return (format!("{did}. Not on your machines yet"), true);
+            }
+            return (did, false);
         }
         let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
         if self.sent.is_some() {
@@ -461,7 +485,9 @@ async fn skills(
     let v = views::skills(&snap, &scope, &q.q);
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
-    Ok(Html(SkillsPage { page, v }.render()?))
+    q.apply(&mut page);
+    let place = skills_place::list(&s, &snap, &scope, &page, &q.open).await?;
+    Ok(Html(SkillsPage { page, v, place }.render()?))
 }
 
 async fn skill_detail(
@@ -472,14 +498,22 @@ async fn skill_detail(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &home);
+    let skill = snap
+        .catalog
+        .skills
+        .iter()
+        .find(|s| s.home.key() == home && s.name.as_str() == name)
+        .ok_or(AppError::NotFound)?;
+    // A link from a project's list carries it, so "This project only" means that one.
+    let scope = views::resolve_scope(&snap, if q.scope.is_empty() { &home } else { &q.scope });
     let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
     q.apply(&mut page);
     page.edit_href = s
         .writer
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
-    Ok(Html(SkillPage { page, v }.render()?))
+    let p = skills_place::detail(&s, &snap, skill, &scope, &page).await?;
+    Ok(Html(SkillPage { page, v, p }.render()?))
 }
 
 async fn instructions(

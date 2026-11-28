@@ -1,0 +1,65 @@
+<div class="place" id="place-{{ p.dom }}">
+  {% if let Some(problem) = p.problem %}<p class="marginalia warn-note" role="alert">{{ problem }}</p>{% endif %}
+  {% if p.switches.is_empty() %}
+  <p class="place-none">No agent set up on this machine reads skill folders.</p>
+  {% else %}
+  <form method="post" action="{{ p.action }}/agents" class="place-form place-all"{% if p.send %} data-send-on-save{% endif %}>
+    <input type="hidden" name="csrf" value="{{ page.csrf }}">
+    <input type="hidden" name="agent" value="all">
+    <input type="hidden" name="on" value="{% if p.all_on %}0{% else %}1{% endif %}">
+    <input type="hidden" name="back" value="{{ p.back }}">
+    <input type="hidden" name="scope" value="{{ p.scope }}">
+    <button type="submit" class="toggle toggle-all" role="switch" aria-checked="{{ p.all_on }}" aria-label="Every agent uses {{ p.name }}"{% if !p.can_change() %} disabled{% endif %}{% if p.focus %} autofocus{% endif %}>
+      <span class="switch-track" aria-hidden="true"></span>
+      <span class="toggle-label">All agents</span>
+      <span class="toggle-state">{{ p.summary }}</span>
+    </button>
+  </form>
+  <ul class="toggles">
+    {% for a in p.switches %}
+    <li class="toggle-item{% if a.locked.is_some() %} locked{% endif %}">
+      <form method="post" action="{{ p.action }}/agents" class="place-form"{% if p.send %} data-send-on-save{% endif %}>
+        <input type="hidden" name="csrf" value="{{ page.csrf }}">
+        <input type="hidden" name="agent" value="{{ a.id }}">
+        <input type="hidden" name="on" value="{% if a.on %}0{% else %}1{% endif %}">
+        <input type="hidden" name="back" value="{{ p.back }}">
+        <input type="hidden" name="scope" value="{{ p.scope }}">
+        <button type="submit" class="toggle" role="switch" aria-checked="{{ a.on }}" aria-label="{{ a.name }} uses {{ p.name }}"{% if a.locked.is_some() %} disabled aria-describedby="why-{{ p.dom }}-{{ a.id }}"{% else if !p.can_change() %} disabled{% endif %}>
+          {{ a.icon|safe }}<span class="toggle-label">{{ a.name }}</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+      </form>
+      {% if let Some(why) = a.locked %}<p class="toggle-why" id="why-{{ p.dom }}-{{ a.id }}">{{ why }}</p>{% endif %}
+      {% if let Some(note) = a.note %}<p class="toggle-why warn">{{ note }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <details class="use-in">
+    <summary class="button-plain">Use in…</summary>
+    <form method="post" action="{{ p.action }}/use" class="use-form"{% if p.send %} data-send-on-save{% endif %}>
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <input type="hidden" name="back" value="{{ p.back }}">
+      <input type="hidden" name="scope" value="{{ p.scope }}">
+      <fieldset{% if !p.can_change() %} disabled{% endif %}>
+        <legend>Use {{ p.name }}</legend>
+        {% if let Some(c) = p.current %}
+        <label class="use-choice"><input type="radio" name="use" value="project"{% if p.use_mode == "project" %} checked{% endif %}> This project only <span class="mono muted">{{ c }}</span></label>
+        <input type="hidden" name="project" value="{{ c }}">
+        {% else if !p.projects.is_empty() %}
+        <span class="use-choice"><label><input type="radio" name="use" value="project"> One project only</label>
+          <label class="sr" for="use-project-{{ p.dom }}">Which project</label>
+          <select id="use-project-{{ p.dom }}" name="project">{% for c in p.projects %}<option value="{{ c.name }}">{{ c.name }}</option>{% endfor %}</select></span>
+        {% endif %}
+        <label class="use-choice"><input type="radio" name="use" value="global"{% if p.use_mode == "global" %} checked{% endif %}> Globally</label>
+        {% if !p.projects.is_empty() %}
+        <label class="use-choice"><input type="radio" name="use" value="only"{% if p.use_mode == "only" %} checked{% endif %}> Only these projects</label>
+        <ul class="use-projects">
+          {% for c in p.projects %}<li><label><input type="checkbox" name="projects" value="{{ c.name }}"{% if c.checked %} checked{% endif %}> {{ c.name }}</label></li>{% endfor %}
+        </ul>
+        {% endif %}
+      </fieldset>
+      <button class="button-ink" type="submit"{% if !p.can_change() %} disabled{% endif %}>Apply</button>
+    </form>
+  </details>
+  {% if p.can_sign_in() %}<p class="place-none"><a href="/signin?next={{ p.action }}">Sign in</a> to change who gets it.</p>{% endif %}
+</div>
