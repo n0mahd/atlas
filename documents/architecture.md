@@ -61,8 +61,13 @@ query the store directly instead of going through use cases.
    signature before storing it. The UI calls these "updates", never "releases".
 5. atlasd pulls the update and checks the signature, that N is higher than the last
    one it applied, and the tree hash.
-6. atlasd computes a pure plan, viewable as a dry run.
-7. atlasd writes only the entries it manages, atomically, and reports status.
+6. atlasd computes a pure plan, viewable as a dry run: home skill folders per skill from
+   `atlas/placements.toml`, then each project checkout it finds under `project_roots`
+   (links, its `.git/info/exclude` block, Claude Code's memory link), then every switch
+   file once (decision 0027).
+7. atlasd writes only the entries it manages, atomically, re-checking each destructive
+   step (an exact copy is moved aside and checked again before it goes), and reports
+   status, with the skills it saw outside Atlas.
 
 Memory skips steps 3–5 by default: agents write it straight to git (decision 0008).
 

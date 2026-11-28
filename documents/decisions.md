@@ -345,3 +345,21 @@ dependencies); clashing files are the owner's choice. The CLI's lock is updated 
 it sits in a repo Atlas commits; a global lock outside every repo is left alone, so an
 edited global skill shows as updatable again (the preview says so). One lock reader,
 `atlas_fs::lock`, serves updates and the skill library.
+
+## 0031 · 2026-11-27 · atlasd on each machine: projects, memory links, update format
+- **Update format stays 1.** `Manifest::projects` (name and remote) is added last and left
+  out when empty, so a manifest without projects keeps its exact signed bytes, and older
+  clients, whose manifest type doesn't refuse unknown fields, ignore it and simply link no
+  project. A format bump would have made every older client refuse every update.
+- **Project remotes go out without credentials** (`release::without_credentials`), and
+  machines match checkouts by `release::remote_key`, read from `.git/config` and
+  `.git/index` directly, so atlasd starts no git process in the owner's repos.
+- **Memory links point into the owner's own knowledge checkout** (`memory_store`, else an
+  adopted folder inside one, verified by its `origin`), never Atlas's local copy, which
+  every pass resets to the signed commit and would delete new notes from. Without such a
+  checkout no memory folder is linked and the pass says why.
+- **In a checkout Atlas removes only links its exclude block lists**, and never writes a
+  path git tracks; the block is add-only (shared with the hub).
+- **Codex's switches for home and project skills are rendered once per pass**; Codex's
+  format holds one Atlas switch per skill name, so a second same-named skill off is
+  reported. `atlas_before` isn't kept: every format marks its entries in the file.

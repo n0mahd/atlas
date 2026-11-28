@@ -63,15 +63,49 @@ the owner's. Others have no switch; the UI says so and why.
 
 ## Projects on each machine
 
-An update names each registered project and its git remote (not pinned: project content is
-the project's, decision 0003). atlasd finds that project's checkouts on its machine under
-`project_roots` in `client.toml` (default `["~/Projects"]`) by matching the remote, and in
-each checkout:
-- links project skills into the folders agents read that don't read `.agents/skills`
-  (Claude Code's `.claude/skills`), as relative links, each listed in `.git/info/exclude`;
-- links `only-projects` global skills the same way (pointing at its local copy of the store);
-- writes per-agent switches in the repo's own files where an agent has them;
-- links Claude Code's per-repo memory folder into the store (below).
+An update names each registered project and its git remote (`Manifest::projects`, not
+pinned: project content is the project's, decision 0003; credentials are taken out of the
+URL). atlasd looks at the direct children of `project_roots` in `client.toml` (default
+`["~/Projects"]`, at most 500 entries, links not followed) and reads each one's
+`.git/config` directly: a checkout whose `origin` is the project's remote, written in any
+form (`git@host:o/r.git`, `ssh://`, `https://`, trailing `.git` or `/`), is that project.
+It reads `.git/index` for the paths git tracks; no git process runs in the owner's repos.
+In each checkout:
+- **Project skills** (`.agents/skills/<name>`) get relative links (`../../.agents/skills/<name>`)
+  in the folders `placement::solve` picks for the agents that want them, typically Claude
+  Code's `.claude/skills`. A folder where git already tracks an entry of that name counts
+  as holding the skill (a committed link the team shares), so its readers are switched off
+  rather than linked.
+- **`only-projects` global skills** are linked the same way, to Atlas's local copy.
+- **Exact copies** at a wanted name become links, as in the home folders.
+- **Switches**: Claude Code's go in the repo's `.claude/settings.local.json`; Codex's for
+  project skills go in `~/.codex/config.toml`, keyed by the skill's absolute path, in the
+  same single render as the home's. Codex can switch off only one skill of a name per file,
+  so a second checkout with a same-named skill off is reported, not switched.
+- **Git stays clean**: every link and switch file Atlas makes is added to Atlas's block in
+  `.git/info/exclude` (`instructions::exclude_with`: add-only, shared with the hub's
+  `/CLAUDE.local.md`) before it is made. Atlas never writes a path git tracks (reported
+  instead), and in a checkout removes only links its block lists, so the owner's own links
+  stay. Lines for links that are gone stay in the block; they are harmless.
+
+### Claude Code's memory folders
+
+For each checkout, Claude Code's `~/.claude/projects/<repo>/memory` becomes a link to
+`<knowledge>/memory/projects/<project>/`: created when missing (if that folder exists),
+kept or repointed when it is a link into a folder Atlas manages, and a real folder becomes
+the link only when every file in it is a note (`*.md`, no subfolders or links) already
+there byte for byte, checked again just before the swap. Otherwise atlasd reports "N notes
+in <path> aren't in Atlas yet" and leaves it.
+
+`<knowledge>` here is **the owner's own checkout** of the knowledge repo, never Atlas's
+local copy: that copy is reset to the signed commit on every pass (`checkout --force` and
+`git clean`), so notes an agent wrote through a link into it would be deleted ten minutes
+later and never reach git. atlasd uses `memory_store` from `client.toml` (`atlasd pair
+--memory-store ~/Knowledge`), else the first `adopt` folder inside a checkout, and only
+when that checkout's `origin` is the knowledge repo's remote. With none, nothing is linked
+and the pass says why. The trade-off: new notes reach git through the owner's own sync
+(such as `~/Knowledge/bin/sync`), not through Atlas's signed updates, so a machine without
+such a checkout keeps Claude's notes in Claude's own folder until the hub imports them.
 
 ## Bringing things in (one click each)
 
@@ -143,8 +177,9 @@ are never run; everything is checked against its git SHA and shown escaped.
 
 ## What is not here yet
 
-- Bringing in items found only on other machines: atlasd reports them; the content has to
-  reach the hub through Local Atlas or a reviewed upload (debt).
+- Bringing in items found only on other machines: atlasd reports them (`Report::outside`:
+  name, path, own folder / link / broken, link target and exact digest, up to 300 per
+  pass); the content has to reach the hub through Local Atlas or a reviewed upload (debt).
 - MCP tools for agents to manage skills: writes need the owner's passkey, so agent-driven
   changes need their own decision first.
 - MCP servers themselves (phase 4).
