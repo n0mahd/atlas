@@ -6,6 +6,8 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
+use atlas_harness::instructions::contained;
+
 use crate::fsx;
 use crate::plan::{Action, Plan};
 
@@ -41,7 +43,70 @@ fn step(action: &Action) -> io::Result<()> {
             }
             fs::remove_file(path)
         }
+        Action::WriteInstruction {
+            path,
+            was,
+            bytes,
+            kept_in,
+            ..
+        } => {
+            if !still(path, was.as_deref())? {
+                return Err(changed());
+            }
+            if let (Some(store), Some(was)) = (kept_in, was) {
+                let mut keep = read_small(store)?;
+                keep.push('\n');
+                keep.push_str(&String::from_utf8_lossy(bytes));
+                if !contained(&String::from_utf8_lossy(was), &keep, |_| false) {
+                    return Err(io::Error::other(
+                        "the global instructions no longer hold all its text, so it was kept",
+                    ));
+                }
+            }
+            fsx::write_atomic(path, bytes, None)
+        }
+        Action::FileToLink { path, was, target } => {
+            if !still(path, Some(was))? {
+                return Err(changed());
+            }
+            if !contained(&String::from_utf8_lossy(was), &read_small(target)?, |_| {
+                false
+            }) {
+                return Err(io::Error::other(
+                    "the global instructions no longer hold all its text, so it was kept",
+                ));
+            }
+            // A temp link renamed over the file: never a moment without either.
+            fsx::replace_link(path, target)
+        }
     }
+}
+
+const MAX_INSTRUCTION: u64 = 1024 * 1024;
+
+/// Whether `path` still is what the plan saw: these bytes in a regular file, or (`None`)
+/// nothing at all.
+fn still(path: &Path, was: Option<&[u8]>) -> io::Result<bool> {
+    match (fs::symlink_metadata(path), was) {
+        (Err(e), None) if e.kind() == io::ErrorKind::NotFound => Ok(true),
+        (Err(e), _) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        (Ok(m), Some(was)) if m.is_file() && m.len() == was.len() as u64 => {
+            Ok(fs::read(path)? == was)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// A small regular file's text, read without following a link at its own path.
+fn read_small(path: &Path) -> io::Result<String> {
+    let m = fs::symlink_metadata(path)?;
+    if !m.is_file() || m.len() > MAX_INSTRUCTION {
+        return Err(io::Error::other(format!(
+            "{} isn't a small regular file",
+            path.display()
+        )));
+    }
+    fs::read_to_string(path)
 }
 
 /// Applies every action in order. Returns what was done and what failed, in words.

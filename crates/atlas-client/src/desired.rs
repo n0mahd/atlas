@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use atlas_core::catalog::HookManifest;
+use atlas_core::catalog::{ClaudeAgentsMd, HookManifest, InstructionSettings, PLACEMENTS_FILE};
 use atlas_core::kernel::{HarnessKind, Slug};
 use atlas_harness::hooks::ManagedHook;
 
@@ -24,6 +24,9 @@ pub struct Desired {
     pub skills: BTreeMap<String, PathBuf>,
     /// The global `AGENTS.md` in the knowledge copy.
     pub instructions: Option<PathBuf>,
+    /// The owner's choice for when Claude Code reads a project's `AGENTS.md`; `None`
+    /// leaves Claude Code's setting as it is.
+    pub claude_agents_md: Option<ClaudeAgentsMd>,
     pub hooks: Vec<HookSpec>,
     pub problems: Vec<String>,
 }
@@ -96,6 +99,28 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
     })
 }
 
+/// The `[instructions]` table of `atlas/placements.toml`. Other tables are left to the
+/// code that reads them, so one of theirs that doesn't parse doesn't stop this one.
+fn instruction_settings(knowledge: &Path) -> Result<InstructionSettings, String> {
+    #[derive(serde::Deserialize)]
+    struct Only {
+        #[serde(default)]
+        instructions: InstructionSettings,
+    }
+    let file = knowledge.join(PLACEMENTS_FILE);
+    match fs::symlink_metadata(&file) {
+        Err(_) => return Ok(InstructionSettings::default()),
+        Ok(m) if !m.is_file() || m.len() > 1024 * 1024 => {
+            return Err("it isn't a small regular file".to_owned());
+        }
+        Ok(_) => {}
+    }
+    let text = fs::read_to_string(&file).map_err(|e| e.to_string())?;
+    toml::from_str::<Only>(&text)
+        .map(|o| o.instructions)
+        .map_err(|e| e.message().to_owned())
+}
+
 /// Reads the desired state from the knowledge copy and the public skills copy.
 /// Knowledge wins when both have a skill of the same name.
 #[must_use]
@@ -123,6 +148,12 @@ pub fn read(knowledge: Option<&Path>, public_skills: Option<&Path>) -> Desired {
     let agents = knowledge.join("AGENTS.md");
     if fs::symlink_metadata(&agents).is_ok_and(|m| m.is_file()) {
         d.instructions = Some(agents);
+    }
+    match instruction_settings(knowledge) {
+        Ok(s) => d.claude_agents_md = s.claude_reads_agents_md,
+        Err(e) => d.problems.push(format!(
+            "{PLACEMENTS_FILE}: its [instructions] table was skipped: {e}"
+        )),
     }
     let hooks_dir = knowledge.join("hooks");
     let mut entries: Vec<_> = fs::read_dir(&hooks_dir)
