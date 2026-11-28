@@ -745,3 +745,69 @@ async fn updates_need_a_passkey_session() {
         .unwrap();
     assert_eq!(hub.send(req).await.0, StatusCode::FORBIDDEN);
 }
+
+/// A redirect is followed only to the API's own origin: a renamed repository on the same
+/// stand-in is listed, one sent to another port (another origin) is never asked.
+#[tokio::test]
+async fn redirects_stay_on_the_apis_origin() {
+    let v1: Files<'_> = &[("SKILL.md", "---\nname: pdf\n---\nPDF v1\n", false)];
+    let v2: Files<'_> = &[(
+        "skills/pdf/SKILL.md",
+        "---\nname: pdf\n---\nPDF v2\n",
+        false,
+    )];
+    let mut elsewhere = Canned::default();
+    elsewhere.repo("acme/skills", v2);
+    let (other, other_served) = stand_in(elsewhere).await;
+
+    let mut canned = Canned::default();
+    let moved = |to: String| (301, vec![("location".to_owned(), to)], String::new());
+    canned.replies.insert(
+        "/repos/acme/skills/git/trees/HEAD?recursive=1".to_owned(),
+        moved(format!(
+            "{other}/repos/acme/skills/git/trees/HEAD?recursive=1"
+        )),
+    );
+    canned.replies.insert(
+        "/repos/acme/renamed/git/trees/HEAD?recursive=1".to_owned(),
+        moved("/repos/acme/skills-v2/git/trees/HEAD?recursive=1".to_owned()),
+    );
+    canned.repo("acme/skills-v2", v2);
+    let (api, _) = stand_in(canned).await;
+
+    let mut lock: serde_json::Value = serde_json::from_str(&global_lock(&[
+        ("pdf", &tree_sha(v1)),
+        ("docs", &tree_sha(v1)),
+    ]))
+    .unwrap();
+    lock["skills"]["docs"]["source"] = "acme/renamed".into();
+    lock["skills"]["docs"]["skillPath"] = "skills/pdf/SKILL.md".into();
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| {
+            write_skill(&k.join("skills/pdf"), v1);
+            write_skill(&k.join("skills/docs"), v1);
+        },
+    );
+    write(
+        &hub.home.join(".agents/.skill-lock.json"),
+        &lock.to_string(),
+    );
+
+    let page = hub.check().await;
+    assert!(
+        row(&page, "pdf").contains("GitHub couldn&#39;t be reached"),
+        "{}",
+        row(&page, "pdf")
+    );
+    assert!(
+        other_served.hits.lock().unwrap().is_empty(),
+        "another origin is never asked"
+    );
+    assert!(
+        row(&page, "docs").contains(">Update available · <span"),
+        "{}",
+        row(&page, "docs")
+    );
+}

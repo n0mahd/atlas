@@ -5,7 +5,8 @@
 //!
 //! Every request has a 10 second limit and a size cap. GitHub allows 60 requests an hour
 //! without signing in; when it says the limit is used up, nothing more is asked until the
-//! time it gives. Redirects (renamed repositories) are followed only on the same host.
+//! time it gives. Redirects (renamed repositories) are followed only to the API's own origin
+//! (scheme, host and port).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -123,14 +124,22 @@ fn segment(s: &str) -> String {
     })
 }
 
+/// Whether a redirect to `next` stays on `base`'s origin: the same scheme, host and port.
+/// A base without a host allows none.
+fn same_origin(base: Option<&reqwest::Url>, next: &reqwest::Url) -> bool {
+    let Some(base) = base.filter(|b| b.host_str().is_some()) else {
+        return false;
+    };
+    base.scheme() == next.scheme()
+        && base.host_str() == next.host_str()
+        && base.port_or_known_default() == next.port_or_known_default()
+}
+
 impl GitHub {
     pub(crate) fn new(api: &str) -> Self {
-        let host = reqwest::Url::parse(api)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_owned));
+        let base = reqwest::Url::parse(api).ok();
         let policy = reqwest::redirect::Policy::custom(move |attempt| {
-            let same = attempt.url().host_str().map(str::to_owned) == host;
-            if same && attempt.previous().len() < 3 {
+            if same_origin(base.as_ref(), attempt.url()) && attempt.previous().len() < 3 {
                 attempt.follow()
             } else {
                 attempt.stop()
@@ -355,6 +364,31 @@ mod tests {
     fn refs_are_one_segment() {
         assert_eq!(segment("feature/x+y@1"), "feature%2Fx%2By%401");
         assert_eq!(segment("v1.2_3-a"), "v1.2_3-a");
+    }
+
+    #[test]
+    fn redirects_stay_on_the_apis_origin() {
+        let url = |s: &str| reqwest::Url::parse(s).unwrap();
+        let base = url("https://api.github.com");
+        assert!(same_origin(
+            Some(&base),
+            &url("https://api.github.com/repositories/1/git/trees/HEAD")
+        ));
+        assert!(same_origin(
+            Some(&base),
+            &url("https://api.github.com:443/x")
+        ));
+        for other in [
+            "http://api.github.com/x",
+            "https://api.github.com:8443/x",
+            "https://evil.test/x",
+        ] {
+            assert!(!same_origin(Some(&base), &url(other)), "{other}");
+        }
+        // A base without a host follows nothing, not even another hostless URL.
+        let hostless = url("unix:/run/api");
+        assert!(!same_origin(Some(&hostless), &url("unix:/run/other")));
+        assert!(!same_origin(None, &url("https://api.github.com/x")));
     }
 
     #[test]
