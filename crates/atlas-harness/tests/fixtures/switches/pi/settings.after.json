@@ -1,0 +1,16 @@
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-5-5",
+  "skills": [
+    "~/work/extra-skills",
+    "-skills/deploy/SKILL.md",
+    "+skills/legacy-context",
+    "-skills/pdf-tools/SKILL.md",
+    "-skills/release-notes/SKILL.md"
+  ],
+  "enableSkillCommands": true,
+  "atlas:skills": [
+    "pdf-tools",
+    "release-notes"
+  ]
+}
