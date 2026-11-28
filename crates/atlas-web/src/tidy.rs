@@ -50,6 +50,7 @@ pub struct Choice {
 
 #[derive(Debug)]
 pub struct ProjectTidy {
+    pub num: String,
     pub name: String,
     pub duplicates: Vec<Choice>,
     pub claude_only: Vec<Choice>,
@@ -87,7 +88,7 @@ pub(crate) fn count(snap: &Snapshot) -> usize {
 #[must_use]
 pub(crate) fn view(snap: &Snapshot) -> TidyView {
     let o = &snap.outside;
-    let outside = o
+    let outside: Vec<OutsideChoice> = o
         .skills
         .iter()
         .filter(|s| !s.kept && s.blocked().is_none() && s.clash.is_none())
@@ -100,7 +101,7 @@ pub(crate) fn view(snap: &Snapshot) -> TidyView {
             left_out: s.left_out.join(", "),
         })
         .collect();
-    let differs = o
+    let differs: Vec<(String, String)> = o
         .skills
         .iter()
         .filter(|s| !s.kept && s.blocked().is_none() && s.clash.as_ref().is_some_and(|c| !c.same))
@@ -167,11 +168,20 @@ pub(crate) fn view(snap: &Snapshot) -> TidyView {
             continue;
         }
         projects.push(ProjectTidy {
+            num: String::new(),
             name: name.to_owned(),
             duplicates,
             claude_only,
             switched_off,
         });
+    }
+    let first = if outside.is_empty() && differs.is_empty() {
+        1
+    } else {
+        2
+    };
+    for (i, p) in projects.iter_mut().enumerate() {
+        p.num = import::roman(first + i);
     }
     TidyView {
         outside,

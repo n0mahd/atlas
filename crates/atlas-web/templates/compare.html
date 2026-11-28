@@ -3,7 +3,7 @@
 <div class="sections">
   <section class="section">
     <div class="section-head"><span class="num">I</span><h2>Files</h2><span class="count">{{ v.files.len() }}</span></div>
-    <p class="marginalia">{{ v.left }} beside {{ v.right }}.</p>
+    <p class="marginalia">Which files differ between the two copies. Nothing changes until you choose.</p>
     <ul class="rows">
       {% for f in v.files %}
       <li><div class="row static"><span class="row-main"><span class="row-name mono-name">{{ f.name }}</span></span><span class="row-kind{% if f.state != "same" %} warn{% endif %}">{{ f.label }}</span></div></li>
@@ -12,7 +12,7 @@
   </section>
   {% for t in v.texts %}
   <section class="section">
-    <div class="section-head"><span class="num">{{ loop.index + 1 }}</span><h2 class="mono-name">{{ t.name }}</h2></div>
+    <div class="section-head"><span class="num">{{ t.num }}</span><h2 class="mono-name">{{ t.name }}</h2></div>
     <div class="compare">
       <div><p class="compare-label">{{ v.left }}</p><pre class="ink-block">{{ t.left }}</pre></div>
       <div><p class="compare-label">{{ v.right }}</p><pre class="ink-block">{{ t.right }}</pre></div>

@@ -386,8 +386,14 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .compare-label { margin: 0 0 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .compare .ink-block { max-height: 28em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+#outside .row-flag { white-space: normal; flex: 0 1 auto; min-width: 0; }
+#outside .row-kind { width: auto; }
+
 @media (max-width: 720px) {
   .compare { grid-template-columns: 1fr; }
+  #outside .row.static { flex-wrap: wrap; row-gap: 4px; }
+  #outside .row.static .row-main { flex: 1 1 100%; }
+  #outside .row > summary .row-flag { flex-basis: 100%; }
   .head-action { margin-left: auto; }
   .choices { margin-left: 0; flex-basis: 100%; }
   fieldset.choice-row > legend { float: none; }

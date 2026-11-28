@@ -1086,8 +1086,34 @@ pub struct FileLine {
     pub label: &'static str,
 }
 
+/// A section numeral: I, II, III...
+#[must_use]
+pub(crate) fn roman(n: usize) -> String {
+    const NUMERALS: [(usize, &str); 9] = [
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut n = n;
+    let mut out = String::new();
+    for (value, numeral) in NUMERALS {
+        while n >= value {
+            out.push_str(numeral);
+            n -= value;
+        }
+    }
+    out
+}
+
 #[derive(Debug)]
 pub struct TextPair {
+    pub num: String,
     pub name: String,
     pub left: String,
     pub right: String,
@@ -1134,6 +1160,7 @@ pub(crate) fn compare_trees(left: &Tree, right: &Tree) -> (Vec<FileLine>, Vec<Te
             (Some(a), Some(b)) => {
                 if texts.len() < 3 {
                     texts.push(TextPair {
+                        num: roman(texts.len() + 2),
                         name: name.display().to_string(),
                         left: shown_text(&a.bytes),
                         right: shown_text(&b.bytes),
@@ -1301,6 +1328,8 @@ mod tests {
             ]
         );
         assert_eq!(texts.len(), 1);
+        assert_eq!(texts[0].num, "II");
+        assert_eq!(roman(14), "XIV");
         assert_eq!(
             (texts[0].left.as_str(), texts[0].right.as_str()),
             ("a", "b")
