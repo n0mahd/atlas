@@ -384,3 +384,19 @@ the name, any short flag (`Also global`, `Not in …`, `Broken link`), agent mar
 chevron; the full description (or source path for skills outside Atlas) sits inside the
 inline drawer when expanded, and search still matches descriptions. Reading and attention
 are treated as currency across the UI (`documents/design.md`).
+
+## 0036 · 2026-11-27 · The Machines page polls its list; installs start a first run
+The machine ledgers live in one partial (`machines_list.html`) that the page renders and
+`GET /machines/list` serves alone; the page polls it every 10 seconds, and at once when
+the tab comes back into view, so a newly paired machine appears without a reload. Polling,
+not server-sent events: one fragment endpoint, no open connections, and a machine reports
+at most every few seconds anyway. `atlas.js` skips polls while the tab is hidden (the htmx
+config forbids eval, so no `hx-trigger` filter), leaves the list alone when the response is
+unchanged (focus and selection survive) and reopens rows that were open, by `data-key`.
+The pairing command and the SSH form sit outside the list and are never replaced. The
+running head's totals ("2 machines · 1 reporting") refresh only on reload.
+The install script ends with `systemctl --user start --no-block atlasd.service` so the
+machine's first report reaches the hub within seconds rather than at the next timer tick.
+Through systemd rather than running `atlasd run` directly: the run gets the same sandbox
+as every later one, its output goes to the journal, systemd never runs it twice at once,
+and `--no-block` keeps the install (and an install over SSH) from waiting for it.

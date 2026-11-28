@@ -275,6 +275,17 @@ fn explain(code: Option<i32>, output: &str, target: &Target) -> String {
             "The hub couldn't sign in to {target} over SSH. Turn on Tailscale SSH on that machine (`sudo tailscale set --ssh`) or add the hub's SSH key to it, then try again."
         );
     }
+    // The install script stops on a system it has no build for; say which, up front.
+    if let Some(line) = output
+        .lines()
+        .map(str::trim)
+        .find(|l| l.contains("isn't available for"))
+    {
+        if line.contains("for Darwin") {
+            return format!("{target} runs macOS; atlasd is Linux-only for now.");
+        }
+        return format!("The install on {target} stopped: {line}");
+    }
     format!("The install on {target} failed.")
 }
 
@@ -407,6 +418,32 @@ mod tests {
         assert_eq!(lines.len(), TAIL_LINES);
         assert_eq!(lines.last(), Some(&"line 40"));
         assert!(!e.output.contains(CODE));
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_system_is_named_in_the_headline() {
+        let e = run_fake(
+            "echo \"atlasd isn't available for Darwin yet.\" >&2; exit 1",
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            e.message,
+            "you@laptop runs macOS; atlasd is Linux-only for now."
+        );
+        assert!(e.output.contains("isn't available for Darwin"));
+
+        let e = run_fake(
+            "echo \"atlasd isn't available for riscv64 yet.\" >&2; exit 1",
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            e.message,
+            "The install on you@laptop stopped: atlasd isn't available for riscv64 yet."
+        );
     }
 
     #[tokio::test]
