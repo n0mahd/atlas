@@ -481,3 +481,49 @@ async fn refusals_change_nothing() {
     assert_eq!(commits(&h.project), 1);
     assert_eq!(commits(&h.knowledge), 1);
 }
+
+/// atlasd's copy of Global on a hub machine that also runs atlasd.
+const ATLASD_GLOBAL: &str = ".local/share/atlas/sources/knowledge/AGENTS.md";
+
+#[tokio::test]
+async fn use_global_instead_drops_atlasds_import_too() {
+    let h = hub(&[("AGENTS.md", "# Shop\n")]);
+    let copy = h.home.join(ATLASD_GLOBAL);
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::write(&copy, GLOBAL).unwrap();
+    fs::write(
+        h.home.join(".claude/CLAUDE.md"),
+        format!("@~/{ATLASD_GLOBAL}\nPrefer rg.\n"),
+    )
+    .unwrap();
+    let res = confirm(&h, "/instructions/global/claude-code/use-global", &[]).await;
+    assert_committed(&res);
+    assert_eq!(
+        read(&h.knowledge.join("AGENTS.md")),
+        format!("{GLOBAL}\n<!-- atlas: from ~/.claude/CLAUDE.md -->\n\nPrefer rg.\n"),
+        "Global never gains an import of itself"
+    );
+}
+
+#[tokio::test]
+async fn move_to_global_drops_every_import_of_global() {
+    // Imports of Global by atlasd's copy and through a link to the knowledge repo.
+    let h = hub(&[("README.md", "Shop.\n")]);
+    let copy = h.home.join(ATLASD_GLOBAL);
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::write(&copy, GLOBAL).unwrap();
+    std::os::unix::fs::symlink(&h.knowledge, h.home.join("K")).unwrap();
+    fs::write(
+        h.project.join("AGENTS.md"),
+        format!("@~/{ATLASD_GLOBAL}\n@~/K/AGENTS.md\nUse pnpm.\n"),
+    )
+    .unwrap();
+    git(&h.project, &["add", "-A"]);
+    git(&h.project, &["commit", "-q", "-m", "agents"]);
+    let res = confirm(&h, "/instructions/shop/AGENTS.md/to-global", &[]).await;
+    assert_committed(&res);
+    assert_eq!(
+        read(&h.knowledge.join("AGENTS.md")),
+        format!("{GLOBAL}\n<!-- atlas: from shop/AGENTS.md -->\n\nUse pnpm.\n")
+    );
+}

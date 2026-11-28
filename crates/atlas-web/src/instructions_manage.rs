@@ -141,6 +141,21 @@ fn is_global(path: &Path, globals: &[PathBuf]) -> bool {
     fs::canonicalize(path).is_ok_and(|c| globals.contains(&c))
 }
 
+/// `text` without its lines importing Global by any path [`globals`] knows (the knowledge
+/// repo's `AGENTS.md`, atlasd's copy, a link to either): moved into Global, such a line
+/// would make Global import itself.
+fn without_global_imports(text: &str, dir: &Path, home: &Path, globals: &[PathBuf]) -> String {
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !imports_path(l, dir, home).is_some_and(|p| is_global(&p, globals)))
+        .collect();
+    let mut out = kept.join("\n");
+    if !out.is_empty() && text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 fn home_file(
     sources: &Sources,
     path: &Path,
@@ -564,7 +579,7 @@ fn plan_use_global(
         .ok_or("That agent has no home file.")?;
     let path = sources.home.join(home.shared);
     let dir = path.parent().unwrap_or(&sources.home);
-    let own = without_imports_of(&own, &global, dir, &sources.home);
+    let own = without_global_imports(&own, dir, &sources.home, &globals(sources));
     let current = global_text(&global)?;
     let joined = append_section(&current, &agent.shown, &own);
     check_size(&joined, "Global")?;
@@ -706,7 +721,7 @@ fn plan_to_global(
     let path = root.join(file);
     let text = need(read_text(&path), file)?;
     let current = global_text(&global)?;
-    let own = without_imports_of(&text, &global, &root, &sources.home);
+    let own = without_global_imports(&text, &root, &sources.home, &globals(sources));
     let from = format!("{project}/{file}");
     let joined = append_section(&current, &from, &own);
     check_size(&joined, "Global")?;
