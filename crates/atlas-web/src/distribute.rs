@@ -169,6 +169,26 @@ pub(crate) async fn waiting(s: &AppState) -> Option<Waiting> {
     .ok()
 }
 
+/// Whether this machine's agents show what the owner asked for, so a difference there is
+/// worth flagging: an update has been sent, atlasd on the hub's own machine reported
+/// applying the latest one, and no saved change waits to be sent. Until then every
+/// difference is just "not sent yet", and Home's Send line is the one signal.
+pub(crate) async fn delivered(s: &AppState) -> bool {
+    let Some(w) = s.writer.as_ref() else {
+        return false;
+    };
+    let Some(latest) = w.releases.numbers().last().copied() else {
+        return false;
+    };
+    let applied = w
+        .clients
+        .list()
+        .iter()
+        .filter(|c| c.machine.eq_ignore_ascii_case(&s.hub))
+        .any(|c| c.report.as_ref().and_then(|r| r.release) == Some(latest));
+    applied && matches!(waiting(s).await, Some(Waiting::Changes(0)))
+}
+
 #[derive(Serialize)]
 struct SignOptions {
     challenge: String,

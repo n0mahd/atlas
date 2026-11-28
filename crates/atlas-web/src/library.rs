@@ -7,6 +7,7 @@ use std::path::Path;
 
 use atlas_core::catalog::{Catalog, Skill, SkillHome};
 use atlas_core::distribution::HarnessView;
+use atlas_core::kernel::HarnessKind;
 use atlas_fs::Sources;
 use atlas_fs::lock::{self, LockKind};
 use atlas_fs::skill_folder::{self, Copy};
@@ -197,17 +198,16 @@ fn reasons_for(snap: &Snapshot, skill: &Skill, row: &mut SkillRow) {
         .map(str::to_owned);
     let shown = folder_shown(skill);
     if let SkillHome::Project(_) = skill.home {
-        let missing: Vec<&str> = row
-            .agents
-            .iter()
-            .filter(|a| a.class == "warn")
-            .map(|a| a.name)
-            .collect();
-        if missing.contains(&"Claude") {
+        if row.missing.contains(&HarnessKind::ClaudeCode) {
             row.reasons
                 .push("Claude Code can't use it in this project".to_owned());
         }
-        let others: Vec<&str> = missing.into_iter().filter(|n| *n != "Claude").collect();
+        let others: Vec<&str> = row
+            .missing
+            .iter()
+            .filter(|&&k| k != HarnessKind::ClaudeCode)
+            .map(|&k| crate::views::short(k))
+            .collect();
         if !others.is_empty() {
             row.reasons.push(format!("Not in {}", others.join(", ")));
         }

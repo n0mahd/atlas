@@ -993,6 +993,7 @@ mod tests {
         use atlas_core::catalog::Catalog;
         use atlas_core::distribution::HarnessView;
         Snapshot {
+            delivered: false,
             catalog: Catalog::default(),
             harnesses: kinds
                 .iter()

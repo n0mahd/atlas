@@ -163,11 +163,15 @@ impl AppState {
                 projects: atlas_fs::scan_projects(&sources),
                 library,
                 outside,
+                delivered: false,
             }
         })
         .await
-        .map(Arc::new)
         .map_err(|_| AppError::Internal)?;
+        let snap = Arc::new(Snapshot {
+            delivered: distribute::delivered(self).await,
+            ..snap
+        });
         let instructions = instructions_manage::FactsSlot::default();
         *slot = Some(Cached {
             at: std::time::Instant::now(),

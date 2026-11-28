@@ -442,3 +442,17 @@ the name, any short flag (`Also global`, `Not in …`, `Broken link`), agent mar
 chevron; the full description (or source path for skills outside Atlas) sits inside the
 inline drawer when expanded, and search still matches descriptions. Reading and attention
 are treated as currency across the UI (`documents/design.md`).
+
+## 0036 · 2026-11-27 · No "missing" flags before an update reaches this machine
+Before anything was sent, every skill row said "Not in Codex and Pi" or "No agent has it"
+and Instructions said "Not read by …": a flag on every row, which is no flag. Agents get
+skills and Global through links atlasd makes, so until it has applied an update a missing
+link means "not sent yet", which Home's "Nothing has been sent to your machines yet" line
+already says. Now these flags, their Needs attention reasons and Home's "Claude can't use N
+of X's skills" appear only when the hub's machine has applied everything the owner saved
+(`distribute::delivered`: an update exists, a client on the machine named like the hub
+reported applying the latest one, and no saved change waits to be sent). After that a
+skill row flags only agents the owner wants to have it (`Placement::wants`) that lack it;
+an agent switched off, or a skill used only in some projects, isn't flagged in the home
+folders. The hub can't tell "not applied yet" from "applied, then changed by hand" while a
+newer update is pending; it shows nothing then, as before the first send.

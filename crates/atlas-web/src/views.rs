@@ -24,6 +24,10 @@ pub struct Snapshot {
     pub library: crate::library::Index,
     /// What sits outside Atlas on this machine (`atlas_fs::outside`).
     pub outside: atlas_fs::outside::Outside,
+    /// This machine has applied everything the owner saved (`distribute::delivered`).
+    /// Until it has, an agent lacking a skill or file is "not sent yet", not a problem,
+    /// so rows carry no such flags.
+    pub delivered: bool,
 }
 
 /// Short names, as people say them.
@@ -433,6 +437,8 @@ pub struct SkillRow {
     pub all: bool,
     /// A short warning shown on the row, such as "Not in Pi".
     pub flag: String,
+    /// Agents that should have it and don't (see `lacking`).
+    pub missing: Vec<HarnessKind>,
     pub agents: Vec<AgentState>,
     pub path: String,
     pub files: usize,
@@ -542,17 +548,46 @@ fn agent_states(have: &[HarnessKind], present: &[HarnessKind]) -> Vec<AgentState
         .collect()
 }
 
+/// The agents set up here that the owner wants to have `skill` and that don't. Empty until
+/// this machine has applied everything the owner saved ([`Snapshot::delivered`]): before
+/// that a missing link is "not sent yet", which Home's Send line already says. `home` is
+/// for the home folders, where a skill used only in some projects is meant to be absent.
+fn lacking(
+    snap: &Snapshot,
+    skill: &Skill,
+    have: &[HarnessKind],
+    present: &[HarnessKind],
+    home: bool,
+) -> Vec<HarnessKind> {
+    let placement = snap.catalog.placements.of(&skill.home, &skill.name);
+    if !snap.delivered || (home && !placement.global()) {
+        return Vec::new();
+    }
+    present
+        .iter()
+        .copied()
+        .filter(|&k| placement.wants(k) && !have.contains(&k))
+        .collect()
+}
+
+/// The row's flag for agents that lack a skill they should have.
+fn lack_flag(have: &[HarnessKind], missing: &[HarnessKind]) -> String {
+    if missing.is_empty() {
+        String::new()
+    } else if have.is_empty() {
+        "No agent has it".to_owned()
+    } else {
+        format!("Not in {}", join_names(missing))
+    }
+}
+
 fn global_row(snap: &Snapshot, skill: &Skill, present: &[HarnessKind]) -> SkillRow {
     let have: Vec<HarnessKind> = present
         .iter()
         .copied()
         .filter(|&k| harness(snap, k).is_some_and(|h| h.sees(skill.name.as_str())))
         .collect();
-    let missing: Vec<HarnessKind> = present
-        .iter()
-        .copied()
-        .filter(|k| !have.contains(k))
-        .collect();
+    let missing = lacking(snap, skill, &have, present, true);
     let (marks, all) = marks(&have, present);
     SkillRow {
         home: skill.home.key().to_owned(),
@@ -564,13 +599,8 @@ fn global_row(snap: &Snapshot, skill: &Skill, present: &[HarnessKind]) -> SkillR
         href: Some(format!("/skills/{}/{}", skill.home.key(), skill.name)),
         marks,
         all,
-        flag: if have.is_empty() {
-            "No agent has it".to_owned()
-        } else if missing.is_empty() {
-            String::new()
-        } else {
-            format!("Not in {}", join_names(&missing))
-        },
+        flag: lack_flag(&have, &missing),
+        missing,
         agents: agent_states(&have, present),
         path: skill.path.clone(),
         files: skill.files.len(),
@@ -602,7 +632,8 @@ fn claude_missing(snap: &Snapshot, view: &ProjectView) -> usize {
         .iter()
         .filter(|s| s.home == SkillHome::Project(view.project.clone()))
         .filter(|s| {
-            !project_have(view, s.name.as_str(), &present).contains(&HarnessKind::ClaudeCode)
+            let have = project_have(view, s.name.as_str(), &present);
+            lacking(snap, s, &have, &present, false).contains(&HarnessKind::ClaudeCode)
         })
         .count()
 }
@@ -618,11 +649,7 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
         .filter(|s| s.home == home)
         .map(|s| {
             let have = project_have(view, s.name.as_str(), &present);
-            let missing: Vec<HarnessKind> = present
-                .iter()
-                .copied()
-                .filter(|k| !have.contains(k))
-                .collect();
+            let missing = lacking(snap, s, &have, &present, false);
             let (marks, all) = marks(&have, &present);
             SkillRow {
                 home: s.home.key().to_owned(),
@@ -634,11 +661,8 @@ fn project_section(snap: &Snapshot, view: &ProjectView, present: &[HarnessKind])
                 href: Some(format!("/skills/{}/{}", s.home.key(), s.name)),
                 marks,
                 all,
-                flag: if missing.is_empty() {
-                    String::new()
-                } else {
-                    format!("Not in {}", join_names(&missing))
-                },
+                flag: lack_flag(&have, &missing),
+                missing,
                 agents: agent_states(&have, &present),
                 path: s.path.clone(),
                 files: s.files.len(),
@@ -910,12 +934,15 @@ fn global_reach(present: &[HarnessKind], facts: &InstructionFacts) -> Vec<(Harne
         .collect()
 }
 
+/// One file's row. `delivered` as [`Snapshot::delivered`]: before this machine has applied
+/// an update, an agent not reading the file yet is no problem worth a flag.
 fn reach_row(
     name: &str,
     href: String,
     reach: &[(HarnessKind, Access)],
     present: &[HarnessKind],
     lines: usize,
+    delivered: bool,
 ) -> InstructionRow {
     let readers: Vec<HarnessKind> = reach
         .iter()
@@ -932,7 +959,9 @@ fn reach_row(
         name: name.to_owned(),
         href,
         marks,
-        flag: if readers.is_empty() {
+        flag: if !delivered {
+            String::new()
+        } else if readers.is_empty() {
             "No agent reads it".to_owned()
         } else if skipped.is_empty() {
             String::new()
@@ -973,7 +1002,7 @@ fn project_instructions(
             let reach = project_reach(present, &pf, name, setting);
             let lines = project_text(snap, project, name, &pf).map_or(0, lines_of);
             let href = format!("/instructions/{project}/{name}");
-            reach_row(name, href, &reach, present, lines)
+            reach_row(name, href, &reach, present, lines, snap.delivered)
         })
         .collect();
     let actions = PROJECT_FILES
@@ -1009,7 +1038,7 @@ fn global_instructions(
         .map(|f| {
             let href = format!("/instructions/global/{}", f.file_name);
             let lines = lines_of(f.body.raw().as_str());
-            reach_row(&f.file_name, href, &reach, present, lines)
+            reach_row(&f.file_name, href, &reach, present, lines, snap.delivered)
         })
         .collect();
     let actions = scope
