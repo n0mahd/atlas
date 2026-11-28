@@ -25,6 +25,16 @@ used, so their rows are `docs`.
 | T3 Code | none: runs the harnesses above and reads their files | none | none |
 | Herdr | none: a terminal workspace that runs other harnesses | none | none of its own; `herdr integration install` adds status hooks to other harnesses · verified |
 
+## Subagents
+
+| Harness | Subagent definitions |
+|---|---|
+| Claude Code | `.claude/agents`, one `<name>.md` (YAML frontmatter + prompt) per subagent · docs (code.claude.com/docs/en/sub-agents) |
+| Every other harness | not handled yet: Atlas writes no subagents for them until each one's format is checked |
+
+atlasd links `<knowledge>/agents/<name>.md` into `.claude/agents` with the same rules as
+skill links (decision 0028).
+
 ## Hook formats
 
 | Harness | Shape | Atlas's entries | Events (Atlas → harness) |

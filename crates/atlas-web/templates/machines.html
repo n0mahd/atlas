@@ -3,15 +3,15 @@
 <div class="sections">
   {% if let Some(r) = ssh_result %}
   <p class="marginalia{% if !r.ok %} warn-note{% endif %}" role="status">{{ r.message }}</p>
-  {% if !r.output.is_empty() %}<pre class="ink-block">{{ r.output }}</pre>{% endif %}
+  {% if !r.output.is_empty() %}<pre class="ink-block wrap">{{ r.output }}</pre>{% endif %}
   {% endif %}
   {% if let Some(cmd) = pair_command %}
   <section class="section">
     <div class="section-head"><span class="num">§</span><h2>Pair a machine</h2></div>
     <p>On the machine, in a terminal, as the account whose agents Atlas should manage:</p>
-    <pre class="ink-block">{{ cmd }}</pre>
+    <pre class="ink-block wrap">{{ cmd }}</pre>
     <p>Or from another computer:</p>
-    <pre class="ink-block">ssh you@machine '{{ cmd }}'</pre>
+    <pre class="ink-block wrap">ssh you@machine '{{ cmd }}'</pre>
     <p class="editor-note">It installs atlasd and pairs it. The code works once, for 15 minutes.</p>
   </section>
   {% else if page.signed_in %}
@@ -25,7 +25,7 @@
   <form method="post" action="/machines/pair/ssh" class="setting-row" data-busy="Installing…">
     <input type="hidden" name="csrf" value="{{ page.csrf }}">
     <span class="row-main"><span class="row-name">Or install it from here over SSH</span><span class="row-desc">Needs Tailscale SSH on the machine, or the hub's SSH key.</span></span>
-    <label class="field grow"><span class="sr">The machine's SSH address</span><input class="search" name="target" placeholder="you@laptop" required maxlength="253" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label class="field grow"><span class="sr">The machine's SSH address</span><input class="search" name="target" placeholder="you@laptop"{% if let Some(r) = ssh_result %}{% if !r.ok %} value="{{ r.target }}"{% endif %}{% endif %} required maxlength="253" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <button class="button-plain" type="submit">Install</button>
   </form>
   {% endif %}
