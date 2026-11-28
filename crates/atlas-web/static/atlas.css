@@ -361,7 +361,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .update-choice { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; border: 0; }
 .update-choice label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
 .diff { max-height: 60vh; overflow: auto; }
-.diff span { display: block; }
 .diff .add { color: #9FD3B8; }
 .diff .del { color: #E6A0A8; }
 .diff .hunk { color: #B08A3E; }
+.update-state { white-space: normal; }

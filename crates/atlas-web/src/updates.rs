@@ -878,11 +878,11 @@ fn lock_note(l: &Locked) -> String {
         ),
         LockPlace::Repo { rel, .. } => {
             format!(
-                "The skills CLI's lock ({rel}) is updated in the same change, so `npx skills update` sees it as current."
+                "The skills CLI's lock ({rel}) is updated in the same change, so npx skills update sees it as current."
             )
         }
         LockPlace::Outside { shown } => format!(
-            "The skills CLI's lock ({shown}) isn't in a repo Atlas commits, so Atlas leaves it alone; `npx skills update` may still offer this update."
+            "The skills CLI's lock ({shown}) isn't in a repo Atlas commits, so Atlas leaves it alone; npx skills update may still offer this update."
         ),
     }
 }

@@ -426,7 +426,7 @@ async fn unedited_merged_and_clashing_skills_end_current() {
     // Reading the updates needs no request; the check lists the repo once.
     let page = hub.check().await;
     assert!(
-        row(&page, "alpha").contains("Update available<"),
+        row(&page, "alpha").contains(">Update available · <span"),
         "{}",
         row(&page, "alpha")
     );
@@ -543,12 +543,12 @@ async fn unedited_merged_and_clashing_skills_end_current() {
     // All current afterwards, from the same listing.
     let (_, page) = hub.get("/skills/updates").await;
     assert!(
-        row(&page, "alpha").contains(">Current<"),
+        row(&page, "alpha").contains(">Current · <span"),
         "{}",
         row(&page, "alpha")
     );
     assert!(row(&page, "beta").contains("Current, with your edits"));
-    assert!(row(&page, "gamma").contains(">Current<"));
+    assert!(row(&page, "gamma").contains(">Current · <span"));
     assert!(!page.contains("Preview"));
     let trees = served
         .hits
@@ -615,11 +615,11 @@ async fn project_locks_are_written_and_outside_locks_left_alone() {
 
     let page = hub.check().await;
     assert!(
-        row(&page, "stock").contains("Update available<"),
+        row(&page, "stock").contains(">Update available · <span"),
         "{}",
         row(&page, "stock")
     );
-    assert!(row(&page, "pdf").contains("Update available<"));
+    assert!(row(&page, "pdf").contains(">Update available · <span"));
 
     let (_, preview) = hub.get("/skills/shop/stock/update").await;
     assert!(
@@ -666,12 +666,12 @@ async fn project_locks_are_written_and_outside_locks_left_alone() {
 
     let (_, page) = hub.get("/skills/updates").await;
     assert!(
-        row(&page, "stock").contains(">Current<"),
+        row(&page, "stock").contains(">Current · <span"),
         "{}",
         row(&page, "stock")
     );
     assert!(
-        row(&page, "pdf").contains(">Current<"),
+        row(&page, "pdf").contains(">Current · <span"),
         "{}",
         row(&page, "pdf")
     );
@@ -712,7 +712,7 @@ async fn rate_limits_say_when_to_try_again() {
     let when = format!("{:02}:{:02}", (reset / 3600) % 24, (reset / 60) % 60);
     let message = format!("Try again after {when} UTC.");
     assert!(page.contains(&message), "{page}");
-    assert!(row(&page, "pdf").contains("row-flag"));
+    assert!(row(&page, "pdf").contains("update-state warn"));
     hub.check().await;
     assert_eq!(
         served.hits.lock().unwrap().values().sum::<usize>(),

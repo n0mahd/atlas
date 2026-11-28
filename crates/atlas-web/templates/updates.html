@@ -11,8 +11,7 @@
     <ul class="rows">
       {% for r in rows %}
       <li><div class="row static">
-        <span class="row-main"><span class="row-name">{{ r.name }}</span><span class="row-desc mono">{{ r.source }}</span></span>
-        {% if r.problem %}<span class="row-flag">{{ r.state }}</span>{% else %}<span class="row-meta">{{ r.state }}</span>{% endif %}
+        <span class="row-main"><span class="row-name">{{ r.name }}</span><span class="row-desc update-state{% if r.problem %} warn{% endif %}">{{ r.state }} · <span class="mono">{{ r.source }}</span></span></span>
         {% if let Some(href) = r.href %}<a class="link-cap" href="{{ href }}" aria-label="Preview the update to {{ r.name }}">Preview</a>{% endif %}
       </div></li>
       {% endfor %}
