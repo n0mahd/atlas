@@ -33,7 +33,12 @@ pub enum SignerError {
     UnknownKey,
     #[error("the last passkey can't be removed, or nobody could sign in")]
     LastKey,
+    #[error("This passkey can't sign updates. Add a passkey that can sign (ES256 or Ed25519).")]
+    CantSign,
 }
+
+/// COSE ES256, the one algorithm enrolment asks authenticators for.
+const ES256: i64 = -7;
 
 /// What the UI shows about a stored passkey. Never the key material.
 #[derive(Clone, Debug)]
@@ -55,7 +60,14 @@ struct StoredKey {
     last_used: Option<u64>,
     #[serde(default)]
     added_by: Option<String>,
+    /// Whether the owner has been told at a sign-in that this key was added.
+    #[serde(default = "yes")]
+    announced: bool,
     passkey: Passkey,
+}
+
+const fn yes() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -89,6 +101,37 @@ pub(crate) fn now() -> u64 {
 /// A key's credential id as unpadded base64url, the form browsers use.
 fn key_id(p: &Passkey) -> String {
     b64url(p.cred_id().as_ref())
+}
+
+fn info(k: &StoredKey) -> KeyInfo {
+    KeyInfo {
+        id: key_id(&k.passkey),
+        name: k.name.clone(),
+        added: k.added,
+        last_used: k.last_used,
+        added_by: k.added_by.clone(),
+    }
+}
+
+/// The key's algorithm and raw public key, if updates can be signed with it: ES256 on
+/// P-256 or Ed25519, the kinds `atlas-verify` checks.
+fn signing_key(p: &Passkey) -> Option<(&'static str, Vec<u8>)> {
+    use webauthn_rs::prelude::{COSEKeyType, ECDSACurve, EDDSACurve};
+    match &p.get_public_key().key {
+        COSEKeyType::EC_EC2(ec)
+            if ec.curve == ECDSACurve::SECP256R1 && ec.x.len() == 32 && ec.y.len() == 32 =>
+        {
+            let mut raw = Vec::with_capacity(65);
+            raw.push(0x04);
+            raw.extend_from_slice(&ec.x);
+            raw.extend_from_slice(&ec.y);
+            Some(("es256", raw))
+        }
+        COSEKeyType::EC_OKP(okp) if okp.curve == EDDSACurve::ED25519 && okp.x.len() == 32 => {
+            Some(("eddsa", okp.x.clone()))
+        }
+        _ => None,
+    }
 }
 
 /// Unpadded base64url, the form WebAuthn uses on the wire.
@@ -176,17 +219,7 @@ impl Signer {
 
     #[must_use]
     pub fn keys(&self) -> Vec<KeyInfo> {
-        self.lock()
-            .keys
-            .iter()
-            .map(|k| KeyInfo {
-                id: key_id(&k.passkey),
-                name: k.name.clone(),
-                added: k.added,
-                last_used: k.last_used,
-                added_by: k.added_by.clone(),
-            })
-            .collect()
+        self.lock().keys.iter().map(info).collect()
     }
 
     /// Starts enrolling a new passkey. Existing keys are excluded so one authenticator
@@ -203,12 +236,19 @@ impl Signer {
             .iter()
             .map(|k| k.passkey.cred_id().clone())
             .collect();
-        Ok(self.webauthn.start_passkey_registration(
+        let (mut options, state) = self.webauthn.start_passkey_registration(
             file.user_id,
             "owner",
             "Atlas owner",
             (!exclude.is_empty()).then_some(exclude),
-        )?)
+        )?;
+        // Updates are signed with ES256 or Ed25519 (decision 0019), and browsers offer
+        // ES256 everywhere, so that is the one kind asked for.
+        options
+            .public_key
+            .pub_key_cred_params
+            .retain(|p| p.alg == ES256);
+        Ok((options, state))
     }
 
     /// Finishes enrolment and stores the passkey under `name`.
@@ -223,6 +263,9 @@ impl Signer {
         added_by: &str,
     ) -> Result<KeyInfo, SignerError> {
         let passkey = self.webauthn.finish_passkey_registration(answer, state)?;
+        if signing_key(&passkey).is_none() {
+            return Err(SignerError::CantSign);
+        }
         let mut file = self.lock();
         let name: String = name
             .trim()
@@ -242,11 +285,14 @@ impl Signer {
             last_used: None,
             added_by: Some(added_by.to_owned()),
         };
+        // The first key is the owner's own; any later one is announced at a sign-in.
+        let announced = file.keys.is_empty();
         file.keys.push(StoredKey {
             name,
             added: info.added,
             last_used: None,
             added_by: info.added_by.clone(),
+            announced,
             passkey,
         });
         self.save(&file)?;
@@ -286,45 +332,21 @@ impl Signer {
             .ok_or(SignerError::UnknownKey)?;
         key.passkey.update_credential(&result);
         key.last_used = Some(now());
-        let info = KeyInfo {
-            id: key_id(&key.passkey),
-            name: key.name.clone(),
-            added: key.added,
-            last_used: key.last_used,
-            added_by: key.added_by.clone(),
-        };
+        let used = info(key);
         self.save(&file)?;
-        Ok(info)
+        Ok(used)
     }
 
     /// The owner's passkeys as public keys for release signatures, in the form clients
-    /// keep (decision 0007). Keys of a kind clients can't check (RSA) are left out.
+    /// keep (decision 0007). Enrolment admits only keys that can sign, so this is every
+    /// key; one of another kind from an older store is left out.
     #[must_use]
     pub fn owner_keys(&self) -> Vec<atlas_core::release::OwnerKey> {
-        use webauthn_rs::prelude::{COSEKeyType, ECDSACurve, EDDSACurve};
         self.lock()
             .keys
             .iter()
             .filter_map(|k| {
-                let (alg, raw) = match &k.passkey.get_public_key().key {
-                    COSEKeyType::EC_EC2(ec)
-                        if ec.curve == ECDSACurve::SECP256R1
-                            && ec.x.len() == 32
-                            && ec.y.len() == 32 =>
-                    {
-                        let mut raw = Vec::with_capacity(65);
-                        raw.push(0x04);
-                        raw.extend_from_slice(&ec.x);
-                        raw.extend_from_slice(&ec.y);
-                        ("es256", raw)
-                    }
-                    COSEKeyType::EC_OKP(okp)
-                        if okp.curve == EDDSACurve::ED25519 && okp.x.len() == 32 =>
-                    {
-                        ("eddsa", okp.x.clone())
-                    }
-                    _ => return None,
-                };
+                let (alg, raw) = signing_key(&k.passkey)?;
                 Some(atlas_core::release::OwnerKey {
                     credential_id: key_id(&k.passkey),
                     alg: alg.to_owned(),
@@ -333,6 +355,27 @@ impl Signer {
                 })
             })
             .collect()
+    }
+
+    /// Keys added since the owner last signed in with another key, now marked as told.
+    /// A key is not announced to its own sign-in, so the owner hears of it from a key
+    /// they already had.
+    ///
+    /// # Errors
+    /// If the store can't be written.
+    pub fn take_new_keys(&self, signed_in_with: &str) -> Result<Vec<KeyInfo>, SignerError> {
+        let mut file = self.lock();
+        let mut new = Vec::new();
+        for k in &mut file.keys {
+            if !k.announced && key_id(&k.passkey) != signed_in_with {
+                k.announced = true;
+                new.push(info(k));
+            }
+        }
+        if !new.is_empty() {
+            self.save(&file)?;
+        }
+        Ok(new)
     }
 
     /// Removes a passkey. The last one can't be removed.

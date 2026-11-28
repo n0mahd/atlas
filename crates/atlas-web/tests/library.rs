@@ -157,7 +157,7 @@ fn hub_with(applied: bool) -> Hub {
         std::time::Duration::from_mins(30),
     )
     .unwrap();
-    let cookie = writer.auth.sign_in();
+    let cookie = writer.auth.sign_in("test-key", None);
     let mut h = HeaderMap::new();
     h.insert(
         header::COOKIE,
@@ -539,7 +539,7 @@ async fn a_lock_outside_git_is_left_alone_and_the_confirmation_says_so() {
         std::time::Duration::from_mins(30),
     )
     .unwrap();
-    let cookie = writer.auth.sign_in();
+    let cookie = writer.auth.sign_in("test-key", None);
     let mut h = HeaderMap::new();
     h.insert(
         header::COOKIE,

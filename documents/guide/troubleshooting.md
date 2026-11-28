@@ -28,9 +28,15 @@ atlasd isn't installed on this machine yet, or the shell can't see it.
 - atlasd lives in `~/.local/bin`. If that folder isn't on your `PATH`, run it as
   `~/.local/bin/atlasd`, or add the folder to `PATH` in your shell's startup file.
 
-### "That pairing code has expired or was already used"
+### "That pairing code is wrong, has expired or was already used"
 
-Codes work once, for 15 minutes. Press **Pair** on the hub again and use the new command.
+Codes work once, for 15 minutes. Capitals, dashes and spaces don't matter, and `O`/`0` and
+`I`/`L`/`1` count as the same. Press **Pair** on the hub again and use the new command.
+
+### "Too many wrong codes. Wait a minute and try again."
+
+The hub takes at most five wrong codes a minute, from anyone. Wait a minute and use the
+right code. After twenty wrong codes it cancels every code, so press **Pair** for a new one.
 
 ### "This hub's address is …; pair using that"
 
@@ -71,6 +77,12 @@ saving, the edit is saved; press **Send** on the page to send it.
 Some browsers, Safari in particular, only show a passkey prompt straight after a click.
 After Save, the prompt may not appear. Press the **Send** button on the saved page; that
 click opens it.
+
+### "This passkey can't sign updates. Add a passkey that can sign (ES256 or Ed25519)."
+
+Some authenticators (older Windows Hello set-ups, for example) only make RSA keys, which
+can't sign updates for your machines. Use a phone, a security key or a password manager
+that makes ES256 passkeys.
 
 ### "This browser can't use passkeys"
 

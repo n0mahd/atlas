@@ -127,7 +127,7 @@ async fn hub_with(agents: &[&str], extra: usize) -> Hub {
         ],
     };
     let writer = Writer::open(ORIGIN, &home.join("state"), Duration::from_mins(30)).unwrap();
-    let cookie = writer.auth.sign_in();
+    let cookie = writer.auth.sign_in("test-key", None);
     let app = router(
         AppState::new(sources, "test-hub", Vec::new(), Some(writer)),
         Access::new(vec![LOGIN.to_owned()]),

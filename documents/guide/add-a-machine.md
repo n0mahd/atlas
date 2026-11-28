@@ -19,10 +19,10 @@ On the hub's page, sign in, open **Machines** and press **Pair**. Atlas shows a 
 like this:
 
 ```sh
-curl -fsSL https://hub.example.ts.net:7443/install | sh -s -- 3f9c2a…
+curl -fsSL https://hub.example.ts.net:7443/install | sh -s -- K7QF-9XMR2D
 ```
 
-The code at the end works once, for 15 minutes. Press **Pair** again for a new one.
+The code at the end works once, for 15 minutes; capitals and dashes don't matter. Press **Pair** again for a new one.
 
 Then pick one of the three ways below.
 
@@ -36,7 +36,7 @@ root), paste the command and press Enter.
 Run the same command through `ssh`, as that account:
 
 ```sh
-ssh you@laptop 'curl -fsSL https://hub.example.ts.net:7443/install | sh -s -- 3f9c2a…'
+ssh you@laptop 'curl -fsSL https://hub.example.ts.net:7443/install | sh -s -- K7QF-9XMR2D'
 ```
 
 Keep the single quotes, so the whole command runs on the other machine.

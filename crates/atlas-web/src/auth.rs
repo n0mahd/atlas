@@ -17,6 +17,8 @@ use axum::http::{HeaderMap, HeaderValue, header};
 pub const COOKIE: &str = "__Host-atlas";
 const SESSION_TTL: Duration = Duration::from_hours(12);
 const FLOW_TTL: Duration = Duration::from_mins(5);
+/// How long a fresh passkey tap stands for the one action it was made for.
+const GRANT_TTL: Duration = Duration::from_mins(2);
 
 /// A random token: two v4 UUIDs, 244 random bits.
 #[must_use]
@@ -34,6 +36,12 @@ pub struct Session {
     pub csrf: String,
     /// Unix seconds. Wall-clock, not `Instant`, so a session outlives a hub restart.
     expires: u64,
+    /// The passkey (credential id) that opened this session; removing it ends it.
+    #[serde(default)]
+    pub credential: String,
+    /// Shown once on the next page, such as "A passkey was added: …".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    notice: Option<String>,
 }
 
 fn now_secs() -> u64 {
@@ -44,7 +52,7 @@ fn now_secs() -> u64 {
 
 /// Sessions are kept under the SHA-256 of their cookie token, so the file on disk can't
 /// be replayed as a cookie.
-fn session_key(id: &str) -> String {
+fn stored_key(id: &str) -> String {
     Sha256::digest(id.as_bytes())
         .iter()
         .fold(String::with_capacity(64), |mut out, b| {
@@ -65,13 +73,37 @@ pub enum Flow {
         name: String,
         /// Who is enrolling: the Tailscale login, "setup link" or "signed in".
         added_by: String,
-        /// The setup link this enrolment uses, redeemed when it finishes.
-        token: Option<String>,
+        /// What allowed the enrolment to start; finishing checks the same thing again.
+        authority: Authority,
     },
     SignIn {
         state: Box<PasskeyAuthentication>,
         next: String,
     },
+    /// A fresh tap from an enrolled passkey for one sensitive action.
+    Confirm {
+        state: Box<PasskeyAuthentication>,
+        action: String,
+        /// The session (its key) that asked; only it can finish.
+        session: String,
+    },
+}
+
+/// What allowed an enrolment to start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Authority {
+    /// No passkey yet, inside the first-run window.
+    FirstRun,
+    /// A setup link from `atlas-hub setup`, by its token.
+    SetupLink(String),
+    /// A signed-in session, by its key, with a fresh tap from an enrolled passkey.
+    Session(String),
+}
+
+struct Grant {
+    session: String,
+    action: String,
+    expires: Instant,
 }
 
 struct PendingFlow {
@@ -85,6 +117,7 @@ struct PendingFlow {
 pub struct Auth {
     sessions: Mutex<HashMap<String, Session>>,
     flows: Mutex<HashMap<String, PendingFlow>>,
+    grants: Mutex<HashMap<String, Grant>>,
     path: Option<PathBuf>,
 }
 
@@ -107,6 +140,7 @@ impl Auth {
         Self {
             sessions: Mutex::new(HashMap::new()),
             flows: Mutex::new(HashMap::new()),
+            grants: Mutex::new(HashMap::new()),
             path: None,
         }
     }
@@ -120,10 +154,12 @@ impl Auth {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        sessions.retain(|_, s| s.expires > now);
+        // Every session names the passkey that opened it, so removing a key can end them.
+        sessions.retain(|_, s| s.expires > now && !s.credential.is_empty());
         Self {
             sessions: Mutex::new(sessions),
             flows: Mutex::new(HashMap::new()),
+            grants: Mutex::new(HashMap::new()),
             path: Some(path),
         }
     }
@@ -176,17 +212,20 @@ impl Auth {
         (pending.expires > Instant::now()).then_some(pending.flow)
     }
 
-    /// Starts a session and returns its cookie token.
-    pub fn sign_in(&self) -> String {
+    /// Starts a session opened by passkey `credential` and returns its cookie token.
+    /// `notice` is shown once on the first page it opens.
+    pub fn sign_in(&self, credential: &str, notice: Option<String>) -> String {
         let id = token();
         if let Ok(mut sessions) = self.sessions.lock() {
             let now = now_secs();
             sessions.retain(|_, s| s.expires > now);
             sessions.insert(
-                session_key(&id),
+                stored_key(&id),
                 Session {
                     csrf: token(),
                     expires: now + SESSION_TTL.as_secs(),
+                    credential: credential.to_owned(),
+                    notice,
                 },
             );
             self.save(&sessions);
@@ -196,10 +235,36 @@ impl Auth {
 
     pub fn sign_out(&self, headers: &HeaderMap) {
         if let (Some(id), Ok(mut sessions)) = (cookie(headers), self.sessions.lock())
-            && sessions.remove(&session_key(&id)).is_some()
+            && sessions.remove(&stored_key(&id)).is_some()
         {
             self.save(&sessions);
         }
+    }
+
+    /// Ends every session opened by passkey `credential`. Returns how many ended.
+    pub fn end_sessions_of(&self, credential: &str) -> usize {
+        self.end_where(|s| s.credential == credential)
+    }
+
+    /// Ends every session, this one included.
+    pub fn end_all(&self) -> usize {
+        self.end_where(|_| true)
+    }
+
+    fn end_where(&self, ends: impl Fn(&Session) -> bool) -> usize {
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return 0;
+        };
+        let before = sessions.len();
+        sessions.retain(|_, s| !ends(s));
+        let ended = before - sessions.len();
+        if ended > 0 {
+            self.save(&sessions);
+        }
+        if let Ok(mut grants) = self.grants.lock() {
+            grants.retain(|_, g| sessions.contains_key(&g.session));
+        }
+        ended
     }
 
     /// The session behind this request's cookie, if it's live.
@@ -208,9 +273,53 @@ impl Auth {
         let id = cookie(headers)?;
         let sessions = self.sessions.lock().ok()?;
         sessions
-            .get(&session_key(&id))
+            .get(&stored_key(&id))
             .filter(|s| s.expires > now_secs())
             .cloned()
+    }
+
+    /// The key of the live session behind this request, which flows and grants are bound to.
+    #[must_use]
+    pub fn session_key(&self, headers: &HeaderMap) -> Option<String> {
+        self.session(headers)?;
+        cookie(headers).map(|id| stored_key(&id))
+    }
+
+    /// The session's one-time notice, which is then gone.
+    pub fn take_notice(&self, headers: &HeaderMap) -> Option<String> {
+        let id = cookie(headers)?;
+        let mut sessions = self.sessions.lock().ok()?;
+        let notice = sessions.get_mut(&stored_key(&id))?.notice.take()?;
+        self.save(&sessions);
+        Some(notice)
+    }
+
+    /// Records a fresh passkey tap for `action` by `session`, and returns its id.
+    pub fn grant(&self, session: &str, action: &str) -> String {
+        let id = token();
+        if let Ok(mut grants) = self.grants.lock() {
+            let now = Instant::now();
+            grants.retain(|_, g| g.expires > now);
+            grants.insert(
+                id.clone(),
+                Grant {
+                    session: session.to_owned(),
+                    action: action.to_owned(),
+                    expires: now + GRANT_TTL,
+                },
+            );
+        }
+        id
+    }
+
+    /// Uses up a grant. True only once, within its time, for the same session and action.
+    pub fn use_grant(&self, id: &str, session: &str, action: &str) -> bool {
+        let Ok(mut grants) = self.grants.lock() else {
+            return false;
+        };
+        grants.remove(id).is_some_and(|g| {
+            g.expires > Instant::now() && g.session == session && g.action == action
+        })
     }
 }
 
@@ -265,7 +374,10 @@ pub fn same_secret(a: &str, b: &str) -> bool {
             == 0
 }
 
-/// A safe place to go after signing in: a local path only.
+/// A safe place to go after signing in: a path on this hub, else `/`.
+///
+/// Only plain URL characters are allowed, and the path must still be local once any
+/// percent-encoding is decoded, so a browser can't read it as another site's address.
 #[must_use]
 /// The sign-in page's address that comes back to `next` (kept on this site) afterwards,
 /// with `next` encoded so its own query string survives the trip.
@@ -284,8 +396,44 @@ pub fn signin_href(next: &str) -> String {
 }
 
 pub fn safe_next(next: &str) -> String {
-    let ok = next.starts_with('/') && !next.starts_with("//") && !next.contains(['\\', '\r', '\n']);
-    if ok { next.to_owned() } else { "/".to_owned() }
+    if is_local_path(next) {
+        next.to_owned()
+    } else {
+        "/".to_owned()
+    }
+}
+
+fn is_local_path(next: &str) -> bool {
+    const ALLOWED: &[u8] = b"-._~/?=&%+#,:@!$*()";
+    let bytes = next.as_bytes();
+    if bytes.first() != Some(&b'/')
+        || !bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || ALLOWED.contains(b))
+    {
+        return false;
+    }
+    // Decode percent-escapes once; what they stand for must be just as plain.
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes
+                .get(i + 1..i + 3)
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            let Some(b) = hex else { return false };
+            if b.is_ascii_control() || b == b'\\' || !b.is_ascii() {
+                return false;
+            }
+            decoded.push(b);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    !decoded.starts_with(b"//")
 }
 
 #[cfg(test)]
@@ -295,7 +443,7 @@ mod tests {
     #[test]
     fn sessions_round_trip_through_the_cookie() {
         let auth = Auth::new();
-        let id = auth.sign_in();
+        let id = auth.sign_in("key", None);
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
@@ -311,7 +459,7 @@ mod tests {
     fn sessions_survive_a_restart_and_are_stored_hashed() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
-        let id = Auth::open(dir.path()).sign_in();
+        let id = Auth::open(dir.path()).sign_in("key", None);
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
@@ -380,7 +528,7 @@ mod tests {
             state: Box::new(state),
             name: String::new(),
             added_by: String::new(),
-            token: None,
+            authority: Authority::FirstRun,
         });
         assert!(auth.take_flow(&id).is_some());
         assert!(auth.take_flow(&id).is_none());

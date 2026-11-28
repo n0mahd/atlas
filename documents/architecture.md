@@ -90,7 +90,10 @@ In `atlas-core` today:
 
 Elsewhere or planned:
 - **Access** (logins, passkeys, sessions, machine and CLI tokens) lives in `atlas-web`
-  and `atlas-signer`. There is no audit log yet.
+  and `atlas-signer`. Each session names the passkey that opened it; adding or removing
+  a passkey and creating a CLI token also need a fresh tap, which yields a single-use
+  grant for that action and session (decision 0038). One-time codes are checked and used
+  under one lock (decision 0039). There is no audit log yet.
 - **Gateway** (MCP servers, tool allowlists, scoped tokens) is planned for phase 4.
 
 ## How a change travels
@@ -124,6 +127,9 @@ Memory skips steps 3–5 by default: agents write it straight to git (decision 0
   The passkey protects against everyone who cannot get the owner to tap; it does not
   make a compromised hub harmless. Signing on a device that shows what is being signed
   (Local Atlas) is the planned answer.
+- Who can act is guarded by a tap too: once a passkey exists, adding another, removing
+  one and creating a CLI token each need a fresh tap from an enrolled passkey, and an
+  enrolment finishes only under the authority it started with (decision 0038).
 - GitHub is untrusted storage. The hub also reads public GitHub repos (no sign-in) when the
   owner checks skills installed with `npx skills` for updates; every file is checked
   against its git SHA and nothing fetched is run (decision 0030).
@@ -155,8 +161,9 @@ Planned: `VerifiedRelease` (only constructible by checking a signature; today
   passkey session as well (decision 0016).
 - Strict CSP with no inline script, CSRF tokens, `SameSite=Strict` cookies.
 - Markdown is sanitised; askama auto-escapes everything else.
-- Pairing: the Machines page (or `atlas-hub pair-code`) issues a one-time code and shows
-  `curl <hub>/install | sh -s -- <code>`. With a passkey session the hub can also run it
+- Pairing: the Machines page (or `atlas-hub pair-code`) issues a one-time code such as
+  `K7QF-9XMR2D` and shows `curl <hub>/install | sh -s -- <code>`; the hub takes at most
+  five wrong codes a minute (decision 0039). With a passkey session the hub can also run it
   on a machine itself over SSH (`atlas_web::remote`, used by the page and by
   `atlas-hub add-machine`; decision 0025).
 

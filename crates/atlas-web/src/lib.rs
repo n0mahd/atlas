@@ -20,6 +20,8 @@ pub mod release;
 pub mod remote;
 mod skill_ops;
 mod skills_place;
+#[cfg(test)]
+mod test_passkey;
 mod tidy;
 pub mod tokens;
 mod updates;
@@ -288,6 +290,12 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/auth/signin/start", post(edit::signin_start))
         .route("/auth/signin/finish", post(edit::signin_finish))
         .route("/auth/signout", post(edit::signout))
+        .route("/auth/confirm/start", post(edit::confirm_start))
+        .route("/auth/confirm/finish", post(edit::confirm_finish))
+        .route(
+            "/settings/signout-everywhere",
+            post(edit::signout_everywhere),
+        )
         .route(
             "/settings",
             get(edit::settings_page).post(edit::settings_save),

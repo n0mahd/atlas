@@ -101,7 +101,7 @@ pub struct Choice {
 }
 
 /// What every page's frame shows.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Page {
     pub title: String,
     pub section: &'static str,
@@ -124,6 +124,8 @@ pub struct Page {
     pub edit_href: Option<String>,
     /// A one-line notice, such as "Saved and committed as …".
     pub flash: String,
+    /// Shown once per session, such as "A passkey was added: …".
+    pub notice: String,
     /// A button the notice offers, such as Send for a save that didn't reach the machines.
     pub flash_action: Option<&'static str>,
 }
@@ -248,12 +250,7 @@ impl Page {
             scopes: scope_choices,
             show_scope: scoped,
             machines,
-            can_sign_in: false,
-            signed_in: false,
-            csrf: String::new(),
-            edit_href: None,
-            flash: String::new(),
-            flash_action: None,
+            ..Self::default()
         }
     }
 }

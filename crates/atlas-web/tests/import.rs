@@ -146,7 +146,7 @@ fn hub() -> Hub {
         }],
     };
     let writer = Writer::open(ORIGIN, &home.join("state"), Duration::from_secs(60)).unwrap();
-    let cookie = writer.auth.sign_in();
+    let cookie = writer.auth.sign_in("test-key", None);
     let mut h = HeaderMap::new();
     h.insert(
         header::COOKIE,
