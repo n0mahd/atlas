@@ -1,0 +1,12 @@
+Folio IV · Hooks1 in Atlas · 0 outside
+Hooks
+IIn Atlas1
+no-rmBlock rm -rf
+before a tool runs
+ScopeGlobal
+ToolsBash
+Runscheck.sh · 10s
+Agentsevery agent with this event
+File~/Knowledge/hooks/no-rm/hook.toml
+IIOutside Atlas0
+No agent on this machine has hooks of its own.

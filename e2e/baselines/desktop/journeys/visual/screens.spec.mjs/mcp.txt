@@ -1,0 +1,3 @@
+Folio VI · MCP
+MCP servers
+MCP servers arrive in phase IV, with the gateway and the keystore. Until then Atlas reads no MCP config, so no key can reach these pages.

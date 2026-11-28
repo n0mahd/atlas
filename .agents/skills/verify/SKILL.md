@@ -87,9 +87,12 @@ A run isn't verified until you have **looked** at it:
 2. Check side effects, not just screens. The journeys assert commits in the world's repos,
    pushes to its bare remotes, and the files atlasd wrote under `worlds/*/machines/<name>/`.
    Open them when a result surprises you.
-3. Visual baselines (`e2e/baselines/`) fail on unintended pixel changes. When a change is
-   intended, update them with `--update-snapshots`, look at every updated image, and commit
-   them with the change.
+3. Visual baselines (`e2e/baselines/`) fail on any unintended change: the screenshots are
+   compared pixel for pixel (no tolerance; rendering is stable run to run), and each screen's
+   words are a text baseline beside them (`<screen>.txt`), because a changed sentence moves
+   only a few hundred pixels of a full page. When a change is intended, update them with
+   `--update-snapshots`, look at every updated image and read every updated text diff, and
+   commit them with the change.
 4. For a second opinion on looks, give the screenshots to a Gemini sub-agent through the
    owner's subscription (T3 `delegate_task`, provider `antigravity`, `gemini-4-neon`)
    together with `documents/design.md`. Never use OpenRouter for this.

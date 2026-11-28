@@ -26,7 +26,7 @@ export default defineConfig({
   globalSetup: "./lib/global-setup.mjs",
   outputDir: path.join(run, "results"),
   timeout: 60000,
-  expect: { timeout: 10000, toHaveScreenshot: { maxDiffPixelRatio: 0.01, animations: "disabled" } },
+  expect: { timeout: 10000, toHaveScreenshot: { maxDiffPixelRatio: 0, animations: "disabled" } },
   snapshotPathTemplate: "{testDir}/baselines/{projectName}/{testFilePath}/{arg}{ext}",
   fullyParallel: false,
   workers: Number(process.env.ATLAS_VERIFY_WORKERS ?? 4),

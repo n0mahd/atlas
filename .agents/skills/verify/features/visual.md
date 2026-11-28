@@ -43,6 +43,11 @@ at the top of the rail; `/signin` signed out; the setup link the hub prints.
   control missing from a screen is skipped, except the always-present ones).
 
 ## Evidence
+- Pixels: `toHaveScreenshot` with `maxDiffPixelRatio: 0` (playwright.config.mjs). It used to
+  allow 1%, and a changed Settings sentence ("within 10 minutes" → "within a minute", 121
+  pixels) passed unnoticed; exact comparison was stable over repeated runs with 4 workers.
+- Words: each screen's text in light (`<screen>.txt`, port and dates normalised, masked parts
+  as `[masked]`), so any wording change fails with the exact line in the diff.
 Baselines in `e2e/baselines/{desktop,phone}/journeys/visual/screens.spec.mjs/*.png`
 (76 images). A failing comparison attaches expected, actual and diff to the report.
 

@@ -16,6 +16,29 @@ test.use({ worldOptions: { purpose: "visual" } });
 const snap = (page, name, mask = []) =>
   expect(page).toHaveScreenshot(name, { fullPage: true, mask });
 
+/**
+ * The screen's words, as a text baseline beside the pixels: a changed sentence moves only a
+ * few hundred pixels of a full page, which a pixel check can let through. Masked parts and
+ * what changes per run (the port, dates) are replaced with placeholders.
+ */
+async function words(page, name, maskSelectors = []) {
+  const text = await page.evaluate((sels) => {
+    const main = document.querySelector("#main") ?? document.body;
+    const clone = main.cloneNode(true);
+    for (const sel of sels) for (const el of clone.querySelectorAll(sel)) el.textContent = "[masked]";
+    return clone.textContent;
+  }, maskSelectors);
+  const normal = text
+    .replace(/localhost:\d+/g, "localhost:PORT")
+    .replace(/\d{4}-\d{2}-\d{2}/g, "DATE")
+    .replace(/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/g, "DATE")
+    .split("\n")
+    .map((l) => l.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .join("\n");
+  expect(normal + "\n").toMatchSnapshot(`${name}.txt`);
+}
+
 for (const scheme of SCHEMES) {
   for (const screen of SCREENS) {
     test(`${screen.name} (${scheme})`, async ({ owner }) => {
@@ -24,6 +47,7 @@ for (const scheme of SCHEMES) {
       expect(res.status()).toBe(200);
       await settle(owner);
       await snap(owner, `${screen.name}-${scheme}.png`, masks(owner, screen));
+      if (scheme === "light") await words(owner, screen.name, screen.mask);
     });
   }
 
