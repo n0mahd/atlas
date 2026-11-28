@@ -688,11 +688,12 @@ async fn machines_data(
     );
     let others = s.known_machines();
     let machines = views::machines(&snap, &s.hub, &others, &clients, latest);
-    let paired = machines
+    // Paired isn't reporting: a machine counts once one of its clients has sent a report.
+    let reporting = machines
         .iter()
-        .filter(|m| m.hub || !m.clients.is_empty())
+        .filter(|m| m.hub || m.clients.iter().any(|c| c.reporting))
         .count();
-    page.totals = format!("{} machines · {paired} reporting", machines.len());
+    page.totals = format!("{} machines · {reporting} reporting", machines.len());
     Ok((page, machines))
 }
 

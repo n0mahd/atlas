@@ -930,6 +930,18 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
 
+        let page = || {
+            Request::get("/machines")
+                .header("tailscale-user-login", "owner@github")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let (_, html) = call(&app, page()).await;
+        assert!(
+            html.contains("2 machines · 1 reporting"),
+            "paired but silent isn't reporting: {html}"
+        );
+
         let report = r#"{"release":null,"at":0,"harnesses":[{"kind":"codex","present":true,"skills_from_atlas":3,"skills_outside":1,"broken":0,"instructions":"linked","hooks_managed":0}],"problems":["one thing failed"]}"#;
         assert_eq!(
             call(&app, json("/api/report", report.into(), Some(&resp.token)))
@@ -937,11 +949,8 @@ mod tests {
                 .0,
             StatusCode::NO_CONTENT
         );
-        let page = Request::get("/machines")
-            .header("tailscale-user-login", "owner@github")
-            .body(Body::empty())
-            .unwrap();
-        let (_, html) = call(&app, page).await;
+        let (_, html) = call(&app, page()).await;
+        assert!(html.contains("2 machines · 2 reporting"), "{html}");
         assert!(
             html.contains("3 skills from Atlas") && html.contains("one thing failed"),
             "{html}"

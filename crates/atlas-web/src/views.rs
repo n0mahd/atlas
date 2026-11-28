@@ -1252,6 +1252,8 @@ pub struct PairedClient {
     pub status: String,
     pub class: &'static str,
     pub problems: Vec<String>,
+    /// It has sent at least one report (paired but silent doesn't count as reporting).
+    pub reporting: bool,
 }
 
 /// The hub itself, from a live look at its own harness folders.
@@ -1423,6 +1425,7 @@ fn paired(c: &crate::clients::Client, latest: Option<u64>) -> PairedClient {
             .report
             .as_ref()
             .map_or_else(Vec::new, |r| r.problems.clone()),
+        reporting: c.report.is_some(),
     }
 }
 
