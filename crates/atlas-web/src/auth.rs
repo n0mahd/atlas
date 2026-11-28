@@ -265,11 +265,50 @@ pub fn same_secret(a: &str, b: &str) -> bool {
             == 0
 }
 
-/// A safe place to go after signing in: a local path only.
+/// A safe place to go after signing in: a path on this hub, else `/`.
+///
+/// Only plain URL characters are allowed, and the path must still be local once any
+/// percent-encoding is decoded, so a browser can't read it as another site's address.
 #[must_use]
 pub fn safe_next(next: &str) -> String {
-    let ok = next.starts_with('/') && !next.starts_with("//") && !next.contains(['\\', '\r', '\n']);
-    if ok { next.to_owned() } else { "/".to_owned() }
+    if is_local_path(next) {
+        next.to_owned()
+    } else {
+        "/".to_owned()
+    }
+}
+
+fn is_local_path(next: &str) -> bool {
+    const ALLOWED: &[u8] = b"-._~/?=&%+#,:@!$*()";
+    let bytes = next.as_bytes();
+    if bytes.first() != Some(&b'/')
+        || !bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || ALLOWED.contains(b))
+    {
+        return false;
+    }
+    // Decode percent-escapes once; what they stand for must be just as plain.
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes
+                .get(i + 1..i + 3)
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            let Some(b) = hex else { return false };
+            if b.is_ascii_control() || b == b'\\' || !b.is_ascii() {
+                return false;
+            }
+            decoded.push(b);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    !decoded.starts_with(b"//")
 }
 
 #[cfg(test)]
@@ -317,19 +356,6 @@ mod tests {
         assert!(restarted.session(&headers).is_some());
         restarted.sign_out(&headers);
         assert!(Auth::open(dir.path()).session(&headers).is_none());
-    }
-
-    #[test]
-    fn next_stays_on_this_site() {
-        assert_eq!(safe_next("/skills?scope=x"), "/skills?scope=x");
-        for bad in [
-            "//evil.example",
-            "https://evil.example",
-            "/\\evil",
-            "javascript:x",
-        ] {
-            assert_eq!(safe_next(bad), "/");
-        }
     }
 
     #[test]

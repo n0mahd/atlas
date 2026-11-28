@@ -1340,6 +1340,44 @@ mod tests {
         page[at..at + 32].to_owned()
     }
 
+    /// After sign-in the hub goes back to `next`, which must be a page on this hub.
+    #[tokio::test]
+    async fn signing_in_returns_only_to_a_page_on_this_hub() {
+        let hub = hub();
+        let back = |next: &'static str| {
+            let hub = &hub;
+            async move {
+                let path = format!("/signin?next={}", urlencode(next));
+                let (status, location, _) = send(hub, get(hub, &path, true)).await;
+                assert_eq!(status, StatusCode::SEE_OTHER, "{next:?}");
+                location
+            }
+        };
+        for good in ["/skills?scope=x", "/settings#cli-tokens", "/memory/a%20b"] {
+            assert_eq!(back(good).await, good);
+        }
+        for bad in [
+            "//evil.example",
+            "https://evil.example",
+            "javascript:x",
+            "/\\evil.example",
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/\r/evil.example",
+            "/%09/evil.example",
+            "/%0a/evil.example",
+            "/%0d/evil.example",
+            "/%5Cevil.example",
+            "/%5c/evil.example",
+            "/%2F/evil.example",
+            "/%2fevil.example",
+            "/%zz",
+            "/caf\u{e9}",
+        ] {
+            assert_eq!(back(bad).await, "/", "{bad:?}");
+        }
+    }
+
     #[tokio::test]
     async fn editing_needs_a_session() {
         let hub = hub();
