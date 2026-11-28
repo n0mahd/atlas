@@ -8,6 +8,7 @@
 pub mod change;
 pub mod hooks;
 pub mod instructions;
+mod json;
 pub mod placement;
 pub mod readers;
 pub mod skills;

@@ -4,8 +4,9 @@
 use atlas_core::catalog::HookEvent;
 use serde_json::{Map, Value};
 
-use super::{ManagedHook, finish, handler, parse_object, shell_quote};
+use super::{ManagedHook, handler, shell_quote};
 use crate::change::{Change, FormatError};
+use crate::json::{finish, parse_object};
 
 /// The prefix of every hook name Atlas writes.
 pub const PREFIX: &str = "atlas:";

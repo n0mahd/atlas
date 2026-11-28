@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use atlas_core::kernel::Slug;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
-use super::shape;
+use crate::change::shape;
 use crate::placement::Reach;
 use crate::{Change, FormatError};
 

@@ -13,7 +13,7 @@
 use std::collections::BTreeSet;
 
 use super::jsonc::{self, Member, NewMember, Object, indent_unit};
-use super::shape;
+use crate::change::shape;
 use crate::{Change, FormatError};
 
 /// What a file Atlas creates holds before any entry.

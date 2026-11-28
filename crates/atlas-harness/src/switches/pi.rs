@@ -13,7 +13,9 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use super::{finish, parse_object, record, recorded, shape};
+use super::{record, recorded};
+use crate::change::shape;
+use crate::json::{finish, parse_object};
 use crate::{Change, FormatError};
 
 /// Atlas's own key: the names whose exclusion Atlas wrote.

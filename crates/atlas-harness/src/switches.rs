@@ -44,6 +44,7 @@ use std::path::PathBuf;
 use atlas_core::kernel::{HarnessKind, Slug};
 use serde_json::{Map, Value};
 
+use crate::change::shape;
 use crate::placement::Reach;
 use crate::{Change, FormatError};
 
@@ -153,26 +154,6 @@ pub fn render_switches(
     }
 }
 
-/// Parses a strict JSON object file. A missing or blank file is an empty object.
-fn parse_object(current: Option<&[u8]>) -> Result<Map<String, Value>, FormatError> {
-    match current {
-        Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
-            match serde_json::from_slice(bytes)? {
-                Value::Object(map) => Ok(map),
-                _ => Err(shape("the top level", "an object")),
-            }
-        }
-        _ => Ok(Map::new()),
-    }
-}
-
-fn shape(at: &str, expected: &'static str) -> FormatError {
-    FormatError::UnexpectedShape {
-        at: at.to_owned(),
-        expected,
-    }
-}
-
 /// The names Atlas recorded under `key` (its own top-level list in a JSON file).
 fn recorded(doc: &Map<String, Value>, key: &str) -> Result<BTreeSet<String>, FormatError> {
     match doc.get(key) {
@@ -194,23 +175,6 @@ fn record(doc: &mut Map<String, Value>, key: &str, names: &BTreeSet<String>) {
         let list = names.iter().cloned().map(Value::String).collect();
         doc.insert(key.to_owned(), Value::Array(list));
     }
-}
-
-/// Renders an edited JSON object the way the hook formats do: two-space JSON with a
-/// trailing newline; an object left empty means the file goes.
-fn finish(
-    original: &Map<String, Value>,
-    edited: &Map<String, Value>,
-) -> Result<Change, FormatError> {
-    if edited == original {
-        return Ok(Change::Unchanged);
-    }
-    if edited.is_empty() {
-        return Ok(Change::Remove);
-    }
-    let mut bytes = serde_json::to_vec_pretty(edited)?;
-    bytes.push(b'\n');
-    Ok(Change::Write(bytes))
 }
 
 #[cfg(test)]

@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use atlas_core::catalog::ClaudeAgentsMd;
 use serde_json::{Map, Value};
 
+use crate::change::shape;
+use crate::json::{finish, parse_object};
 use crate::skills::normalize;
 use crate::{Change, FormatError};
 
@@ -311,7 +313,7 @@ pub const fn claude_value(choice: ClaudeAgentsMd) -> &'static str {
 /// (`managed-only` included), or `None` when it isn't set or the file can't be read.
 #[must_use]
 pub fn read_claude_agents_md(current: Option<&[u8]>) -> Option<String> {
-    let map = crate::hooks::parse_object(current).ok()?;
+    let map = parse_object(current).ok()?;
     [CLAUDE_AGENTS_MD_PLUGIN, CLAUDE_AGENTS_MD_LEGACY_PLUGIN]
         .iter()
         .find_map(|id| {
@@ -346,7 +348,7 @@ pub fn claude_agents_md_setting(
     current: Option<&[u8]>,
     choice: ClaudeAgentsMd,
 ) -> Result<Change, FormatError> {
-    let original = crate::hooks::parse_object(current)?;
+    let original = parse_object(current)?;
     let mut edited = original.clone();
     let value = Value::from(claude_value(choice));
     let configs = object_at(&mut edited, "pluginConfigs", "pluginConfigs")?;
@@ -365,7 +367,7 @@ pub fn claude_agents_md_setting(
         let options = object_at(plugin, "options", &format!("{at}.options"))?;
         options.insert(CLAUDE_AGENTS_MD_OPTION.to_owned(), value.clone());
     }
-    crate::hooks::finish(&original, &edited)
+    finish(&original, &edited)
 }
 
 /// The object under `key`, created when missing.
@@ -377,10 +379,7 @@ fn object_at<'a>(
     map.entry(key.to_owned())
         .or_insert_with(|| Value::Object(Map::new()))
         .as_object_mut()
-        .ok_or_else(|| FormatError::UnexpectedShape {
-            at: at.to_owned(),
-            expected: "an object",
-        })
+        .ok_or_else(|| shape(at, "an object"))
 }
 
 // ---------------------------------------------------------------- .git/info/exclude

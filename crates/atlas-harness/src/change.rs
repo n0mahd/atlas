@@ -29,3 +29,11 @@ pub enum FormatError {
     #[error("expected {expected} at {at}")]
     UnexpectedShape { at: String, expected: &'static str },
 }
+
+/// The setting at `at` isn't `expected`.
+pub(crate) fn shape(at: &str, expected: &'static str) -> FormatError {
+    FormatError::UnexpectedShape {
+        at: at.to_owned(),
+        expected,
+    }
+}
