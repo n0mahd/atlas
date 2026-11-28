@@ -54,6 +54,10 @@ keystore. Each phase must work on its own. The hub is not tied to one machine.
   builds it was given in `<state>/dist/` (static musl builds via `cargo zigbuild`), checked
   by SHA-256 in the script. They aren't signed yet: signed release builds from CI are the
   fix. Linux only for now; macOS needs a build and a launchd job instead of systemd.
+- Installing over SSH from the Machines page (decision 0025) runs inside the request, up to
+  3 minutes, with no progress until it ends. A Tailscale SSH policy in `check` mode wants
+  a browser sign-in that BatchMode can't give, so it only times out. A background job with
+  streamed output would fix both if it matters.
 - Harness folder paths in `atlas-harness` for Claude Code, Codex, OpenCode and Pi come from
   the existing `link-agents` script, not from each harness's docs (Amp, Muse and Herdr were
   checked, decision 0021; Grok Build, 0022). Check them when phase 3 writes to them.

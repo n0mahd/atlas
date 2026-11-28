@@ -235,3 +235,30 @@ with a plain reason. Push rules: sending pushes Knowledge first when it has unpu
 commits; Atlas never pushes public skills (they reach machines after the owner pushes them
 by hand, 0016); the "Also push project repos after saving" setting applies only to project
 repos. If nothing changed since the latest update, sending asks for no tap.
+
+## 0025 · 2026-11-27 · Installing atlasd over SSH from the hub
+The owner can pair a machine without sitting at it: on the Machines page ("Or install it
+from here over SSH", an address such as `you@laptop`) or with `atlas-hub add-machine
+you@laptop`. The hub issues a fresh pairing code and runs the hub account's own `ssh`:
+`ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new --
+<target> "curl -fsSL <hub>/install | sh -s -- <code>"`, the same command the page shows
+for running by hand, with stdin closed, a 3-minute limit and the output kept (the end of
+it, with the code masked). Signing in uses whatever that account already has: Tailscale
+SSH on the target (`sudo tailscale set --ssh`) or a key the owner added. Atlas holds no
+SSH keys of its own. The address is checked strictly (`user@host` or `host`, letters,
+digits, `.`, `-`, `_`; no leading `-`) and passed as one argument after `--`, never
+through a local shell. `accept-new` trusts a machine's host key the first time: the
+connection runs over Tailscale's WireGuard, already authenticated to the tailnet, and a
+key that later changes is still refused. Trade-off: the hub's web process can now start
+SSH sessions as its user, so anyone holding a passkey session can run the installer on
+any machine that account can reach; it needs the passkey session and CSRF token like
+every other change. `atlas-hub pair-code` prints the command for copying by hand.
+
+The hub's systemd unit drops `PrivateTmp`, `ProtectSystem` and `ProtectKernelTunables`.
+In a user service they imply a user namespace in which root's files appear owned by
+`nobody`, and `ssh` then refuses the drop-ins in `/etc/ssh/ssh_config.d/` ("Bad owner or
+permissions"), which most distributions include. Hiding that folder with a mount instead
+would stop the hub starting where it doesn't exist. Little is lost: the hub runs as its
+own user, who can't write `/usr`, `/etc` or `/proc/sys`, and home must stay writable.
+The seccomp filter, `NoNewPrivileges`, `MemoryDenyWriteExecute` and the address-family
+limit stay.

@@ -28,6 +28,17 @@
     if (el.matches && el.matches("select[data-autosubmit]") && el.form) el.form.requestSubmit();
   });
 
+  // Slow forms marked data-busy disable their button while the hub works, so a second
+  // press doesn't start the same job twice.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form.hasAttribute || !form.hasAttribute("data-busy")) return;
+    var button = form.querySelector("button[type=submit]");
+    if (!button) return;
+    button.disabled = true;
+    button.textContent = form.getAttribute("data-busy");
+  });
+
   document.addEventListener("DOMContentLoaded", function () {
     var toggle = document.querySelector("[data-rail-toggle]");
     if (toggle) toggle.setAttribute("aria-expanded", root.getAttribute("data-rail") === "collapsed" ? "false" : "true");

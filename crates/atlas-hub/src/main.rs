@@ -75,8 +75,58 @@ fn state_dir(home: &Path, config: &Config) -> PathBuf {
     )
 }
 
-const USAGE: &str = "usage: atlas-hub            serve the hub
-       atlas-hub setup      print a one-time link (and QR code) to add a passkey";
+const USAGE: &str = "usage: atlas-hub                         serve the hub
+       atlas-hub setup                   print a one-time link (and QR code) to add a passkey
+       atlas-hub pair-code               print a one-time command that installs and pairs atlasd
+       atlas-hub add-machine <you@host>  install and pair atlasd on a machine over SSH";
+
+/// The hub's origin and a fresh pairing code, for `pair-code` and `add-machine`.
+fn pairing(home: &Path, config: &Config) -> (String, String) {
+    let Some(url) = config.public_url.as_deref() else {
+        fail("public_url isn't set in the config, so machines can't pair with this hub");
+    };
+    let origin = atlas_signer::Url::parse(url)
+        .unwrap_or_else(|e| fail(format!("public_url isn't a valid address: {e}")))
+        .origin()
+        .ascii_serialization();
+    let code = atlas_signer::setup::issue_in(
+        &state_dir(home, config),
+        atlas_signer::setup::PAIRING_CODES,
+        atlas_web::remote::PAIRING_TTL,
+    )
+    .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));
+    (origin, code)
+}
+
+/// `atlas-hub pair-code`: the command to run on a machine, for copying by hand.
+fn pair_code(home: &Path, config: &Config) {
+    let (origin, code) = pairing(home, config);
+    let cmd = atlas_web::remote::install_command(&origin, &code);
+    println!(
+        "On the machine, as the account Atlas should manage (works once, for 15 minutes):\n\n  {cmd}\n\nOr from another computer:\n\n  ssh you@machine '{cmd}'"
+    );
+}
+
+/// `atlas-hub add-machine <target>`: installs and pairs atlasd there over SSH.
+async fn add_machine(home: &Path, config: &Config, target: &str) {
+    let target = atlas_web::remote::Target::parse(target).unwrap_or_else(|e| fail(e));
+    let (origin, code) = pairing(home, config);
+    eprintln!("Installing atlasd on {target} over SSH…");
+    match atlas_web::remote::install_over_ssh(&origin, &code, &target).await {
+        Ok(done) => {
+            print!("{}", done.output);
+            println!(
+                "\nInstalled and paired on {target}. It shows on the Machines page once atlasd reports, within a minute."
+            );
+        }
+        Err(e) => {
+            if !e.output.is_empty() {
+                eprintln!("{}\n", e.output);
+            }
+            fail(e.message);
+        }
+    }
+}
 
 /// `atlas-hub setup`: a one-time link to add a passkey, for first setup or lost passkeys.
 /// Whoever can run this on the hub already controls it.
@@ -100,21 +150,32 @@ fn setup(home: &Path, config: &Config) {
     }
 }
 
+/// Runs a subcommand, if one was given. Returns false to serve the hub.
+async fn subcommand(home: &Path, args: &[String]) -> bool {
+    match args.first().map(String::as_str) {
+        None => return false,
+        Some("setup") => setup(home, &load_config(home)),
+        Some("pair-code") => pair_code(home, &load_config(home)),
+        Some("add-machine") => {
+            let [_, target] = args else {
+                fail(format!(
+                    "add-machine takes one SSH address, such as you@laptop\n{USAGE}"
+                ));
+            };
+            add_machine(home, &load_config(home), target).await;
+        }
+        Some("-h" | "--help" | "help") => println!("{USAGE}"),
+        Some(other) => fail(format!("unknown command {other:?}\n{USAGE}")),
+    }
+    true
+}
+
 #[tokio::main]
 async fn main() {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| fail("HOME is not set")));
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        None => {}
-        Some("setup") => {
-            setup(&home, &load_config(&home));
-            return;
-        }
-        Some("-h" | "--help" | "help") => {
-            println!("{USAGE}");
-            return;
-        }
-        Some(other) => fail(format!("unknown command {other:?}\n{USAGE}")),
+    if subcommand(&home, &args).await {
+        return;
     }
 
     tracing_subscriber::fmt()

@@ -15,12 +15,11 @@ use sha2::{Digest, Sha256};
 
 use crate::edit::{CsrfForm, Writer};
 use crate::release;
-use crate::{AppError, AppState, auth};
+use crate::remote::{self, PAIRING_TTL};
+use crate::{AppError, AppState, SshResult, auth};
 
 /// How long a built update waits for its signature.
 const PENDING_TTL: std::time::Duration = std::time::Duration::from_mins(10);
-/// How long a pairing code works.
-const PAIRING_TTL: std::time::Duration = std::time::Duration::from_mins(15);
 
 /// An update built for the owner, waiting for the passkey tap.
 #[derive(Debug, Clone)]
@@ -443,21 +442,81 @@ pub(crate) async fn pair_code(
     if !w.authorised(&headers, f.csrf()) {
         return Ok(forbidden("Sign in again to pair a machine.\n"));
     }
-    let code = atlas_signer::setup::issue_in(
+    let code = issue_pairing_code(w)?;
+    crate::machines_page(
+        &s,
+        &headers,
+        Some(remote::install_command(w.origin(), &code)),
+        None,
+    )
+    .await
+}
+
+fn issue_pairing_code(w: &Writer) -> Result<String, AppError> {
+    atlas_signer::setup::issue_in(
         &w.state_dir,
         atlas_signer::setup::PAIRING_CODES,
         PAIRING_TTL,
     )
-    .map_err(|e| AppError::Bad(e.to_string()))?;
-    crate::machines_page(
-        &s,
-        &headers,
-        Some(format!(
-            "curl -fsSL {}/install | sh -s -- {code}",
-            w.origin()
-        )),
-    )
-    .await
+    .map_err(|e| AppError::Bad(e.to_string()))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SshForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    target: String,
+}
+
+/// Installs and pairs atlasd on another machine over SSH, with a fresh pairing code.
+pub(crate) async fn pair_ssh(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<SshForm>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to pair a machine.\n"));
+    }
+    let target = match remote::Target::parse(&f.target) {
+        Ok(t) => t,
+        Err(message) => {
+            let result = SshResult {
+                ok: false,
+                message,
+                output: String::new(),
+            };
+            return crate::machines_page(&s, &headers, None, Some(result)).await;
+        }
+    };
+    let code = issue_pairing_code(w)?;
+    tracing::info!("installing atlasd on {target} over ssh");
+    let (result, command) = match remote::install_over_ssh(w.origin(), &code, &target).await {
+        Ok(_) => (
+            SshResult {
+                ok: true,
+                message: format!(
+                    "Installed and paired on {target}. It shows here once atlasd reports, within a minute."
+                ),
+                output: String::new(),
+            },
+            None,
+        ),
+        Err(e) => {
+            tracing::warn!("install on {target} over ssh failed: {}", e.message);
+            (
+                SshResult {
+                    ok: false,
+                    message: e.message,
+                    output: e.output,
+                },
+                // The code may still be unused, so offer the command to run by hand.
+                Some(remote::install_command(w.origin(), &code)),
+            )
+        }
+    };
+    crate::machines_page(&s, &headers, command, Some(result)).await
 }
 
 pub(crate) async fn unpair(
@@ -980,6 +1039,59 @@ mod tests {
         assert!(
             !home.contains("/releases") && !home.contains("Releases"),
             "nav item gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn installing_over_ssh_needs_a_session_and_a_plain_address() {
+        let hub = SendHub::new();
+        let form = |body: String, signed_in: bool| {
+            let mut r = Request::post("/machines/pair/ssh")
+                .header("tailscale-user-login", LOGIN)
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+            if signed_in {
+                r = r.header(
+                    header::COOKIE,
+                    format!("{}={}", crate::auth::COOKIE, hub.cookie),
+                );
+            }
+            r.body(Body::from(body)).unwrap()
+        };
+        let body = format!("csrf={}&target=laptop", hub.csrf);
+        let (status, _) = call(&hub.app, form(body, false)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = call(&hub.app, form("csrf=wrong&target=laptop".into(), true)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let body = format!("csrf={}&target=-oProxyCommand%3Dx", hub.csrf);
+        let (status, page) = call(&hub.app, form(body, true)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains("isn&#39;t an SSH address"), "{page}");
+        assert!(page.contains("marginalia warn-note"));
+        // Nothing ran, so no pairing command (and no code) was issued.
+        assert!(!page.contains("sh -s --"));
+
+        // The page offers the form and, once a code exists, the line for another computer.
+        let (_, page) = call(&hub.app, hub.get("/machines")).await;
+        assert!(page.contains("action=\"/machines/pair/ssh\""));
+        let pair = Request::post("/machines/pair")
+            .header("tailscale-user-login", LOGIN)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                header::COOKIE,
+                format!("{}={}", crate::auth::COOKIE, hub.cookie),
+            )
+            .body(Body::from(format!("csrf={}", hub.csrf)))
+            .unwrap();
+        let (status, page) = call(&hub.app, pair).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            page.contains(&format!(
+                "ssh you@machine 'curl -fsSL {ORIGIN}/install | sh -s -- "
+            )),
+            "{page}"
         );
     }
 }
