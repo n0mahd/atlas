@@ -152,7 +152,8 @@ impl Record {
     }
 
     /// The source on github.com, or `None` for any other kind of source or anything that
-    /// fails the checks (owner and repo `[A-Za-z0-9_.-]`, a `sourceUrl` on github.com, a
+    /// fails the checks (an owner of GitHub's account characters, a repo `[A-Za-z0-9_.-]`
+    /// once one `.git` is dropped and never `.` or `..`, a `sourceUrl` on github.com, a
     /// plain relative `skillPath`, a ref of safe characters).
     #[must_use]
     pub fn github(&self) -> Option<GitHubSource> {
@@ -160,7 +161,9 @@ impl Record {
             return None;
         }
         let (owner, repo) = self.source.split_once('/')?;
-        if !is_name(owner) || !is_name(repo) {
+        // Dropped before checking, so `x/...git` can't become `..` in a URL.
+        let repo = repo.strip_suffix(".git").unwrap_or(repo);
+        if !is_owner(owner) || !is_repo(repo) {
             return None;
         }
         if let Some(url) = &self.source_url {
@@ -180,7 +183,7 @@ impl Record {
         }
         Some(GitHubSource {
             owner: owner.to_owned(),
-            repo: repo.trim_end_matches(".git").to_owned(),
+            repo: repo.to_owned(),
             folder,
             git_ref: self.git_ref.clone(),
         })
@@ -208,8 +211,18 @@ fn is_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// A GitHub owner or repo name.
-fn is_name(s: &str) -> bool {
+/// A GitHub account name: letters, digits and hyphens (and the underscore of managed
+/// accounts), at most 39, not starting with a hyphen.
+fn is_owner(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 39
+        && !s.starts_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+/// A GitHub repository name: `[A-Za-z0-9_.-]`, at most 100, never `.` or `..`.
+fn is_repo(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 100
         && s != "."
@@ -516,19 +529,22 @@ pub fn git_tree_sha(items: &[TreeItem]) -> String {
     hex(&object_sha("tree", &encode(&root)))
 }
 
+/// Whether [`computed_hash`] leaves this path out: it is under a `.git` or
+/// `node_modules` folder.
+#[must_use]
+pub fn is_unhashed_path(path: &str) -> bool {
+    let mut parts: Vec<&str> = path.split('/').collect();
+    parts.pop();
+    parts.iter().any(|d| *d == ".git" || *d == "node_modules")
+}
+
 /// The CLI's `computeSkillFolderHash`: SHA-256 over each regular file's path and bytes,
 /// ordered as JavaScript's `localeCompare` orders the paths, leaving out `.git` and
 /// `node_modules`. `files` are `(path relative to the folder, bytes)`.
 #[must_use]
 pub fn computed_hash(files: &[(&str, &[u8])]) -> String {
-    let mut kept: Vec<&(&str, &[u8])> = files
-        .iter()
-        .filter(|(p, _)| {
-            let mut parts: Vec<&str> = p.split('/').collect();
-            parts.pop();
-            !parts.iter().any(|d| *d == ".git" || *d == "node_modules")
-        })
-        .collect();
+    let mut kept: Vec<&(&str, &[u8])> =
+        files.iter().filter(|(p, _)| !is_unhashed_path(p)).collect();
     kept.sort_by(|a, b| locale_cmp(a.0, b.0));
     let mut h = <sha2::Sha256 as sha2::Digest>::new();
     for (p, bytes) in kept {
@@ -941,9 +957,34 @@ mod tests {
                 .as_deref(),
             Some("")
         );
-        for bad in ["acme", "../x", "acme/..", "a/b/c", "a b/c", "acme/sk%2e"] {
+        for bad in [
+            "acme",
+            "../x",
+            "acme/..",
+            "a/b/c",
+            "a b/c",
+            "acme/sk%2e",
+            // One `.git` is dropped first, so these would name `..` or nothing.
+            "acme/...git",
+            "acme/.git",
+            "acme/..git",
+            "./skills",
+            "a.b/skills",
+            "-acme/skills",
+        ] {
             assert!(rec(bad, None, None).github().is_none(), "{bad}");
         }
+        assert_eq!(
+            rec("acme/skills.git", None, None).github().unwrap().repo,
+            "skills"
+        );
+        assert_eq!(
+            rec("acme/skills.git.git", None, None)
+                .github()
+                .unwrap()
+                .repo,
+            "skills.git"
+        );
         for bad in [
             "../SKILL.md",
             "a/../../SKILL.md",

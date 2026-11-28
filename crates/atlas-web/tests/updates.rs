@@ -509,6 +509,13 @@ async fn unedited_merged_and_clashing_skills_end_current() {
     );
     assert_eq!(lock["dismissed"]["findSkillsPrompt"], true);
 
+    // A cancelled passkey tap offers Send again.
+    let (_, done) = hub.get(&format!("{location}&notsent=1")).await;
+    assert!(
+        done.contains("Saved. Not on your machines yet") && done.contains("data-action=\"send\""),
+        "{done}"
+    );
+
     // Edited apart: merged, both edits kept.
     let (_, preview) = hub.get("/skills/private/beta/update").await;
     assert!(preview.contains("Merged with your edits"), "{preview}");
@@ -626,8 +633,16 @@ async fn project_locks_are_written_and_outside_locks_left_alone() {
         preview.contains("skills-lock.json) is updated in the same change"),
         "{preview}"
     );
-    let (status, _, body) = hub.update("shop", "stock", &[]).await;
+    assert!(
+        !preview.contains("data-send-on-save"),
+        "a project update sends nothing to machines"
+    );
+    let (status, location, body) = hub.update("shop", "stock", &[]).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    // The flash `change::respond` asks for, as on every other page.
+    assert!(location.contains("saved="), "{location}");
+    let (_, done) = hub.get(&location).await;
+    assert!(done.contains("Saved and committed as "), "{done}");
     let lock_text = fs::read_to_string(hub.project.join("skills-lock.json")).unwrap();
     let v2_hashed: Vec<(&str, &[u8])> = v2.iter().map(|(p, t, _)| (*p, t.as_bytes())).collect();
     assert!(
@@ -744,4 +759,358 @@ async fn updates_need_a_passkey_session() {
         .body(Body::from("csrf=wrong"))
         .unwrap();
     assert_eq!(hub.send(req).await.0, StatusCode::FORBIDDEN);
+}
+
+/// A redirect is followed only to the API's own origin: a renamed repository on the same
+/// stand-in is listed, one sent to another port (another origin) is never asked.
+#[tokio::test]
+async fn redirects_stay_on_the_apis_origin() {
+    let v1: Files<'_> = &[("SKILL.md", "---\nname: pdf\n---\nPDF v1\n", false)];
+    let v2: Files<'_> = &[(
+        "skills/pdf/SKILL.md",
+        "---\nname: pdf\n---\nPDF v2\n",
+        false,
+    )];
+    let mut elsewhere = Canned::default();
+    elsewhere.repo("acme/skills", v2);
+    let (other, other_served) = stand_in(elsewhere).await;
+
+    let mut canned = Canned::default();
+    let moved = |to: String| (301, vec![("location".to_owned(), to)], String::new());
+    canned.replies.insert(
+        "/repos/acme/skills/git/trees/HEAD?recursive=1".to_owned(),
+        moved(format!(
+            "{other}/repos/acme/skills/git/trees/HEAD?recursive=1"
+        )),
+    );
+    canned.replies.insert(
+        "/repos/acme/renamed/git/trees/HEAD?recursive=1".to_owned(),
+        moved("/repos/acme/skills-v2/git/trees/HEAD?recursive=1".to_owned()),
+    );
+    canned.repo("acme/skills-v2", v2);
+    let (api, _) = stand_in(canned).await;
+
+    let mut lock: serde_json::Value = serde_json::from_str(&global_lock(&[
+        ("pdf", &tree_sha(v1)),
+        ("docs", &tree_sha(v1)),
+    ]))
+    .unwrap();
+    lock["skills"]["docs"]["source"] = "acme/renamed".into();
+    lock["skills"]["docs"]["skillPath"] = "skills/pdf/SKILL.md".into();
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| {
+            write_skill(&k.join("skills/pdf"), v1);
+            write_skill(&k.join("skills/docs"), v1);
+        },
+    );
+    write(
+        &hub.home.join(".agents/.skill-lock.json"),
+        &lock.to_string(),
+    );
+
+    let page = hub.check().await;
+    assert!(
+        row(&page, "pdf").contains("GitHub couldn&#39;t be reached"),
+        "{}",
+        row(&page, "pdf")
+    );
+    assert!(
+        other_served.hits.lock().unwrap().is_empty(),
+        "another origin is never asked"
+    );
+    assert!(
+        row(&page, "docs").contains(">Update available · <span"),
+        "{}",
+        row(&page, "docs")
+    );
+}
+
+/// A script that only became executable upstream is an update, and updating sets the bit.
+#[tokio::test]
+async fn an_execute_bit_change_is_an_update() {
+    let v1: Files<'_> = &[
+        ("SKILL.md", "---\nname: tool\n---\nRun it.\n", false),
+        ("run.sh", "#!/bin/sh\necho hi\n", false),
+    ];
+    let v2: Files<'_> = &[
+        (
+            "skills/tool/SKILL.md",
+            "---\nname: tool\n---\nRun it.\n",
+            false,
+        ),
+        ("skills/tool/run.sh", "#!/bin/sh\necho hi\n", true),
+    ];
+    let mut canned = Canned::default();
+    canned.repo("acme/skills", v2);
+    let (api, _) = stand_in(canned).await;
+    let global = global_lock(&[("tool", &tree_sha(v1))]);
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| write_skill(&k.join("skills/tool"), v1),
+    );
+    write(&hub.home.join(".agents/.skill-lock.json"), &global);
+
+    let page = hub.check().await;
+    assert!(
+        row(&page, "tool").contains(">Update available · <span"),
+        "{}",
+        row(&page, "tool")
+    );
+    let (_, preview) = hub.get("/skills/private/tool/update").await;
+    assert!(
+        preview.contains("Only its execute bit changes."),
+        "{preview}"
+    );
+    let (status, _, body) = hub.update("private", "tool", &[]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = fs::metadata(hub.knowledge.join("skills/tool/run.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0, "the script is executable now");
+    }
+    let (_, page) = hub.get("/skills/updates").await;
+    assert!(
+        row(&page, "tool").contains(">Current · <span"),
+        "{}",
+        row(&page, "tool")
+    );
+}
+
+/// A skill named `edit` links to its own update page.
+#[tokio::test]
+async fn a_skill_named_edit_links_to_its_update_page() {
+    let (api, _) = stand_in(Canned::default()).await;
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| {
+            write_skill(
+                &k.join("skills/edit"),
+                &[("SKILL.md", "---\nname: edit\n---\nEdit.\n", false)],
+            );
+        },
+    );
+    let (status, page) = hub.get("/skills/private/edit").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("href=\"/skills/private/edit/update\">Check for updates"),
+        "{page}"
+    );
+}
+
+fn tree_hits(served: &Canned, repo: &str) -> usize {
+    served
+        .hits
+        .lock()
+        .unwrap()
+        .get(&format!("/repos/{repo}/git/trees/HEAD?recursive=1"))
+        .copied()
+        .unwrap_or(0)
+}
+
+/// More sources than one check lists: the next check lists those left out first, so
+/// every source is listed within two checks, and results merge.
+#[tokio::test]
+async fn checks_take_turns_over_every_source() {
+    let names: Vec<String> = (0..25).map(|i| format!("s{i:02}")).collect();
+    let text = |name: &str| format!("---\nname: {name}\n---\nSame.\n");
+    let mut canned = Canned::default();
+    let mut skills = serde_json::Map::new();
+    for (i, name) in names.iter().enumerate() {
+        let body = text(name);
+        let path = format!("skills/{name}/SKILL.md");
+        canned.repo(
+            &format!("acme/r{i:02}"),
+            &[(path.as_str(), body.as_str(), false)],
+        );
+        skills.insert(
+            name.clone(),
+            serde_json::json!({
+                "source": format!("acme/r{i:02}"),
+                "sourceType": "github",
+                "skillPath": path,
+                "skillFolderHash": tree_sha(&[("SKILL.md", body.as_str(), false)]),
+            }),
+        );
+    }
+    let (api, served) = stand_in(canned).await;
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| {
+            for name in &names {
+                write_skill(
+                    &k.join("skills").join(name),
+                    &[("SKILL.md", text(name).as_str(), false)],
+                );
+            }
+        },
+    );
+    let lock = serde_json::json!({"version": 3, "skills": skills});
+    write(
+        &hub.home.join(".agents/.skill-lock.json"),
+        &lock.to_string(),
+    );
+
+    let page = hub.check().await;
+    assert!(
+        page.contains("5 more sources wait for the next check."),
+        "{page}"
+    );
+    assert!(row(&page, "s00").contains(">Current · <span"));
+    assert!(row(&page, "s24").contains("Not checked yet"));
+
+    let page = hub.check().await;
+    assert!(!page.contains("wait for the next check"), "{page}");
+    for (i, name) in names.iter().enumerate() {
+        assert!(tree_hits(&served, &format!("acme/r{i:02}")) >= 1, "r{i:02}");
+        assert!(
+            row(&page, name).contains(">Current · <span"),
+            "{}",
+            row(&page, name)
+        );
+    }
+    // The second check listed the five left out plus the fifteen oldest.
+    let total: usize = (0..25)
+        .map(|i| tree_hits(&served, &format!("acme/r{i:02}")))
+        .sum();
+    assert_eq!(total, 40);
+}
+
+/// Pages shown after a check ask GitHub nothing: a cut-off listing's folder is listed by
+/// the check, an edited project skill's few files are fetched by it, and files the CLI
+/// doesn't hash (`node_modules`) are never fetched.
+// One scenario, step by step.
+#[allow(clippy::too_many_lines)]
+#[tokio::test]
+async fn a_page_after_a_check_asks_github_nothing() {
+    let deep_v1: Files<'_> = &[("SKILL.md", "---\nname: deep\n---\nv1\n", false)];
+    let deep_v2: Files<'_> = &[("SKILL.md", "---\nname: deep\n---\nv2\n", false)];
+    let stock_v1: Files<'_> = &[("SKILL.md", "---\nname: stock\n---\nCount.\n", false)];
+    let stock_mine: Files<'_> = &[("SKILL.md", "---\nname: stock\n---\nCount mine.\n", false)];
+    let module = "module.exports = 1;\n";
+    let mut canned = Canned::default();
+    // A big repository GitHub cuts the listing of; the folder's own listing is whole.
+    let (_, mut big) = listing(&[("skills/deep/SKILL.md", deep_v2[0].1, false)]);
+    big["truncated"] = true.into();
+    canned.json("/repos/acme/big/git/trees/HEAD?recursive=1", &big);
+    canned.folder("acme/big", deep_v2);
+    canned.repo(
+        "acme/skills",
+        &[
+            (
+                "skills/stock/SKILL.md",
+                "---\nname: stock\n---\nCount twice.\n",
+                false,
+            ),
+            ("skills/stock/extra.md", "More.\n", false),
+            ("skills/stock/node_modules/x.js", module, false),
+        ],
+    );
+    let (api, served) = stand_in(canned).await;
+
+    let hashed: Vec<(&str, &[u8])> = stock_v1
+        .iter()
+        .map(|(p, t, _)| (*p, t.as_bytes()))
+        .collect();
+    let project_lock = serde_json::json!({"version": 1, "skills": {
+        "stock": {"source": "acme/skills", "sourceType": "github", "skillPath": "skills/stock/SKILL.md", "computedHash": computed_hash(&hashed)}
+    }});
+    let mut global: serde_json::Value =
+        serde_json::from_str(&global_lock(&[("deep", &tree_sha(deep_v1))])).unwrap();
+    global["skills"]["deep"]["source"] = "acme/big".into();
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, p| {
+            write_skill(&k.join("skills/deep"), deep_v1);
+            write_skill(&p.join(".agents/skills/stock"), stock_mine);
+            write(&p.join("skills-lock.json"), &format!("{project_lock:#}\n"));
+        },
+    );
+    write(
+        &hub.home.join(".agents/.skill-lock.json"),
+        &global.to_string(),
+    );
+
+    let page = hub.check().await;
+    assert!(
+        row(&page, "deep").contains(">Update available · <span"),
+        "{}",
+        row(&page, "deep")
+    );
+    assert!(
+        row(&page, "stock").contains("Update available · you edited it"),
+        "{}",
+        row(&page, "stock")
+    );
+    let after_check = served.hits.lock().unwrap().clone();
+    let folder = format!(
+        "/repos/acme/big/git/trees/{}?recursive=1",
+        tree_sha(deep_v2)
+    );
+    assert_eq!(after_check.get(&folder), Some(&1), "{after_check:?}");
+    assert_eq!(
+        after_check.get(&format!(
+            "/repos/acme/skills/git/blobs/{}",
+            git_blob_sha(module.as_bytes())
+        )),
+        None,
+        "node_modules is never fetched: {after_check:?}"
+    );
+
+    for _ in 0..2 {
+        let (status, page) = hub.get("/skills/updates").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(row(&page, "deep").contains(">Update available · <span"));
+        assert!(row(&page, "stock").contains("Update available · you edited it"));
+    }
+    assert_eq!(
+        *served.hits.lock().unwrap(),
+        after_check,
+        "showing the page asks GitHub nothing"
+    );
+
+    // The preview reuses the check's listing of the folder.
+    let (_, preview) = hub.get("/skills/private/deep/update").await;
+    assert!(
+        preview.contains("<span class=\"add\">+v2</span>"),
+        "{preview}"
+    );
+    assert_eq!(served.hits.lock().unwrap().get(&folder), Some(&1));
+}
+
+/// In a whole listing, a folder SHA its entries don't add up to isn't trusted, so an
+/// update isn't hidden as "current, with your edits".
+#[tokio::test]
+async fn a_folder_sha_that_doesnt_add_up_is_refused() {
+    let v1: Files<'_> = &[("SKILL.md", "---\nname: x\n---\nv1\n", false)];
+    let mine: Files<'_> = &[("SKILL.md", "---\nname: x\n---\nmine\n", false)];
+    let (_, mut body) = listing(&[("skills/x/SKILL.md", "---\nname: x\n---\nv2\n", false)]);
+    for e in body["tree"].as_array_mut().unwrap() {
+        if e["path"] == "skills/x" {
+            e["sha"] = tree_sha(v1).into();
+        }
+    }
+    let mut canned = Canned::default();
+    canned.json("/repos/acme/skills/git/trees/HEAD?recursive=1", &body);
+    let (api, _) = stand_in(canned).await;
+    let global = global_lock(&[("x", &tree_sha(v1))]);
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| write_skill(&k.join("skills/x"), mine),
+    );
+    write(&hub.home.join(".agents/.skill-lock.json"), &global);
+
+    let page = hub.check().await;
+    let r = row(&page, "x");
+    assert!(!r.contains("Current, with your edits"), "{r}");
+    assert!(r.contains("update-state warn"), "{r}");
 }

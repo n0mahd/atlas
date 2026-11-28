@@ -257,17 +257,26 @@ that has a `skills` CLI lock record from GitHub with its source (`atlas-web::upd
 records from `atlas_fs::lock`). Global skills (knowledge, public) use the global lock
 (`$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json`), project
 skills their repo's `skills-lock.json`. A check lists each source repo's tree once through
-GitHub's API without signing in (at most 20 repos, four at a time, 10 s and size limits);
-the listings stay in memory for the hub's run and nothing is written. When GitHub's limit is
+GitHub's API without signing in (at most 20 repos, four at a time, 10 s and size limits;
+repos never listed go first, then the oldest listings, so every repo is reached over a few
+checks). When GitHub cuts a big repo's listing off, the check lists each skill's folder on
+its own too, and for an edited project skill it fetches the few files that tell whose change
+it is (never `.git` or `node_modules`). The listings merge with earlier checks' and stay in
+memory for the hub's run; nothing is written, and showing the Updates page asks GitHub
+nothing. A folder's SHA from a listing is trusted only once its entries add up to it.
+Redirects are followed only to the API's own origin. When GitHub's limit is
 used up the page says when to try again and nothing more is asked until then. **Preview**
 shows each changed file as a diff before anything is written. With the installed version
 (the record's baseline) a file only the source changed takes theirs, one only the owner
 changed keeps theirs, one both changed is merged line by line, and clashing lines are the
-owner's choice per file (keep mine or take theirs). A global record's baseline is a git tree
+owner's choice per file (keep mine or take theirs). A file whose execute bit
+changed counts as changed. A global record's baseline is a git tree
 SHA, fetched again from GitHub; a project record holds only a hash of the files, so for an
 edited project skill every difference is the owner's choice. **Update** is one change
 (`change::commit_change`): the folder is rewritten (execute bits kept) and the lock record
-gets what `npx skills update` would write, so the CLI then sees the skill as current. A lock
+gets what `npx skills update` would write, so the CLI then sees the skill as current. The
+folder is read again under the git lock, and an update is refused if the folder changed
+since the preview. A lock
 that isn't inside a repo Atlas commits (the global one usually isn't) is left alone and the
 preview says so. Links, submodules and unsafe names in a source are refused; fetched files
 are never run; everything is checked against its git SHA and shown escaped.

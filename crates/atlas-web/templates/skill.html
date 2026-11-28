@@ -19,7 +19,7 @@
     </ul>
     {% for a in v.agents %}{% if a.needs_words() %}<p class="agent-note warn">{{ a.icon|safe }}{{ a.state }}</p>{% endif %}{% endfor %}
     {% include "skill_files.html" %}
-    {% if page.signed_in %}{% if let Some(href) = page.edit_href %}<a class="link-cap" href="{{ href.trim_end_matches("/edit") }}/update">Check for updates</a>{% endif %}{% endif %}
+    {% if page.signed_in %}{% if let Some(href) = update_href %}<a class="link-cap" href="{{ href }}">Check for updates</a>{% endif %}{% endif %}
     <a class="link-cap" href="/skills">All skills</a>
   </aside>
 </div>
