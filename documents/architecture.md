@@ -53,7 +53,7 @@ query the store directly instead of going through use cases.
 ## How a change travels
 1. An edit in the UI becomes a git commit.
 2. The scanner flags anything risky (it never blocks silently).
-3. Save sends (decision 0022): the hub pushes Knowledge if needed and builds update N
+3. Save sends (decision 0024): the hub pushes Knowledge if needed and builds update N
    (a signed release underneath), pinning Knowledge and public skills at their upstream
    commits and tree hashes. Project repos aren't in it.
 4. The same Save asks for one passkey tap, which signs the update; the hub checks the

@@ -1,0 +1,77 @@
+# Editing and updates
+
+## What you can edit
+
+Open **Skills**, **Instructions** or **Memory**, pick an item and press the pencil at
+the top of its page. You need to be signed in with your passkey; Atlas asks if you
+aren't.
+
+Hooks are shown but not edited in the hub yet. Edit them in your knowledge repo
+(`hooks/<name>/`) and commit as usual.
+
+## Every save is a commit
+
+Save writes the file and makes one git commit of exactly that file, named like
+"Edit skill writing in Atlas". Nothing is lost: you can see or undo any change with git.
+
+Atlas refuses a save, and keeps your text on screen, if:
+
+- the file changed since you opened it, or
+- the file has other changes you haven't committed outside Atlas, or
+- a project repo isn't on its `main` branch.
+
+The note under the editor says where the save goes.
+
+## Save sends
+
+With **Send changes to my machines when I save** on (the default), Save on a global skill,
+instruction file or memory page asks for one passkey tap. That tap:
+
+1. saves and commits the edit,
+2. pushes your knowledge repo, so machines can fetch it,
+3. builds an update and signs it with your passkey.
+
+You'll see "Saved · on your machines within 10 minutes". Each machine's atlasd checks
+every 10 minutes and applies it.
+
+If you close the passkey prompt, the edit is still saved. The page says "Saved. Not on
+your machines yet" and offers a **Send** button.
+
+## Settings → Updates
+
+- **Send changes to my machines when I save.** Off means Save only saves. Send later with
+  **Send now**.
+- **Also push project repos after saving.** Pushes a project's `main` after each save to
+  it. If that repo deploys from `main`, the push may deploy it.
+- **Send now.** Sends everything saved since the last update, with one passkey tap. If
+  nothing changed, it doesn't ask.
+- **The list below** shows each update sent, with its number, date and the passkey that
+  signed it.
+
+## What reaches your machines
+
+| You edit | Where it's saved | How it reaches machines |
+|---|---|---|
+| Global skills, instructions | Your knowledge repo | The next update (Save sends) |
+| Public skills | Your public skills repo | The next update, after you push that repo yourself |
+| Memory | Your knowledge repo | Through git; atlasd doesn't install memory pages |
+| Project skills, instructions | That project's repo, on `main` | Through the project repo itself |
+
+Atlas never pushes the public skills repo. Check it for private details, then push it by
+hand. Until then Atlas says "Public skills reach your machines after you push them".
+
+Project files are committed but not sent: they live in the project, and anyone who
+pulls the project gets them.
+
+Memory goes straight to git. Your agents also write memory themselves, without a passkey,
+and read it from the knowledge repo on each machine. Saving a memory page in the hub
+still sends an update, because the knowledge repo changed.
+
+## "N changes aren't on your machines yet"
+
+Home (with a **Send** button) and **Settings → Updates** count the commits in your
+knowledge repo (and pushed public skills) since the last update. Memory your agents wrote counts too, since it's in
+the same repo. Press **Send now** to send them.
+
+"Nothing has been sent to your machines yet" means you have never sent an update. Send
+one before your first machine can apply anything.

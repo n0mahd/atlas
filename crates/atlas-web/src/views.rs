@@ -863,7 +863,7 @@ pub fn instructions(snap: &Snapshot, scope: &Scope) -> Vec<InstructionSection> {
         num: if sections.is_empty() { "I" } else { "II" },
         title: "Global",
         rows,
-        empty: "The store has no AGENTS.md.",
+        empty: "Your knowledge repo has no AGENTS.md yet.",
     });
     sections
 }
