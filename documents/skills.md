@@ -60,7 +60,10 @@ for home and project skills alike (keyed by the skill's path), OpenCode `permiss
 in the home `opencode.jsonc`, else `opencode.json` (`.jsonc` is edited when both exist and
 created when neither does),
 Pi `skills` in `~/.pi/agent/settings.json`. Atlas marks its own entries and never changes
-the owner's. Others have no switch; the UI says so and why.
+the owner's. Each skill to switch off is a `SwitchOff { name, path }`, `path` being the
+`SKILL.md` the agent loads: Codex keys its entries by that exact path (a project's skill
+must carry one), so same-named skills in two projects, or a global one and a project's, are
+switched separately; the other formats are keyed by name. Others have no switch; the UI says so and why.
 
 ## Projects on each machine
 

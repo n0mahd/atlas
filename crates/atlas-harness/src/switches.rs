@@ -29,8 +29,10 @@
 //! Several things share some of these files (Claude Code's `settings.json` also holds
 //! Atlas's hooks), so a caller renders every Atlas part onto the same bytes in turn and
 //! writes once. Codex's home and project switches share one file: render it once with
-//! every name that must be off there, as a second call would drop the first one's
-//! entries.
+//! every skill that must be off there, as a second call would drop the first one's
+//! entries. A skill is a [`SwitchOff`]: its name, and for Codex the `SKILL.md` it is
+//! loaded from, so two skills of one name (two projects', or a global one and a
+//! project's) are told apart.
 
 mod claude;
 mod codex;
@@ -108,17 +110,49 @@ pub const fn can_switch_off(kind: HarnessKind, reach: Reach) -> bool {
     switch_file(kind, reach).is_some()
 }
 
-/// Rewrites one switch file so exactly `off` (skill names) are switched off by Atlas.
+/// A skill Atlas wants switched off in one switch file.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SwitchOff {
+    /// The skill's name: its folder name, which Atlas's skills keep equal to the `name`
+    /// in their header. The formats keyed by name (Claude Code, `OpenCode`, Pi) go by it
+    /// alone.
+    pub name: String,
+    /// The `SKILL.md` the agent loads, for formats keyed by path (Codex); a path through
+    /// a link into the skill's folder is fine. `None` names the skill by name, which for
+    /// Codex switches off every skill of that name: at `Reach::Project` such a skill is
+    /// skipped, and a project's skill should always carry its path.
+    pub path: Option<PathBuf>,
+}
+
+impl SwitchOff {
+    /// A skill named by name only.
+    #[must_use]
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: None,
+        }
+    }
+
+    /// A skill loaded from `path` (its `SKILL.md`).
+    #[must_use]
+    pub fn at(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.into(),
+            path: Some(path.into()),
+        }
+    }
+}
+
+/// Rewrites one switch file so exactly `off` are switched off by Atlas.
 ///
 /// - Entries the owner wrote are kept, including the owner's own "off" for a skill.
-/// - `atlas_before` is the set of names Atlas switched off in this file last time
-///   (atlasd keeps it in its state). Every format here marks Atlas's entries in the file
-///   itself (a comment, or for strict JSON a list under Atlas's own key), so they don't
-///   need it: the file is the record, and an entry the owner had before Atlas wanted the
-///   same skill off is never taken for Atlas's.
-/// - `skill_dir` maps a name to the folder the agent loads it from, for formats keyed by
-///   path (Codex); a link into the skill's folder is fine. At `Reach::Project` a name it
-///   doesn't map is skipped, since a name entry would also switch off a global skill.
+///   Every format marks Atlas's entries in the file itself (a comment, or for strict JSON
+///   a list under Atlas's own key): the file is the record, and an entry the owner had
+///   before Atlas wanted the same skill off is never taken for Atlas's.
+/// - Formats keyed by name write one entry per name, whatever the paths. Codex writes one
+///   per [`SwitchOff`], by path when it has one, and an owner's entry covers a skill only
+///   when it names that skill's exact path, or its name.
 /// - Only names that are slugs (Atlas's skill names) are written: Atlas's marks hold the
 ///   name, and a slug can't make a wildcard (`OpenCode`) or end a comment early.
 /// - `Change::Remove` only when nothing is left but what Atlas made: an empty object or
@@ -131,25 +165,21 @@ pub fn render_switches(
     kind: HarnessKind,
     reach: Reach,
     current: Option<&[u8]>,
-    off: &BTreeSet<String>,
-    atlas_before: &BTreeSet<String>,
-    skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
+    off: &BTreeSet<SwitchOff>,
 ) -> Result<Change, FormatError> {
-    let _ = atlas_before;
     if !can_switch_off(kind, reach) {
         return Ok(Change::Unchanged);
     }
-    let off: BTreeSet<String> = off
+    let off: BTreeSet<&SwitchOff> = off
         .iter()
-        .filter(|n| Slug::new(n.as_str()).is_ok())
-        .cloned()
+        .filter(|s| Slug::new(s.name.as_str()).is_ok())
         .collect();
-    let off = &off;
+    let names: BTreeSet<String> = off.iter().map(|s| s.name.clone()).collect();
     match kind {
-        HarnessKind::ClaudeCode => claude::render(current, off),
-        HarnessKind::Codex => codex::render(current, off, reach, skill_dir),
-        HarnessKind::OpenCode => opencode::render(current, off),
-        HarnessKind::Pi => pi::render(current, off),
+        HarnessKind::ClaudeCode => claude::render(current, &names),
+        HarnessKind::Codex => codex::render(current, &off, reach),
+        HarnessKind::OpenCode => opencode::render(current, &names),
+        HarnessKind::Pi => pi::render(current, &names),
         _ => Ok(Change::Unchanged),
     }
 }
@@ -231,7 +261,7 @@ mod tests {
 
     #[test]
     fn agents_without_a_setting_are_left_alone() {
-        let off = BTreeSet::from(["pdf".to_owned()]);
+        let off = BTreeSet::from([SwitchOff::named("pdf")]);
         for (kind, reach) in [
             (HarnessKind::Grok, Reach::Home),
             (HarnessKind::Antigravity, Reach::Home),
@@ -240,7 +270,7 @@ mod tests {
         ] {
             assert!(!can_switch_off(kind, reach));
             assert_eq!(
-                render_switches(kind, reach, Some(b"{}"), &off, &off, &|_| None).unwrap(),
+                render_switches(kind, reach, Some(b"{}"), &off).unwrap(),
                 Change::Unchanged
             );
         }

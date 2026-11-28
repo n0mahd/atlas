@@ -88,9 +88,9 @@ the owner's T3 Code (`apps/server/src/skills/*SkillSettings.ts`, branch
 | Pi | home `.pi/agent/settings.json`; no repo file | `"skills": ["-skills/<name>/SKILL.md"]` | names listed under top-level `"atlas:skills"` | Pi source (`core/package-manager.ts`, `core/settings-manager.ts` at 43d3763991); docs (pi.dev/docs/latest/settings); T3. Not run: Pi isn't installed here |
 | Antigravity, Amp, Muse, Grok Build | none | no per-skill setting in their docs (T3 found the same for Antigravity and Grok) | reported as `stuck_on` | docs; T3 |
 
-Every format marks Atlas's entries in the file itself, so atlasd's own record of what it
-switched off (`atlas_before`) isn't needed to tell them apart, and an owner's entry made
-before Atlas wanted the same skill off is never taken for Atlas's. An entry of the owner's
+Every format marks Atlas's entries in the file itself, so atlasd needs no record of its
+own of what it switched off, and an owner's entry made before Atlas wanted the same skill
+off is never taken for Atlas's. An entry of the owner's
 for a skill, on or off, is left as it is and Atlas adds none beside it.
 
 Notes behind the table:
@@ -109,8 +109,12 @@ Notes behind the table:
   last entry naming a skill wins (T3). A project's `.codex/config.toml` is not read for
   skill rules in an untrusted project (T3), so a project's skills are switched off by
   their absolute path in the home file. A name entry would switch off every skill of that
-  name, so Atlas writes one only for a home skill whose folder it wasn't given. Home and
-  project switches share the file, so it is rendered once with every name off there.
+  name, so Atlas writes one only for a home skill whose path it wasn't given. Home and
+  project switches share the file, so it is rendered once with every skill off there,
+  each a `SwitchOff` carrying the `SKILL.md` path Codex loads: Atlas's tables are told
+  apart by exact path (or name), so two projects' `deploy`, or a global one and a
+  project's, are switched separately. An owner's `path` entry covers only the skill at
+  that exact path; an owner's `name` entry covers every skill of that name.
 - OpenCode reads `opencode.json` and `opencode.jsonc` as JSONC (comments and trailing
   commas allowed), in the global folder `config.json`, `opencode.json`, then
   `opencode.jsonc`, merging `permission` objects; rules are evaluated last-match-wins

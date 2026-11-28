@@ -7,11 +7,11 @@
 //! so the owner's comments and layout stay as they are.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use atlas_core::kernel::Slug;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
+use super::SwitchOff;
 use crate::change::shape;
 use crate::placement::Reach;
 use crate::{Change, FormatError};
@@ -19,23 +19,22 @@ use crate::{Change, FormatError};
 /// What follows `]]` on the header of a table Atlas wrote.
 const MARKER: &str = "# atlas:";
 
-#[derive(PartialEq, Eq)]
+/// How a table names its skill. Atlas's tables are told apart by it: two skills of one
+/// name (two projects', or a global one and a project's) each get their own.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Selector {
     Path(String),
     Name(String),
 }
 
-/// How Atlas names the skill: by its `SKILL.md` when the folder is known, else by name
-/// (home only, since a name entry switches off every skill of that name).
-fn selector(
-    name: &str,
-    reach: Reach,
-    skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
-) -> Option<Selector> {
-    let path = skill_dir(name).and_then(|dir| dir.join("SKILL.md").to_str().map(str::to_owned));
-    match (path, reach) {
-        (Some(p), _) => Some(Selector::Path(p)),
-        (None, Reach::Home) => Some(Selector::Name(name.to_owned())),
+/// How Atlas names `skill`: by its `SKILL.md` when that is known, else by name (home
+/// only, since a name entry switches off every skill of that name). `None` when it can't
+/// be named this time.
+fn selector(skill: &SwitchOff, reach: Reach) -> Option<Selector> {
+    match (&skill.path, reach) {
+        // A path Codex can't be given as TOML text is skipped, not widened to a name.
+        (Some(p), _) => p.to_str().map(|p| Selector::Path(p.to_owned())),
+        (None, Reach::Home) => Some(Selector::Name(skill.name.clone())),
         (None, Reach::Project) => None,
     }
 }
@@ -51,22 +50,35 @@ fn selector_of(t: &Table) -> Option<Selector> {
     }
 }
 
-/// The skill an Atlas table switches off, if `t` is one.
-fn ours(t: &Table) -> Option<String> {
+/// The skill an Atlas table switches off and how it names it, if `t` is one.
+fn ours(t: &Table) -> Option<(String, Selector)> {
     let suffix = t.decor().suffix()?.as_str()?.trim();
     let name = suffix.strip_prefix(MARKER)?;
     let off = t.get("enabled").and_then(Item::as_bool) == Some(false);
-    (off && Slug::new(name).is_ok() && selector_of(t).is_some()).then(|| name.to_owned())
+    if !off || Slug::new(name).is_err() {
+        return None;
+    }
+    Some((name.to_owned(), selector_of(t)?))
 }
 
-/// Whether an owner's table names the skill: by name, or by a path to a `SKILL.md` in a
-/// folder of that name.
-fn names_skill(t: &Table, name: &str) -> bool {
-    let file = format!("{name}/SKILL.md");
-    t.get("name").and_then(Item::as_str) == Some(name)
-        || t.get("path")
-            .and_then(Item::as_str)
-            .is_some_and(|p| p == file || p.ends_with(&format!("/{file}")))
+/// Whether an owner's table already decides about the skill Atlas would name with `sel`:
+/// a name entry covers every skill of that name; a path entry covers the skill at that
+/// exact path, or, when Atlas names the skill by name, any `SKILL.md` in a folder of
+/// that name.
+fn covers(t: &Table, name: &str, sel: &Selector) -> bool {
+    if t.get("name").and_then(Item::as_str) == Some(name) {
+        return true;
+    }
+    let Some(path) = t.get("path").and_then(Item::as_str) else {
+        return false;
+    };
+    match sel {
+        Selector::Path(p) => path == p,
+        Selector::Name(_) => {
+            let file = format!("{name}/SKILL.md");
+            path == file || path.ends_with(&format!("/{file}"))
+        }
+    }
 }
 
 fn table(name: &str, sel: &Selector) -> Table {
@@ -82,9 +94,8 @@ fn table(name: &str, sel: &Selector) -> Table {
 
 pub(super) fn render(
     current: Option<&[u8]>,
-    off: &BTreeSet<String>,
+    off: &BTreeSet<&SwitchOff>,
     reach: Reach,
-    skill_dir: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> Result<Change, FormatError> {
     let text = match current {
         Some(bytes) => std::str::from_utf8(bytes)?,
@@ -102,45 +113,65 @@ pub(super) fn render(
         Some(_) => return Err(shape("skills.config", "[[skills.config]] tables")),
     };
 
-    let mut changed = false;
-    let mut kept = BTreeSet::new();
-    for t in config.iter_mut() {
-        let Some(name) = ours(t) else { continue };
-        if !off.contains(&name) || kept.contains(&name) {
-            continue;
-        }
-        let Some(want) = selector(&name, reach, skill_dir) else {
-            // No folder known this time: keep the table as it is.
-            kept.insert(name);
-            continue;
+    // What Atlas's tables should be, and the names it can't name this time (a project's
+    // skill without a path), whose tables are kept as they are rather than guessed at.
+    let mut wanted = BTreeSet::new();
+    let mut held = BTreeSet::new();
+    for skill in off {
+        match selector(skill, reach) {
+            Some(sel) => wanted.insert((skill.name.clone(), sel)),
+            None => held.insert(skill.name.clone()),
         };
-        if selector_of(t).as_ref() != Some(&want) {
-            let mut fresh = table(&name, &want);
-            *fresh.decor_mut() = t.decor().clone();
-            fresh.set_position(t.position());
-            *t = fresh;
-            changed = true;
-        }
-        kept.insert(name);
     }
-    let mut seen = BTreeSet::new();
-    let before = config.len();
-    config.retain(|t| match ours(t) {
-        Some(name) => kept.contains(&name) && seen.insert(name),
-        None => true,
-    });
-    changed |= config.len() != before;
-    for name in off {
+
+    // Each Atlas table is kept once, or is stale.
+    let mut present = BTreeSet::new();
+    let mut stale: Vec<bool> = config
+        .iter()
+        .map(|t| {
+            ours(t).is_some_and(|key| {
+                let keep = wanted.contains(&key) || held.contains(&key.0);
+                !(keep && present.insert(key))
+            })
+        })
+        .collect();
+
+    let mut changed = false;
+    let mut added = Vec::new();
+    for key @ (name, sel) in &wanted {
         let owners = config
             .iter()
-            .any(|t| ours(t).is_none() && names_skill(t, name));
-        if kept.contains(name) || owners {
+            .any(|t| ours(t).is_none() && covers(t, name, sel));
+        if present.contains(key) || owners {
             continue;
         }
-        if let Some(sel) = selector(name, reach, skill_dir) {
-            config.push(table(name, &sel));
-            changed = true;
+        // A stale table of the same name is reused in place (the skill's folder moved),
+        // keeping its spot and comments.
+        let reuse = config
+            .iter()
+            .zip(&stale)
+            .position(|(t, s)| *s && ours(t).is_some_and(|(n, _)| n == *name));
+        match reuse.and_then(|i| config.get_mut(i).map(|t| (i, t))) {
+            Some((i, t)) => {
+                let mut fresh = table(name, sel);
+                *fresh.decor_mut() = t.decor().clone();
+                fresh.set_position(t.position());
+                *t = fresh;
+                stale[i] = false;
+            }
+            None => added.push(table(name, sel)),
         }
+        changed = true;
+    }
+    let before = config.len();
+    let mut at = 0;
+    config.retain(|_| {
+        at += 1;
+        !stale[at - 1]
+    });
+    changed |= config.len() != before;
+    for t in added {
+        config.push(t);
     }
     if !changed {
         return Ok(Change::Unchanged);
