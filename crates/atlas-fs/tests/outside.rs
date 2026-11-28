@@ -80,6 +80,9 @@ fn home() -> Home {
         ),
     );
     symlink(plugin.join("skills/review"), claude.join("review")).unwrap();
+    // A link inside a plugin's skills folder isn't one of its skills.
+    skill(&h.join("elsewhere/linked"), "not the plugin's");
+    symlink(h.join("elsewhere/linked"), plugin.join("skills/linked")).unwrap();
 
     // Hooks: the owner's, Herdr's and Atlas's own.
     write(
@@ -192,6 +195,10 @@ fn everything_outside_is_classified() {
     );
     assert!(
         built.contains(&(HarnessKind::ClaudeCode, "review")),
+        "{built:?}"
+    );
+    assert!(
+        !built.contains(&(HarnessKind::ClaudeCode, "pr:linked")),
         "{built:?}"
     );
 
