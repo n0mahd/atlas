@@ -140,11 +140,13 @@
     var form = event.target;
     if (!form.matches("form[data-send-on-save]") || form.dataset.plain || !window.PublicKeyCredential || !window.fetch) return;
     event.preventDefault();
-    var button = form.querySelector('[type="submit"]');
-    if (button) button.disabled = true;
-    // A form with several actions (the Skills bulk bar) names them on its buttons; carry
-    // the pressed one, which FormData and form.submit() would otherwise leave out.
+    // A form with several actions (the Skills bulk bar and its group "All on/All off")
+    // names them on its buttons; carry the pressed one, which FormData(form) and
+    // form.submit() never include. Disabling a button doesn't change its name or value,
+    // so the pressed one is the one disabled while the change is saved.
     var submitter = event.submitter;
+    var button = submitter || form.querySelector('[type="submit"]');
+    if (button) button.disabled = true;
     var plain = function () {
       form.dataset.plain = "1";
       if (submitter && submitter.name) {
