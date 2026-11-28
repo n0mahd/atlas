@@ -65,6 +65,10 @@ pub struct Writer {
     first_run: std::time::Duration,
     /// Paired machines and their clients' tokens.
     pub clients: crate::clients::Clients,
+    /// Tracked machine names (seeded from `hub.toml`, editable via UI and CLI).
+    pub machines: crate::clients::Machines,
+    /// Passkey-issued tokens for the remote CLI (`atlasd machines ...`).
+    pub tokens: crate::tokens::CliTokens,
     /// Sent updates (signed releases).
     pub releases: crate::release::Store,
     /// An update built and waiting for the owner's signature.
@@ -114,6 +118,8 @@ impl Writer {
             started: std::time::Instant::now(),
             first_run,
             clients: crate::clients::Clients::open(state_dir),
+            machines: crate::clients::Machines::open(state_dir),
+            tokens: crate::tokens::CliTokens::open(state_dir),
             releases: crate::release::Store::new(state_dir),
             pending: Mutex::new(None),
         })
@@ -541,6 +547,9 @@ pub(crate) async fn signout(
 struct SettingsPage {
     page: Page,
     keys: Vec<KeyRow>,
+    tokens: Vec<TokenRow>,
+    new_token: Option<NewToken>,
+    token_error: String,
     push_after_save: bool,
     send_on_save: bool,
     /// "3 changes aren't on your machines yet", when some are waiting.
@@ -555,6 +564,18 @@ struct KeyRow {
     added: String,
     added_by: String,
     last_used: String,
+}
+
+struct TokenRow {
+    id: String,
+    name: String,
+    created: String,
+    last_used: String,
+}
+
+struct NewToken {
+    name: String,
+    command: String,
 }
 
 /// Days since the epoch to a civil date (Howard Hinnant's algorithm).
@@ -602,9 +623,28 @@ pub(crate) async fn settings_page(
     if w.auth.session(&headers).is_none() {
         return Ok(Redirect::to(&auth::signin_href("/settings")).into_response());
     }
+    let flash = match q.flash.as_str() {
+        "saved" => "Settings saved.",
+        "removed" => "Passkey removed.",
+        "last" => "That's your only passkey, so it stays.",
+        "sent" => "On your machines within 10 minutes",
+        "token_removed" => "CLI token revoked.",
+        _ => "",
+    };
+    render_settings(&s, &headers, flash, None, String::new()).await
+}
+
+async fn render_settings(
+    s: &AppState,
+    headers: &HeaderMap,
+    flash: &str,
+    new_token: Option<NewToken>,
+    token_error: String,
+) -> Result<Response, AppError> {
+    let w = writer(s)?;
     let snap = s.snapshot().await?;
     let page = s.page(
-        &headers,
+        headers,
         "/settings",
         "Settings",
         &snap,
@@ -623,19 +663,26 @@ pub(crate) async fn settings_page(
             last_used: k.last_used.map_or_else(|| "never".to_owned(), day),
         })
         .collect();
-    let flash = match q.flash.as_str() {
-        "saved" => "Settings saved.",
-        "removed" => "Passkey removed.",
-        "last" => "That's your only passkey, so it stays.",
-        "sent" => "On your machines within 10 minutes",
-        _ => "",
-    };
+    let tokens = w
+        .tokens
+        .list()
+        .into_iter()
+        .map(|t| TokenRow {
+            id: t.id,
+            name: t.name,
+            created: day(t.created),
+            last_used: t.last_used.map_or_else(|| "never".to_owned(), day),
+        })
+        .collect();
     let settings = w.settings();
-    let waiting = crate::distribute::waiting(&s).await.and_then(|w| w.text());
+    let waiting = crate::distribute::waiting(s).await.and_then(|w| w.text());
     Ok(Html(
         SettingsPage {
             page,
             keys,
+            tokens,
+            new_token,
+            token_error,
             push_after_save: settings.push_after_save,
             send_on_save: settings.send_on_save,
             waiting,
@@ -645,6 +692,50 @@ pub(crate) async fn settings_page(
         .render()?,
     )
     .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct TokenForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    name: String,
+}
+
+pub(crate) async fn create_token(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<TokenForm>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to create a CLI token.\n"));
+    }
+    match w.tokens.create(&f.name) {
+        Ok((record, raw)) => {
+            tracing::warn!("CLI token \"{}\" created", record.name);
+            let new = NewToken {
+                name: record.name,
+                command: format!("atlasd auth {} {raw}", w.origin()),
+            };
+            render_settings(&s, &headers, "", Some(new), String::new()).await
+        }
+        Err(msg) => render_settings(&s, &headers, "", None, msg).await,
+    }
+}
+
+pub(crate) async fn remove_token(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(f): Form<CsrfForm>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to revoke a CLI token.\n"));
+    }
+    w.tokens.remove(&id).map_err(AppError::Bad)?;
+    Ok(Redirect::to("/settings?flash=token_removed#cli-tokens").into_response())
 }
 
 #[derive(Deserialize)]

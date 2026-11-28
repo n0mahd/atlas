@@ -15,11 +15,22 @@
 
   document.addEventListener("click", function (event) {
     var toggle = event.target.closest("[data-rail-toggle]");
-    if (!toggle) return;
-    var collapsed = root.getAttribute("data-rail") === "collapsed";
-    if (collapsed) root.removeAttribute("data-rail"); else root.setAttribute("data-rail", "collapsed");
-    store(collapsed ? "open" : "collapsed");
-    toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+    if (toggle) {
+      var collapsed = root.getAttribute("data-rail") === "collapsed";
+      if (collapsed) root.removeAttribute("data-rail"); else root.setAttribute("data-rail", "collapsed");
+      store(collapsed ? "open" : "collapsed");
+      toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+      return;
+    }
+    var copy = event.target.closest("[data-copy]");
+    if (copy && navigator.clipboard && navigator.clipboard.writeText) {
+      var text = copy.getAttribute("data-copy");
+      var original = copy.textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        copy.textContent = "Copied";
+        window.setTimeout(function () { copy.textContent = original; }, 1500);
+      });
+    }
   });
 
   // Pickers marked data-autosubmit submit their form when changed.

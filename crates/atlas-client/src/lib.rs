@@ -17,6 +17,7 @@ pub mod plan;
 pub mod release;
 pub mod report;
 pub mod sources;
+pub mod ssh;
 
 use std::path::Path;
 

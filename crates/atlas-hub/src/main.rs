@@ -78,17 +78,23 @@ fn state_dir(home: &Path, config: &Config) -> PathBuf {
 const USAGE: &str = "usage: atlas-hub                         serve the hub
        atlas-hub setup                   print a one-time link (and QR code) to add a passkey
        atlas-hub pair-code               print a one-time command that installs and pairs atlasd
-       atlas-hub add-machine <you@host>  install and pair atlasd on a machine over SSH";
+       atlas-hub add-machine <you@host>  install and pair atlasd on a machine over SSH
+       atlas-hub token <name>            create a CLI token for managing machines remotely";
 
-/// The hub's origin and a fresh pairing code, for `pair-code` and `add-machine`.
-fn pairing(home: &Path, config: &Config) -> (String, String) {
+/// The hub's public origin from `public_url`.
+fn public_origin(config: &Config) -> String {
     let Some(url) = config.public_url.as_deref() else {
         fail("public_url isn't set in the config, so machines can't pair with this hub");
     };
-    let origin = atlas_signer::Url::parse(url)
+    atlas_signer::Url::parse(url)
         .unwrap_or_else(|e| fail(format!("public_url isn't a valid address: {e}")))
         .origin()
-        .ascii_serialization();
+        .ascii_serialization()
+}
+
+/// The hub's origin and a fresh pairing code, for `pair-code` and `add-machine`.
+fn pairing(home: &Path, config: &Config) -> (String, String) {
+    let origin = public_origin(config);
     let code = atlas_signer::setup::issue_in(
         &state_dir(home, config),
         atlas_signer::setup::PAIRING_CODES,
@@ -96,6 +102,17 @@ fn pairing(home: &Path, config: &Config) -> (String, String) {
     )
     .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));
     (origin, code)
+}
+
+/// `atlas-hub token <name>`: creates a revocable CLI token for another workstation.
+fn create_token(home: &Path, config: &Config, name: &str) {
+    let origin = public_origin(config);
+    let tokens = atlas_web::tokens::CliTokens::open(&state_dir(home, config));
+    let (record, raw) = tokens.create(name).unwrap_or_else(|e| fail(e));
+    println!(
+        "Created CLI token \"{}\" (shown once; revoke anytime in Settings → CLI tokens).\n\nRun on that machine:\n\n  atlasd auth {origin} {raw}",
+        record.name
+    );
 }
 
 /// `atlas-hub pair-code`: the command to run on a machine, for copying by hand.
@@ -163,6 +180,12 @@ async fn subcommand(home: &Path, args: &[String]) -> bool {
                 ));
             };
             add_machine(home, &load_config(home), target).await;
+        }
+        Some("token") => {
+            let [_, name] = args else {
+                fail(format!("token takes a name, such as workstation\n{USAGE}"));
+            };
+            create_token(home, &load_config(home), name);
         }
         Some("-h" | "--help" | "help") => println!("{USAGE}"),
         Some(other) => fail(format!("unknown command {other:?}\n{USAGE}")),

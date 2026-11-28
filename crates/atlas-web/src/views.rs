@@ -137,11 +137,13 @@ fn scope_key(scope: &Scope) -> String {
 impl Page {
     /// `section` is the nav path; `scoped` pages carry the scope in links and show the picker.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         section: &'static str,
         title: impl Into<String>,
         hub: &str,
         others: &[String],
+        clients: &[crate::clients::Client],
         snap: &Snapshot,
         scope: &Scope,
         scoped: bool,
@@ -202,11 +204,30 @@ impl Page {
             checked: true,
             disabled: false,
         }];
-        machines.extend(others.iter().map(|m| Choice {
-            value: m.clone(),
-            label: format!("{m} (not paired)"),
-            checked: false,
-            disabled: true,
+        let mut names: Vec<String> = others
+            .iter()
+            .filter(|m| !m.eq_ignore_ascii_case(hub))
+            .cloned()
+            .collect();
+        for c in clients {
+            if !c.machine.eq_ignore_ascii_case(hub)
+                && !names.iter().any(|n| n.eq_ignore_ascii_case(&c.machine))
+            {
+                names.push(c.machine.clone());
+            }
+        }
+        machines.extend(names.into_iter().map(|m| {
+            let is_paired = clients.iter().any(|c| c.machine.eq_ignore_ascii_case(&m));
+            Choice {
+                label: if is_paired {
+                    format!("{m} (paired)")
+                } else {
+                    format!("{m} (not paired)")
+                },
+                value: m,
+                checked: false,
+                disabled: true,
+            }
         }));
         Self {
             title,
@@ -1618,10 +1639,16 @@ pub fn machines(
     latest: Option<u64>,
 ) -> Vec<Machine> {
     let mut out = vec![hub_machine(snap, hub)];
-    // Other machines: the configured names plus any machine a client paired from.
-    let mut names: Vec<String> = others.to_vec();
+    // Other machines: the tracked names plus any machine a client paired from.
+    let mut names: Vec<String> = others
+        .iter()
+        .filter(|m| !m.eq_ignore_ascii_case(hub))
+        .cloned()
+        .collect();
     for c in clients {
-        if c.machine != hub && !names.contains(&c.machine) {
+        if !c.machine.eq_ignore_ascii_case(hub)
+            && !names.iter().any(|n| n.eq_ignore_ascii_case(&c.machine))
+        {
             names.push(c.machine.clone());
         }
     }
@@ -1636,13 +1663,13 @@ pub fn machines(
     for m in &mut out {
         m.clients = clients
             .iter()
-            .filter(|c| c.machine == m.name)
+            .filter(|c| c.machine.eq_ignore_ascii_case(&m.name))
             .map(|c| paired(c, latest))
             .collect();
         if !m.hub {
             if let Some(report) = clients
                 .iter()
-                .filter(|c| c.machine == m.name)
+                .filter(|c| c.machine.eq_ignore_ascii_case(&m.name))
                 .find_map(|c| c.report.as_ref())
             {
                 m.harnesses = report

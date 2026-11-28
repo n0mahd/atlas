@@ -21,6 +21,7 @@ pub mod remote;
 mod skill_ops;
 mod skills_place;
 mod tidy;
+pub mod tokens;
 mod updates;
 pub mod views;
 
@@ -33,7 +34,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use serde::Deserialize;
 
 use atlas_core::kernel::Scope;
@@ -86,6 +87,9 @@ impl AppState {
     #[must_use]
     pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
         let updates = Arc::new(updates::Updates::new(&sources));
+        if let Some(w) = &writer {
+            w.machines.seed(&others);
+        }
         Self {
             updates,
             sources: Arc::new(sources),
@@ -111,6 +115,12 @@ impl AppState {
         );
         self.updates = Arc::new(updates::Updates::with(api, global_lock));
         self
+    }
+
+    pub(crate) fn known_machines(&self) -> Vec<String> {
+        self.writer
+            .as_ref()
+            .map_or_else(|| self.others.to_vec(), |w| w.machines.list())
     }
 
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
@@ -163,17 +173,22 @@ impl AppState {
         scope: &Scope,
         scoped: bool,
     ) -> Page {
-        let mut page = Page::new(section, title, &self.hub, &self.others, snap, scope, scoped);
+        let others = self.known_machines();
+        let clients = self
+            .writer
+            .as_ref()
+            .map_or_else(Vec::new, |w| w.clients.list());
+        let mut page = Page::new(
+            section, title, &self.hub, &others, &clients, snap, scope, scoped,
+        );
         edit::decorate(&mut page, self, headers);
         page
     }
 }
 
-/// Builds the hub's router.
-pub fn router(state: AppState, access: Access) -> Router {
-    let access = Arc::new(access);
+/// The skills, instructions and import pages (decision 0027).
+fn catalog_routes() -> Router<AppState> {
     Router::new()
-        .route("/", get(overview))
         .route("/skills", get(skills))
         .route(
             "/skills/new",
@@ -211,6 +226,24 @@ pub fn router(state: AppState, access: Access) -> Router {
             "/instructions/claude-agents-md",
             post(instructions_manage::claude_option),
         )
+        .route("/import/skill", post(import::bring_skill))
+        .route("/import/skill/theirs", post(import::take_theirs))
+        .route("/import/skills", post(import::bring_all_skills))
+        .route("/import/note", post(import::bring_note))
+        .route("/import/notes", post(import::bring_all_notes))
+        .route("/import/hook", post(import::bring_hook))
+        .route("/import/hooks", post(import::bring_all_hooks))
+        .route("/import/keep", post(import::keep))
+        .route("/import/compare", get(import::compare))
+        .route("/import/compare-copies", get(tidy::compare_copies))
+}
+
+/// Builds the hub's router.
+pub fn router(state: AppState, access: Access) -> Router {
+    let access = Arc::new(access);
+    Router::new()
+        .route("/", get(overview))
+        .merge(catalog_routes())
         .route("/memory", get(memory))
         .route("/memory/{name}", get(memory_detail))
         .route("/hooks", get(hooks))
@@ -228,17 +261,33 @@ pub fn router(state: AppState, access: Access) -> Router {
             get(edit::settings_page).post(edit::settings_save),
         )
         .route("/settings/keys/{id}/remove", post(edit::remove_key))
+        .route("/settings/tokens", post(edit::create_token))
+        .route("/settings/tokens/{id}/remove", post(edit::remove_token))
         .route("/releases", get(distribute::releases_moved))
         .route("/send/start", post(distribute::send_start))
         .route("/send/finish", post(distribute::send_finish))
         .route("/machines/pair", post(distribute::pair_code))
         .route("/machines/pair/ssh", post(distribute::pair_ssh))
+        .route("/machines/add", post(distribute::add_machine_ui))
+        .route("/machines/forget", post(distribute::forget_machine_ui))
         .route("/machines/{id}/remove", post(distribute::unpair))
         .route("/install", get(install::script))
         .route("/install/{name}", get(install::binary))
         .route("/api/pair", post(distribute::api_pair))
         .route("/api/release", get(distribute::api_release))
         .route("/api/report", post(distribute::api_report))
+        .route(
+            "/api/admin/machines",
+            get(distribute::api_admin_machines).post(distribute::api_admin_add_machine),
+        )
+        .route(
+            "/api/admin/machines/{target}",
+            delete(distribute::api_admin_remove_machine),
+        )
+        .route(
+            "/api/admin/pair-code",
+            post(distribute::api_admin_pair_code),
+        )
         .route(
             "/skills/{home}/{name}/edit",
             get(edit::edit_skill).post(edit::save_skill),
@@ -251,16 +300,6 @@ pub fn router(state: AppState, access: Access) -> Router {
             "/instructions/{scope}/{file}/edit",
             get(edit::edit_instructions).post(edit::save_instructions),
         )
-        .route("/import/skill", post(import::bring_skill))
-        .route("/import/skill/theirs", post(import::take_theirs))
-        .route("/import/skills", post(import::bring_all_skills))
-        .route("/import/note", post(import::bring_note))
-        .route("/import/notes", post(import::bring_all_notes))
-        .route("/import/hook", post(import::bring_hook))
-        .route("/import/hooks", post(import::bring_all_hooks))
-        .route("/import/keep", post(import::keep))
-        .route("/import/compare", get(import::compare))
-        .route("/import/compare-copies", get(tidy::compare_copies))
         .route("/static/{*path}", get(static_file))
         .fallback(not_found)
         .with_state(state)
@@ -414,6 +453,7 @@ struct MachinesPage {
     page: Page,
     machines: Vec<views::Machine>,
     pair_command: Option<String>,
+    pair_target: String,
     ssh_result: Option<SshResult>,
 }
 
@@ -677,15 +717,16 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
 }
 
 async fn machines(State(s): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
-    machines_page(&s, &headers, None, None).await
+    machines_page(&s, &headers, None, None, None).await
 }
 
-/// The Machines page; `pair_command` shows a fresh pairing command once, `ssh_result`
-/// how an install over SSH went.
+/// The Machines page; `pair_command` shows a fresh pairing command once, `pair_target`
+/// optionally names the machine for the SSH variant, `ssh_result` how an install over SSH went.
 pub(crate) async fn machines_page(
     s: &AppState,
     headers: &HeaderMap,
     pair_command: Option<String>,
+    pair_target: Option<String>,
     ssh_result: Option<SshResult>,
 ) -> Result<Response, AppError> {
     let snap = s.snapshot().await?;
@@ -701,17 +742,20 @@ pub(crate) async fn machines_page(
         || (Vec::new(), None),
         |w| (w.clients.list(), w.releases.numbers().last().copied()),
     );
-    let machines = views::machines(&snap, &s.hub, &s.others, &clients, latest);
+    let others = s.known_machines();
+    let machines = views::machines(&snap, &s.hub, &others, &clients, latest);
     let paired = machines
         .iter()
         .filter(|m| m.hub || !m.clients.is_empty())
         .count();
     page.totals = format!("{} machines · {paired} reporting", machines.len());
+    let pair_target = pair_target.unwrap_or_else(|| "you@machine".to_owned());
     Ok(Html(
         MachinesPage {
             page,
             machines,
             pair_command,
+            pair_target,
             ssh_result,
         }
         .render()?,

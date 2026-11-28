@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
-use atlas_core::distribution::{PairRequest, PairResponse, Report};
+use atlas_core::distribution::{
+    AddMachineRequest, MachinesListResponse, PairCodeResponse, PairRequest, PairResponse,
+    RemoveMachineResponse, Report,
+};
 use atlas_core::release::SignedRelease;
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
@@ -79,4 +82,91 @@ pub fn report(hub: &str, token: &str, report: &Report) -> Result<(), String> {
     } else {
         Err(refused(resp))
     }
+}
+
+/// Lists all machines and paired accounts known to the hub (admin CLI token required).
+///
+/// # Errors
+/// The hub is unreachable or refused the CLI token.
+pub fn admin_machines(hub: &str, token: &str) -> Result<MachinesListResponse, String> {
+    let resp = client()?
+        .get(format!("{hub}/api/admin/machines"))
+        .bearer_auth(token)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(refused(resp));
+    }
+    resp.json()
+        .map_err(|e| format!("the hub's answer isn't valid: {e}"))
+}
+
+/// Requests a fresh one-time pairing code and install command from the hub.
+///
+/// # Errors
+/// The hub is unreachable or refused the CLI token.
+pub fn admin_pair_code(hub: &str, token: &str) -> Result<PairCodeResponse, String> {
+    let resp = client()?
+        .post(format!("{hub}/api/admin/pair-code"))
+        .bearer_auth(token)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(refused(resp));
+    }
+    resp.json()
+        .map_err(|e| format!("the hub's answer isn't valid: {e}"))
+}
+
+/// Adds a tracked machine name on the hub.
+///
+/// # Errors
+/// The hub is unreachable or refused the name or token.
+pub fn admin_add_machine(hub: &str, token: &str, name: &str) -> Result<String, String> {
+    let resp = client()?
+        .post(format!("{hub}/api/admin/machines"))
+        .bearer_auth(token)
+        .json(&AddMachineRequest {
+            name: name.to_owned(),
+        })
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(refused(resp));
+    }
+    let added: AddMachineRequest = resp
+        .json()
+        .map_err(|e| format!("the hub's answer isn't valid: {e}"))?;
+    Ok(added.name)
+}
+
+/// Removes a tracked machine (and all its paired clients) or unpairs a single client id.
+///
+/// # Errors
+/// The target has invalid path characters, or the hub is unreachable or refused the request.
+pub fn admin_remove_machine(
+    hub: &str,
+    token: &str,
+    target: &str,
+) -> Result<RemoveMachineResponse, String> {
+    let target = target.trim();
+    if target.is_empty()
+        || !target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(format!(
+            "\"{target}\" isn't a valid machine name or client id."
+        ));
+    }
+    let resp = client()?
+        .delete(format!("{hub}/api/admin/machines/{target}"))
+        .bearer_auth(token)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(refused(resp));
+    }
+    resp.json()
+        .map_err(|e| format!("the hub's answer isn't valid: {e}"))
 }
