@@ -45,7 +45,7 @@ use crate::change::{self, RepoChange};
 use crate::views::Page;
 use crate::{AppError, AppState};
 use github::{GitHub, Problem, RepoTree};
-use plan::{Change, Outcome, Side, Upstream};
+use plan::{Change, Outcome, Side, UpFile, Upstream};
 
 /// Source repositories one check lists; the rest wait for the next.
 pub(crate) const MAX_REPOS: usize = 20;
@@ -331,7 +331,13 @@ fn read_local(folder: &Path) -> Result<Local, String> {
     Ok(Local {
         side: items
             .iter()
-            .map(|i| (i.path.clone(), i.sha.clone()))
+            .map(|i| {
+                let file = UpFile {
+                    sha: i.sha.clone(),
+                    executable: i.mode == "100755",
+                };
+                (i.path.clone(), file)
+            })
             .collect(),
         pin: lock::git_tree_sha(&items),
         raw_sha: lock::git_tree_sha(&all),
@@ -555,7 +561,8 @@ impl Updates {
 enum Fate {
     Theirs,
     Mine,
-    Merged(Vec<u8>),
+    /// The merged bytes, and whether the file is executable (theirs when they changed it).
+    Merged(Vec<u8>, bool),
     Clash,
 }
 
@@ -621,11 +628,20 @@ impl Updates {
                     Outcome::Mine => Fate::Mine,
                     Outcome::Clash => Fate::Clash,
                     Outcome::Merge => {
-                        let base_sha = base.as_ref().and_then(|b| b.get(&p.path));
-                        match (base_sha, &mine, &theirs) {
-                            (Some(sha), Some(m), Some(t)) => {
-                                let b = self.bytes_of(l, &local, sha).await.map_err(sentence)?;
-                                plan::merge3(&b, m, t).map_or(Fate::Clash, Fate::Merged)
+                        let base_file = base.as_ref().and_then(|b| b.get(&p.path));
+                        match (base_file, &mine, &theirs, theirs_file) {
+                            (Some(bf), Some(m), Some(t), Some(tf)) => {
+                                let b =
+                                    self.bytes_of(l, &local, &bf.sha).await.map_err(sentence)?;
+                                let mine_exec =
+                                    local.files.get(&p.path).is_some_and(|f| f.executable);
+                                let exec = if tf.executable == bf.executable {
+                                    mine_exec
+                                } else {
+                                    tf.executable
+                                };
+                                plan::merge3(&b, m, t)
+                                    .map_or(Fate::Clash, |merged| Fate::Merged(merged, exec))
                             }
                             _ => Fate::Clash,
                         }
@@ -908,7 +924,7 @@ fn views(files: &[Prep]) -> Vec<FileView> {
         .map(|(n, f)| {
             let (fate, new): (&'static str, Option<&[u8]>) = match &f.fate {
                 Fate::Theirs => ("Takes theirs", f.theirs.as_deref()),
-                Fate::Merged(m) => ("Merged with your edits", Some(m)),
+                Fate::Merged(m, _) => ("Merged with your edits", Some(m)),
                 Fate::Mine => ("Keeps yours", None),
                 Fate::Clash => ("Clash: choose", f.theirs.as_deref()),
             };
@@ -920,6 +936,7 @@ fn views(files: &[Prep]) -> Vec<FileView> {
             let (lines, note) = match shown {
                 _ if matches!(f.fate, Fate::Mine) => (Vec::new(), "Only you changed it."),
                 None => (Vec::new(), "Binary or too large to show."),
+                Some(lines) if lines.is_empty() => (Vec::new(), "Only its execute bit changes."),
                 Some(lines) => {
                     let size: usize = lines.iter().map(|l| l.text.len() + 1).sum();
                     if size > budget {
@@ -1081,9 +1098,8 @@ fn resolve(prepared: &Prepared, fields: &[(String, String)]) -> Result<(NewFiles
         let take_theirs = match &f.fate {
             Fate::Mine => false,
             Fate::Theirs => true,
-            Fate::Merged(bytes) => {
-                let exec = files.get(&f.path).is_some_and(|(_, x)| *x);
-                files.insert(f.path.clone(), (Arc::from(bytes.as_slice()), exec));
+            Fate::Merged(bytes, exec) => {
+                files.insert(f.path.clone(), (Arc::from(bytes.as_slice()), *exec));
                 touched = true;
                 false
             }

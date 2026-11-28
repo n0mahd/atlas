@@ -1,7 +1,8 @@
 //! The pure part of updating a skill: finding its folder in a source listing, what an
 //! update does to each file, the three-way merge and the diff shown before anything is
-//! written. A folder is compared as a map from each file's path to its git blob SHA, so a
-//! local folder and a GitHub listing compare without downloading anything.
+//! written. A folder is compared as a map from each file's path to its git blob SHA and
+//! execute bit, so a local folder and a GitHub listing compare without downloading
+//! anything, and a file that only became executable counts as changed.
 
 use std::collections::BTreeMap;
 
@@ -9,11 +10,11 @@ use atlas_fs::lock::{GitHubSource, is_ignored_path, is_safe_rel};
 
 use super::github::{Entry, RepoTree};
 
-/// The compared files of a folder: path → blob SHA. Ignored paths are left out.
-pub(crate) type Side = BTreeMap<String, String>;
+/// The compared files of a folder: path → blob SHA and mode. Ignored paths are left out.
+pub(crate) type Side = BTreeMap<String, UpFile>;
 
-/// A file of a source folder, relative to that folder.
-#[derive(Clone, Debug)]
+/// A file of a folder, relative to that folder: its blob SHA and whether it is executable.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UpFile {
     pub sha: String,
     pub executable: bool,
@@ -117,7 +118,7 @@ pub(crate) fn upstream_of(entries: &[Entry], folder: &str, sha: &str) -> Upstrea
     let side = files
         .iter()
         .filter(|(p, _)| !is_ignored_path(p))
-        .map(|(p, f)| (p.clone(), f.sha.clone()))
+        .map(|(p, f)| (p.clone(), f.clone()))
         .collect();
     Upstream {
         sha: sha.to_owned(),
@@ -274,8 +275,34 @@ mod tests {
     fn side(files: &[(&str, &str)]) -> Side {
         files
             .iter()
-            .map(|(p, s)| ((*p).to_owned(), (*s).to_owned()))
+            .map(|(p, s)| {
+                let executable = s.ends_with('x');
+                let sha = s.trim_end_matches('x').to_owned();
+                ((*p).to_owned(), UpFile { sha, executable })
+            })
             .collect()
+    }
+
+    #[test]
+    fn a_mode_change_is_a_change() {
+        // run.sh keeps its bytes upstream but becomes executable (`x`).
+        let base = side(&[("SKILL.md", "b1"), ("run.sh", "r1")]);
+        let theirs = side(&[("SKILL.md", "b1"), ("run.sh", "r1x")]);
+        let plan = plan_files(&base, &theirs, Some(&base));
+        assert_eq!(
+            plan,
+            [Planned {
+                path: "run.sh".to_owned(),
+                change: Change::Modified,
+                outcome: Outcome::Theirs,
+            }]
+        );
+        // The owner made it executable themselves: theirs is unchanged, so it's theirs.
+        let mine = side(&[("SKILL.md", "b1"), ("run.sh", "r1x")]);
+        assert_eq!(
+            plan_files(&mine, &base, Some(&base))[0].outcome,
+            Outcome::Mine
+        );
     }
 
     #[test]

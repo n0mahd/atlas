@@ -811,3 +811,56 @@ async fn redirects_stay_on_the_apis_origin() {
         row(&page, "docs")
     );
 }
+
+/// A script that only became executable upstream is an update, and updating sets the bit.
+#[tokio::test]
+async fn an_execute_bit_change_is_an_update() {
+    let v1: Files<'_> = &[
+        ("SKILL.md", "---\nname: tool\n---\nRun it.\n", false),
+        ("run.sh", "#!/bin/sh\necho hi\n", false),
+    ];
+    let v2: Files<'_> = &[
+        (
+            "skills/tool/SKILL.md",
+            "---\nname: tool\n---\nRun it.\n",
+            false,
+        ),
+        ("skills/tool/run.sh", "#!/bin/sh\necho hi\n", true),
+    ];
+    let mut canned = Canned::default();
+    canned.repo("acme/skills", v2);
+    let (api, _) = stand_in(canned).await;
+    let global = global_lock(&[("tool", &tree_sha(v1))]);
+    let hub = hub(
+        &api,
+        |home| home.join(".agents/.skill-lock.json"),
+        |k, _| write_skill(&k.join("skills/tool"), v1),
+    );
+    write(&hub.home.join(".agents/.skill-lock.json"), &global);
+
+    let page = hub.check().await;
+    assert!(
+        row(&page, "tool").contains(">Update available · <span"),
+        "{}",
+        row(&page, "tool")
+    );
+    let (_, preview) = hub.get("/skills/private/tool/update").await;
+    assert!(
+        preview.contains("Only its execute bit changes."),
+        "{preview}"
+    );
+    let (status, _, body) = hub.update("private", "tool", &[]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = fs::metadata(hub.knowledge.join("skills/tool/run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_ne!(mode & 0o111, 0, "the script is executable now");
+    let (_, page) = hub.get("/skills/updates").await;
+    assert!(
+        row(&page, "tool").contains(">Current · <span"),
+        "{}",
+        row(&page, "tool")
+    );
+}
