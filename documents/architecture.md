@@ -195,6 +195,12 @@ them and the hub hands them out).
 | Tampering in transit or at GitHub | Signature and tree-hash checks in atlasd. |
 | Supply chain | Locked dependencies, pinned toolchain, CI with pinned actions. Planned: cargo-deny and signed binaries. |
 
+## Verification
+`e2e/` (Playwright, dev-only) runs the real hub and atlasd in throwaway worlds and drives
+every feature as the owner would. The project skill `.agents/skills/verify` explains how
+to run it and how to read the evidence, and its `features/` map defines coverage; the
+`feature_map` test in `atlas-web` keeps the map in step with the router (decision 00XX).
+
 ## Data on disk (source of truth, in git)
 | Item | Location |
 |---|---|

@@ -1,0 +1,15 @@
+{
+  "name": "atlas-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end verification of Atlas: a throwaway hub and atlasd driven as the owner would. See .agents/skills/verify/SKILL.md.",
+  "scripts": {
+    "verify": "playwright test",
+    "perf": "ATLAS_VERIFY_PERF=1 ATLAS_VERIFY_WORKERS=1 playwright test --project desktop",
+    "report": "playwright show-report ../target/verify/latest/report"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.1",
+    "@playwright/test": "1.65.1"
+  }
+}
