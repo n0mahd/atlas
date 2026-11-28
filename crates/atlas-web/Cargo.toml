@@ -12,6 +12,7 @@ askama.workspace = true
 atlas-core = { path = "../atlas-core" }
 atlas-fs = { path = "../atlas-fs" }
 atlas-git = { path = "../atlas-git" }
+atlas-harness = { path = "../atlas-harness" }
 atlas-signer = { path = "../atlas-signer" }
 atlas-verify = { path = "../atlas-verify" }
 sha2 = "0.10"
@@ -23,7 +24,12 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { workspace = true, features = ["process", "time", "io-util"] }
 tracing.workspace = true
 
+[features]
+# Lets this crate's HTTP tests start a signed-in session (`Writer::test_session`).
+testing = []
+
 [dev-dependencies]
+atlas-web = { path = ".", features = ["testing"] }
 tempfile.workspace = true
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 tower.workspace = true

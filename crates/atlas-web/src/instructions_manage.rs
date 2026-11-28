@@ -24,10 +24,10 @@ use std::sync::Arc;
 use askama::Template;
 use atlas_core::catalog::edit::RepoKind;
 use atlas_core::catalog::{ClaudeAgentsMd, PLACEMENTS_FILE};
-use atlas_core::kernel::{HarnessKind, Scope, Slug};
+use atlas_core::kernel::{HarnessKind, Slug};
 use atlas_fs::Sources;
 use atlas_harness::instructions::{
-    append_section, claude_choice, contained, exclude_with, imports_path, read_claude_agents_md,
+    append_section, claude_choice, contained, imports_path, read_claude_agents_md,
     without_imports_of,
 };
 use atlas_harness::readers::{
@@ -141,7 +141,11 @@ fn is_global(path: &Path, globals: &[PathBuf]) -> bool {
     fs::canonicalize(path).is_ok_and(|c| globals.contains(&c))
 }
 
-fn home_file(sources: &Sources, path: &Path, globals: &[PathBuf]) -> Option<(HomeFile, Option<String>)> {
+fn home_file(
+    sources: &Sources,
+    path: &Path,
+    globals: &[PathBuf],
+) -> Option<(HomeFile, Option<String>)> {
     let meta = fs::symlink_metadata(path).ok()?;
     if meta.file_type().is_symlink() {
         let kind = if is_global(path, globals) {
@@ -225,9 +229,10 @@ fn git_ignores(root: &Path, name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Reads everything the Instructions pages show about this machine. Blocking.
+/// Reads everything the Instructions pages show about this machine. Blocking. `placed`
+/// is the owner's Claude choice from the snapshot's placements.
 #[must_use]
-pub fn read_facts(sources: &Sources) -> InstructionFacts {
+pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> InstructionFacts {
     let globals = globals(sources);
     let mut out = InstructionFacts::default();
     for layout in atlas_harness::layouts() {
@@ -244,7 +249,9 @@ pub fn read_facts(sources: &Sources) -> InstructionFacts {
         let also = home.also_reads.iter().map(|a| a.file);
         for rel in home.files.iter().copied().chain(also) {
             if let Some((kind, text)) = home_file(sources, &sources.home.join(rel), &globals) {
-                if rel == home.shared && matches!(kind, HomeFile::Own | HomeFile::ImportsGlobal { own: true }) {
+                if rel == home.shared
+                    && matches!(kind, HomeFile::Own | HomeFile::ImportsGlobal { own: true })
+                {
                     agent.own_text = text;
                 }
                 agent.files.insert(rel.to_owned(), kind);
@@ -253,11 +260,10 @@ pub fn read_facts(sources: &Sources) -> InstructionFacts {
         out.homes.insert(layout.kind, agent);
     }
     for p in &sources.projects {
-        out.projects.insert(p.name.clone(), project_facts(sources, &p.root));
+        out.projects
+            .insert(p.name.clone(), project_facts(sources, &p.root));
     }
-    out.claude.placed = atlas_fs::library::read_placements(&sources.knowledge)
-        .ok()
-        .and_then(|(p, _)| p.instructions.claude_reads_agents_md);
+    out.claude.placed = placed;
     let settings = sources.home.join(".claude/settings.json");
     if let Ok(Some(text)) = read_text(&settings) {
         out.claude.machine = read_claude_agents_md(Some(text.as_bytes()));
@@ -265,9 +271,10 @@ pub fn read_facts(sources: &Sources) -> InstructionFacts {
     out
 }
 
-async fn facts(s: &AppState) -> Result<InstructionFacts, AppError> {
+async fn facts(s: &AppState, snap: &views::Snapshot) -> Result<InstructionFacts, AppError> {
     let sources = Arc::clone(&s.sources);
-    tokio::task::spawn_blocking(move || read_facts(&sources))
+    let placed = snap.catalog.placements.instructions.claude_reads_agents_md;
+    tokio::task::spawn_blocking(move || read_facts(&sources, placed))
         .await
         .map_err(|_| AppError::Internal)
 }
@@ -326,12 +333,14 @@ pub(crate) struct Extra {
 }
 
 fn extra_flash(page: &mut Page, extra: &Extra) {
-    if extra.local.is_some() {
-        page.flash = "Made CLAUDE.local.md. It is kept out of git, so git can't undo it; delete the file to undo.".to_owned();
-    }
-    if extra.kept.is_some() {
-        page.flash = "Its text is in Global now, but the project file changed meanwhile, so it was kept.".to_owned();
-    }
+    let text = if extra.local.is_some() {
+        "Made CLAUDE.local.md. It is kept out of git, so git can't undo it; delete the file to undo."
+    } else if extra.kept.is_some() {
+        "Its text is in Global now, but the project file changed meanwhile, so it was kept."
+    } else {
+        return;
+    };
+    text.clone_into(&mut page.flash);
 }
 
 pub(crate) async fn list(
@@ -340,10 +349,17 @@ pub(crate) async fn list(
     Query(q): Query<ListQuery>,
 ) -> PageResult {
     let snap = s.snapshot().await?;
-    let facts = facts(&s).await?;
+    let facts = facts(&s, &snap).await?;
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::instructions(&snap, &scope, &facts);
-    let mut page = s.page(&headers, "/instructions", "Instructions", &snap, &scope, true);
+    let mut page = s.page(
+        &headers,
+        "/instructions",
+        "Instructions",
+        &snap,
+        &scope,
+        true,
+    );
     q.apply(&mut page);
     page.totals = format!("{} files", v.files);
     Ok(Html(ListPage { page, v }.render()?))
@@ -357,10 +373,18 @@ pub(crate) async fn detail(
     Query(extra): Query<Extra>,
 ) -> PageResult {
     let snap = s.snapshot().await?;
-    let facts = facts(&s).await?;
-    let v = views::instruction_detail(&snap, &scope_key, &file, &facts).ok_or(AppError::NotFound)?;
+    let facts = facts(&s, &snap).await?;
+    let v =
+        views::instruction_detail(&snap, &scope_key, &file, &facts).ok_or(AppError::NotFound)?;
     let scope = views::resolve_scope(&snap, &scope_key);
-    let mut page = s.page(&headers, "/instructions", v.title.clone(), &snap, &scope, false);
+    let mut page = s.page(
+        &headers,
+        "/instructions",
+        v.title.clone(),
+        &snap,
+        &scope,
+        false,
+    );
     q.apply(&mut page);
     extra_flash(&mut page, &extra);
     page.edit_href = (s.writer.is_some() && v.editable)
@@ -416,10 +440,20 @@ fn parse(sources: &Sources, scope: &str, file: &str, action: &str) -> Option<Op>
 /// A file a change writes or removes.
 #[derive(Clone, Debug)]
 enum Write {
-    Put { root: PathBuf, rel: &'static str, text: String },
-    Remove { root: PathBuf, rel: &'static str },
+    Put {
+        root: PathBuf,
+        rel: &'static str,
+        text: String,
+    },
+    Remove {
+        root: PathBuf,
+        rel: &'static str,
+    },
     /// Atlas's block in `.git/info/exclude` gets `/<rel>`.
-    Exclude { root: PathBuf, rel: &'static str },
+    Exclude {
+        root: PathBuf,
+        rel: &'static str,
+    },
     ClaudeAlongside,
 }
 
@@ -468,253 +502,358 @@ fn git_note(project: &str) -> String {
     format!("One commit in {project}; git can undo it.")
 }
 
-fn plan(sources: &Sources, facts: &InstructionFacts, op: &Op, create_text: &str) -> Result<Planned, String> {
-    let knowledge = sources.knowledge.clone();
-    let global = knowledge.join("AGENTS.md");
-    let knowledge_change = |message: String, paths: Vec<PathBuf>| RepoChange {
-        kind: RepoKind::Knowledge,
-        root: knowledge.clone(),
-        paths,
-        message,
+fn plan(
+    sources: &Sources,
+    facts: &InstructionFacts,
+    op: &Op,
+    create_text: &str,
+) -> Result<Planned, String> {
+    let mut planned = match op {
+        Op::UseGlobal(kind) => plan_use_global(sources, facts, *kind)?,
+        Op::ToAgents(project) => plan_to_agents(sources, facts, project)?,
+        Op::ToGlobal(project, file) => plan_to_global(sources, project, file)?,
+        Op::FromGlobal(project) => plan_from_global(sources, project)?,
+        Op::Create(project, file) => plan_create(sources, project, file, create_text)?,
     };
-    let mut c = Confirm::default();
-    let planned = match op {
-        Op::UseGlobal(kind) => {
-            let agent = facts
-                .homes
-                .get(kind)
-                .ok_or("That agent isn't set up on this machine.")?;
-            let own = agent
-                .own_text
-                .clone()
-                .ok_or_else(|| format!("{} has no text of its own.", agent.shown))?;
-            let home = readers_of(*kind).and_then(|r| r.home).ok_or("unknown agent")?;
-            let path = sources.home.join(home.shared);
-            let own = without_imports_of(
-                &own,
-                &global,
-                path.parent().unwrap_or(&sources.home),
-                &sources.home,
-            );
-            let current = read_text(&global)
-                .map_err(|e| format!("Global can't be used: {e}."))?
-                .unwrap_or_default();
-            let joined = append_section(&current, &agent.shown, &own);
-            check_size(&joined, "Global")?;
-            c.lines.push(if joined == current {
-                format!("Every line of {} is already in Global, so Global stays as it is.", agent.shown)
-            } else {
-                format!("{}'s text is added to the end of Global.", agent.shown)
-            });
-            c.lines.push(format!(
-                "Then on each machine atlasd replaces {} with Global's {}, but only where every line of that machine's file is in Global. Any other file stays and is reported.",
-                agent.shown,
-                if *kind == HarnessKind::ClaudeCode { "import" } else { "link" }
-            ));
-            c.preview = own;
-            c.undo = "One commit in your knowledge repo; git can undo it. Machines keep the agent's file until the update arrives.".to_owned();
-            c.button = "Use Global instead".to_owned();
-            c.sends = true;
-            Planned {
-                repos: vec![knowledge_change(
-                    format!("Add {}'s instructions to Global", agent.shown),
-                    vec![PathBuf::from("AGENTS.md")],
-                )],
-                writes: vec![Write::Put { root: knowledge.clone(), rel: "AGENTS.md", text: joined }],
-                inputs: vec![path, global.clone()],
-                remove_after: None,
-                next: "/instructions".to_owned(),
-                confirm: c,
-            }
+    planned.confirm.base = fingerprint(&planned.inputs)?;
+    Ok(planned)
+}
+
+fn root_of(sources: &Sources, project: &Slug) -> Result<PathBuf, String> {
+    project_root(sources, project.as_str())
+        .map(|(_, root)| root)
+        .ok_or_else(|| "That project isn't registered.".to_owned())
+}
+
+fn global_text(global: &Path) -> Result<String, String> {
+    Ok(read_text(global)
+        .map_err(|e| format!("Global can't be used: {e}."))?
+        .unwrap_or_default())
+}
+
+fn knowledge_change(sources: &Sources, message: String) -> RepoChange {
+    RepoChange {
+        kind: RepoKind::Knowledge,
+        root: sources.knowledge.clone(),
+        paths: vec![PathBuf::from("AGENTS.md")],
+        message,
+    }
+}
+
+fn project_change(root: &Path, project: &Slug, paths: &[&str], message: String) -> RepoChange {
+    RepoChange {
+        kind: RepoKind::Project(project.clone()),
+        root: root.to_path_buf(),
+        paths: paths.iter().map(PathBuf::from).collect(),
+        message,
+    }
+}
+
+fn plan_use_global(
+    sources: &Sources,
+    facts: &InstructionFacts,
+    kind: HarnessKind,
+) -> Result<Planned, String> {
+    let global = sources.knowledge.join("AGENTS.md");
+    let agent = facts
+        .homes
+        .get(&kind)
+        .ok_or("That agent isn't set up on this machine.")?;
+    let own = agent
+        .own_text
+        .clone()
+        .ok_or_else(|| format!("{} has no text of its own.", agent.shown))?;
+    let home = readers_of(kind)
+        .and_then(|r| r.home)
+        .ok_or("That agent has no home file.")?;
+    let path = sources.home.join(home.shared);
+    let dir = path.parent().unwrap_or(&sources.home);
+    let own = without_imports_of(&own, &global, dir, &sources.home);
+    let current = global_text(&global)?;
+    let joined = append_section(&current, &agent.shown, &own);
+    check_size(&joined, "Global")?;
+    let first = if joined == current {
+        format!(
+            "Every line of {} is already in Global, so Global stays as it is.",
+            agent.shown
+        )
+    } else {
+        format!("{}'s text is added to the end of Global.", agent.shown)
+    };
+    let joins = if kind == HarnessKind::ClaudeCode {
+        "import"
+    } else {
+        "link"
+    };
+    Ok(Planned {
+        confirm: Confirm {
+            lines: vec![
+                first,
+                format!(
+                    "Then on each machine atlasd replaces {} with Global's {joins}, but only where every line of that machine's file is in Global. Any other file stays and is reported.",
+                    agent.shown
+                ),
+            ],
+            preview: own,
+            undo: "One commit in your knowledge repo; git can undo it. Machines keep the agent's file until the update arrives.".to_owned(),
+            button: "Use Global instead".to_owned(),
+            sends: true,
+            ..Confirm::default()
+        },
+        repos: vec![knowledge_change(
+            sources,
+            format!("Add {}'s instructions to Global", agent.shown),
+        )],
+        writes: vec![Write::Put {
+            root: sources.knowledge.clone(),
+            rel: "AGENTS.md",
+            text: joined,
+        }],
+        inputs: vec![path, global],
+        remove_after: None,
+        next: "/instructions".to_owned(),
+    })
+}
+
+fn plan_to_agents(
+    sources: &Sources,
+    facts: &InstructionFacts,
+    project: &Slug,
+) -> Result<Planned, String> {
+    let root = root_of(sources, project)?;
+    let claude_md = root.join("CLAUDE.md");
+    let agents_md = root.join("AGENTS.md");
+    let text = need(read_text(&claude_md), "CLAUDE.md")?;
+    let pf = facts.projects.get(project).cloned().unwrap_or_default();
+    if pf.claude_points_at_agents {
+        return Err("CLAUDE.md only points at AGENTS.md already.".to_owned());
+    }
+    let agents = read_text(&agents_md).map_err(|e| format!("AGENTS.md can't be used: {e}."))?;
+    // A line importing AGENTS.md would only point AGENTS.md at itself.
+    let own = without_imports_of(&text, &agents_md, &root, &sources.home);
+    let (joined, merge) = match &agents {
+        Some(a) => (append_section(a, "CLAUDE.md", &own), true),
+        None => (own.clone(), false),
+    };
+    check_size(&joined, "AGENTS.md")?;
+    // Would Claude still skip AGENTS.md afterwards?
+    let mut after = pf.present.clone();
+    after.remove("CLAUDE.md");
+    after.entry("AGENTS.md".to_owned()).or_default();
+    let offer_claude = match project_access(
+        HarnessKind::ClaudeCode,
+        "AGENTS.md",
+        &after,
+        facts.claude.effective(),
+    ) {
+        Access::None(Why::ClaudeFiles(f)) => {
+            format!("Claude would still skip AGENTS.md here while {f} is there.")
         }
-        Op::ToAgents(project) => {
-            let (_, root) = project_root(sources, project.as_str()).ok_or("unknown project")?;
-            let claude_md = root.join("CLAUDE.md");
-            let agents_md = root.join("AGENTS.md");
-            let text = need(read_text(&claude_md), "CLAUDE.md")?;
-            let pf = facts.projects.get(project).cloned().unwrap_or_default();
-            if pf.claude_points_at_agents {
-                return Err("CLAUDE.md only points at AGENTS.md already.".to_owned());
-            }
-            let agents = read_text(&agents_md).map_err(|e| format!("AGENTS.md can't be used: {e}."))?;
-            let own = without_imports_of(&text, &agents_md, &root, &sources.home);
-            let (joined, merge) = match &agents {
-                Some(a) => (append_section(a, "CLAUDE.md", &own), true),
-                None => (own.clone(), false),
-            };
-            check_size(&joined, "AGENTS.md")?;
-            c.lines.push(if merge {
-                "CLAUDE.md's text is added to the end of AGENTS.md, then CLAUDE.md is deleted.".to_owned()
+        Access::None(_) => {
+            "Claude would still skip AGENTS.md: its AGENTS.md option is off.".to_owned()
+        }
+        _ => String::new(),
+    };
+    Ok(Planned {
+        confirm: Confirm {
+            lines: vec![if merge {
+                "CLAUDE.md's text is added to the end of AGENTS.md, then CLAUDE.md is deleted."
+                    .to_owned()
             } else {
                 "CLAUDE.md becomes AGENTS.md, so every agent reads it.".to_owned()
-            });
-            // Would Claude still skip AGENTS.md afterwards?
-            let mut after = pf.present.clone();
-            after.remove("CLAUDE.md");
-            after.entry("AGENTS.md".to_owned()).or_default();
-            if let Access::None(why) = project_access(
-                HarnessKind::ClaudeCode,
-                "AGENTS.md",
-                &after,
-                facts.claude.effective(),
-            ) {
-                c.offer_claude = match why {
-                    Why::ClaudeFiles(f) => format!(
-                        "Claude would still skip AGENTS.md here while {f} is there."
-                    ),
-                    _ => "Claude would still skip AGENTS.md: its AGENTS.md option is off.".to_owned(),
-                };
+            }],
+            preview: own,
+            undo: git_note(project.as_str()),
+            button: if merge {
+                "Merge into AGENTS.md"
+            } else {
+                "Make it AGENTS.md"
             }
-            c.preview = own;
-            c.undo = git_note(project.as_str());
-            c.button = if merge { "Merge into AGENTS.md" } else { "Make it AGENTS.md" }.to_owned();
-            Planned {
-                repos: vec![RepoChange {
-                    kind: RepoKind::Project(project.clone()),
-                    root: root.clone(),
-                    paths: vec![PathBuf::from("AGENTS.md"), PathBuf::from("CLAUDE.md")],
-                    message: if merge {
-                        "Merge CLAUDE.md into AGENTS.md in Atlas".to_owned()
-                    } else {
-                        "Rename CLAUDE.md to AGENTS.md in Atlas".to_owned()
-                    },
-                }],
-                writes: vec![
-                    Write::Put { root: root.clone(), rel: "AGENTS.md", text: joined },
-                    Write::Remove { root: root.clone(), rel: "CLAUDE.md" },
-                ],
-                inputs: vec![claude_md, agents_md],
-                remove_after: None,
-                next: format!("/instructions/{project}/AGENTS.md"),
-                confirm: c,
-            }
-        }
-        Op::ToGlobal(project, file) => {
-            let (_, root) = project_root(sources, project.as_str()).ok_or("unknown project")?;
-            let path = root.join(file);
-            let text = need(read_text(&path), file)?;
-            let current = read_text(&global)
-                .map_err(|e| format!("Global can't be used: {e}."))?
-                .unwrap_or_default();
-            let own = without_imports_of(&text, &global, &root, &sources.home);
-            let from = format!("{project}/{file}");
-            let joined = append_section(&current, &from, &own);
-            check_size(&joined, "Global")?;
-            let local = *file == "CLAUDE.local.md";
-            c.lines.push(format!(
+            .to_owned(),
+            offer_claude,
+            ..Confirm::default()
+        },
+        repos: vec![project_change(
+            &root,
+            project,
+            &["AGENTS.md", "CLAUDE.md"],
+            if merge {
+                "Merge CLAUDE.md into AGENTS.md in Atlas".to_owned()
+            } else {
+                "Rename CLAUDE.md to AGENTS.md in Atlas".to_owned()
+            },
+        )],
+        writes: vec![
+            Write::Put {
+                root: root.clone(),
+                rel: "AGENTS.md",
+                text: joined,
+            },
+            Write::Remove {
+                root,
+                rel: "CLAUDE.md",
+            },
+        ],
+        inputs: vec![claude_md, agents_md],
+        remove_after: None,
+        next: format!("/instructions/{project}/AGENTS.md"),
+    })
+}
+
+fn plan_to_global(
+    sources: &Sources,
+    project: &Slug,
+    file: &'static str,
+) -> Result<Planned, String> {
+    let root = root_of(sources, project)?;
+    let global = sources.knowledge.join("AGENTS.md");
+    let path = root.join(file);
+    let text = need(read_text(&path), file)?;
+    let current = global_text(&global)?;
+    let own = without_imports_of(&text, &global, &root, &sources.home);
+    let from = format!("{project}/{file}");
+    let joined = append_section(&current, &from, &own);
+    check_size(&joined, "Global")?;
+    let local = file == "CLAUDE.local.md";
+    let mut repos = vec![knowledge_change(sources, format!("Add {from} to Global"))];
+    let mut writes = vec![Write::Put {
+        root: sources.knowledge.clone(),
+        rel: "AGENTS.md",
+        text: joined,
+    }];
+    let mut remove_after = None;
+    if local {
+        remove_after = Some((path.clone(), text));
+    } else {
+        // Global gains the text first, so a failure part way leaves a copy, not a loss.
+        repos.push(project_change(
+            &root,
+            project,
+            &[file],
+            format!("Move {file} to Global in Atlas"),
+        ));
+        writes.push(Write::Remove { root, rel: file });
+    }
+    Ok(Planned {
+        confirm: Confirm {
+            lines: vec![format!(
                 "{file}'s text is added to the end of Global, then {file} is deleted from {project}."
-            ));
-            c.preview = own;
-            c.undo = if local {
-                format!("Global's change is one commit and git can undo it. CLAUDE.local.md isn't in git, so git can't bring it back once it's deleted; its text stays in Global.")
+            )],
+            preview: own,
+            undo: if local {
+                "Global's change is one commit and git can undo it. CLAUDE.local.md isn't in git, so git can't bring it back once it's deleted; its text stays in Global.".to_owned()
             } else {
                 format!("Two commits, Global first, then {project}; git can undo both.")
-            };
-            c.button = "Move to Global".to_owned();
-            c.sends = true;
-            let mut repos = vec![knowledge_change(
-                format!("Add {from} to Global"),
-                vec![PathBuf::from("AGENTS.md")],
-            )];
-            let mut writes = vec![Write::Put { root: knowledge.clone(), rel: "AGENTS.md", text: joined }];
-            let mut remove_after = None;
-            if local {
-                remove_after = Some((path.clone(), text));
-            } else {
-                repos.push(RepoChange {
-                    kind: RepoKind::Project(project.clone()),
-                    root: root.clone(),
-                    paths: vec![PathBuf::from(*file)],
-                    message: format!("Move {file} to Global in Atlas"),
-                });
-                writes.push(Write::Remove { root: root.clone(), rel: file });
-            }
-            Planned {
-                repos,
-                writes,
-                inputs: vec![path, global.clone()],
-                remove_after,
-                next: "/instructions/global/AGENTS.md".to_owned(),
-                confirm: c,
-            }
-        }
-        Op::FromGlobal(project) => {
-            let (_, root) = project_root(sources, project.as_str()).ok_or("unknown project")?;
-            let agents_md = root.join("AGENTS.md");
-            let text = need(read_text(&global), "Global")?;
-            let current = read_text(&agents_md)
-                .map_err(|e| format!("AGENTS.md can't be used: {e}."))?
-                .unwrap_or_default();
-            let joined = append_section(&current, "Global AGENTS.md", &text);
-            check_size(&joined, "AGENTS.md")?;
-            c.lines.push(if joined == current {
+            },
+            button: "Move to Global".to_owned(),
+            sends: true,
+            ..Confirm::default()
+        },
+        repos,
+        writes,
+        inputs: vec![path, global],
+        remove_after,
+        next: "/instructions/global/AGENTS.md".to_owned(),
+    })
+}
+
+fn plan_from_global(sources: &Sources, project: &Slug) -> Result<Planned, String> {
+    let root = root_of(sources, project)?;
+    let global = sources.knowledge.join("AGENTS.md");
+    let agents_md = root.join("AGENTS.md");
+    let text = need(read_text(&global), "Global")?;
+    let current = read_text(&agents_md)
+        .map_err(|e| format!("AGENTS.md can't be used: {e}."))?
+        .unwrap_or_default();
+    let joined = append_section(&current, "Global AGENTS.md", &text);
+    check_size(&joined, "AGENTS.md")?;
+    Ok(Planned {
+        confirm: Confirm {
+            lines: vec![if joined == current {
                 format!("{project}'s AGENTS.md already has every line of Global.")
             } else {
-                format!("Global's text is added to the end of {project}'s AGENTS.md. Global stays as it is.")
-            });
-            c.preview = text;
-            c.undo = git_note(project.as_str());
-            c.button = "Copy to this project".to_owned();
-            Planned {
-                repos: vec![RepoChange {
-                    kind: RepoKind::Project(project.clone()),
-                    root: root.clone(),
-                    paths: vec![PathBuf::from("AGENTS.md")],
-                    message: "Copy Global's instructions into AGENTS.md in Atlas".to_owned(),
-                }],
-                writes: vec![Write::Put { root: root.clone(), rel: "AGENTS.md", text: joined }],
-                inputs: vec![global.clone(), agents_md],
-                remove_after: None,
-                next: format!("/instructions/{project}/AGENTS.md"),
-                confirm: c,
-            }
-        }
-        Op::Create(project, file) => {
-            let (_, root) = project_root(sources, project.as_str()).ok_or("unknown project")?;
-            let path = root.join(file);
-            if fs::symlink_metadata(&path).is_ok() {
-                return Err(format!("{project} already has {file}."));
-            }
-            let text = atlas_core::catalog::edit::prepare(create_text, true).map_err(|e| e.to_string())?;
-            let local = *file == "CLAUDE.local.md";
-            if local && !root.join(".git").is_dir() {
-                return Err("This checkout's .git isn't a folder (a worktree?), so Atlas can't keep CLAUDE.local.md out of git here.".to_owned());
-            }
-            c.lines.push(format!("A new {file} in {project}."));
-            c.undo = if local {
+                format!(
+                    "Global's text is added to the end of {project}'s AGENTS.md. Global stays as it is."
+                )
+            }],
+            preview: text,
+            undo: git_note(project.as_str()),
+            button: "Copy to this project".to_owned(),
+            ..Confirm::default()
+        },
+        repos: vec![project_change(
+            &root,
+            project,
+            &["AGENTS.md"],
+            "Copy Global's instructions into AGENTS.md in Atlas".to_owned(),
+        )],
+        writes: vec![Write::Put {
+            root,
+            rel: "AGENTS.md",
+            text: joined,
+        }],
+        inputs: vec![global, agents_md],
+        remove_after: None,
+        next: format!("/instructions/{project}/AGENTS.md"),
+    })
+}
+
+fn plan_create(
+    sources: &Sources,
+    project: &Slug,
+    file: &'static str,
+    text: &str,
+) -> Result<Planned, String> {
+    let root = root_of(sources, project)?;
+    let path = root.join(file);
+    if fs::symlink_metadata(&path).is_ok() {
+        return Err(format!("{project} already has {file}."));
+    }
+    let text = atlas_core::catalog::edit::prepare(text, true).map_err(|e| e.to_string())?;
+    let local = file == "CLAUDE.local.md";
+    if local && !root.join(".git").is_dir() {
+        return Err("This checkout's .git isn't a folder (a worktree?), so Atlas can't keep CLAUDE.local.md out of git here.".to_owned());
+    }
+    let mut writes = Vec::new();
+    if local {
+        // Kept out of git before it exists, so git never sees it.
+        writes.push(Write::Exclude {
+            root: root.clone(),
+            rel: file,
+        });
+    }
+    writes.push(Write::Put {
+        root: root.clone(),
+        rel: file,
+        text,
+    });
+    Ok(Planned {
+        confirm: Confirm {
+            lines: vec![format!("A new {file} in {project}.")],
+            undo: if local {
                 "CLAUDE.local.md is kept out of git (in .git/info/exclude), so git can't undo it; delete the file to undo.".to_owned()
             } else {
                 git_note(project.as_str())
-            };
-            c.button = "Create".to_owned();
-            c.create = true;
-            let mut writes = Vec::new();
-            if local {
-                writes.push(Write::Exclude { root: root.clone(), rel: file });
-            }
-            writes.push(Write::Put { root: root.clone(), rel: file, text });
-            Planned {
-                repos: vec![RepoChange {
-                    kind: RepoKind::Project(project.clone()),
-                    root: root.clone(),
-                    paths: vec![PathBuf::from(*file)],
-                    message: format!("Add {file} in Atlas"),
-                }],
-                writes,
-                inputs: vec![path],
-                remove_after: None,
-                next: if local {
-                    format!("/instructions/{project}/{file}?local=1")
-                } else {
-                    format!("/instructions/{project}/{file}")
-                },
-                confirm: c,
-            }
-        }
-    };
-    let mut planned = planned;
-    planned.confirm.base = fingerprint(&planned.inputs)?;
-    Ok(planned)
+            },
+            button: "Create".to_owned(),
+            create: true,
+            ..Confirm::default()
+        },
+        repos: vec![project_change(
+            &root,
+            project,
+            &[file],
+            format!("Add {file} in Atlas"),
+        )],
+        writes,
+        inputs: vec![path],
+        remove_after: None,
+        next: if local {
+            format!("/instructions/{project}/{file}?local=1")
+        } else {
+            format!("/instructions/{project}/{file}")
+        },
+    })
 }
 
 fn apply_writes(writes: &[Write], knowledge: &Path) -> Result<(), String> {
@@ -733,16 +872,9 @@ fn apply_writes(writes: &[Write], knowledge: &Path) -> Result<(), String> {
                 fs::remove_file(&path).map_err(|e| format!("Couldn't delete {rel}: {e}."))?;
             }
             Write::Exclude { root, rel } => {
-                let rel_exclude = ".git/info/exclude";
-                let current = read_text(&root.join(rel_exclude))
-                    .map_err(|e| format!("{rel_exclude}: {e}."))?
-                    .unwrap_or_default();
                 let pattern = format!("/{rel}");
-                let next = exclude_with(&current, &[pattern.as_str()]);
-                if next != current {
-                    atlas_fs::library::write_file(root, rel_exclude, next.as_bytes())
-                        .map_err(|e| format!("Couldn't write {rel_exclude}: {e}."))?;
-                }
+                atlas_fs::library::add_to_git_exclude(root, &[pattern.as_str()])
+                    .map_err(|e| format!("Couldn't keep {rel} out of git: {e}."))?;
             }
             Write::ClaudeAlongside => set_claude(knowledge, ClaudeAgentsMd::Alongside)?,
         }
@@ -751,8 +883,7 @@ fn apply_writes(writes: &[Write], knowledge: &Path) -> Result<(), String> {
 }
 
 fn set_claude(knowledge: &Path, choice: ClaudeAgentsMd) -> Result<(), String> {
-    let (mut p, base) =
-        atlas_fs::library::read_placements(knowledge).map_err(|e| e.to_string())?;
+    let (mut p, base) = atlas_fs::library::read_placements(knowledge).map_err(|e| e.to_string())?;
     if p.instructions.claude_reads_agents_md == Some(choice) {
         return Ok(());
     }
@@ -775,8 +906,15 @@ pub(crate) struct ChangeForm {
 
 async fn planned(s: &AppState, op: Op, text: String) -> Result<Planned, AppError> {
     let sources = Arc::clone(&s.sources);
+    let placed = s
+        .snapshot()
+        .await?
+        .catalog
+        .placements
+        .instructions
+        .claude_reads_agents_md;
     tokio::task::spawn_blocking(move || {
-        let facts = read_facts(&sources);
+        let facts = read_facts(&sources, placed);
         plan(&sources, &facts, &op, &text)
     })
     .await
@@ -791,12 +929,22 @@ pub(crate) async fn confirm(
 ) -> Result<Response, AppError> {
     let op = parse(&s.sources, &scope, &file, &action).ok_or(AppError::NotFound)?;
     let snap = s.snapshot().await?;
-    let mut page = s.page(&headers, "/instructions", title_of(&op), &snap, &views::resolve_scope(&snap, &scope), false);
+    let mut page = s.page(
+        &headers,
+        "/instructions",
+        title_of(&op),
+        &snap,
+        &views::resolve_scope(&snap, &scope),
+        false,
+    );
     if s.writer.is_none() {
         return Err(AppError::NotFound);
     }
     if !page.signed_in {
-        return Ok(Redirect::to(&format!("/signin?next=/instructions/{scope}/{file}/{action}")).into_response());
+        return Ok(Redirect::to(&format!(
+            "/signin?next=/instructions/{scope}/{file}/{action}"
+        ))
+        .into_response());
     }
     let p = planned(&s, op, String::new()).await?;
     let mut c = p.confirm;
@@ -807,9 +955,16 @@ pub(crate) async fn confirm(
         format!("/instructions?scope={scope}")
     };
     page.totals = String::new();
-    let send_on_save = c.sends
-        && s.writer.as_ref().is_some_and(|w| w.settings().send_on_save);
-    Ok(Html(ConfirmPage { page, c, send_on_save }.render()?).into_response())
+    let send_on_save = c.sends && s.writer.as_ref().is_some_and(|w| w.settings().send_on_save);
+    Ok(Html(
+        ConfirmPage {
+            page,
+            c,
+            send_on_save,
+        }
+        .render()?,
+    )
+    .into_response())
 }
 
 fn title_of(op: &Op) -> String {
@@ -838,9 +993,10 @@ pub(crate) async fn run(
     };
     if !creating && p.confirm.base != form.base {
         return ChangeError::Refused(
-            "The files changed since you opened this. Go back and look again; nothing changed.".to_owned(),
+            "The files changed since you opened this. Go back and look again; nothing changed."
+                .to_owned(),
         )
-        .into_response();
+        .into_response(&headers);
     }
     if form.claude.is_some() && !p.confirm.offer_claude.is_empty() {
         p.writes.push(Write::ClaudeAlongside);
@@ -864,14 +1020,17 @@ pub(crate) async fn run(
     });
     let outcome = match change::commit_change(&s, &headers, &form.csrf, p.repos, apply).await {
         Ok(o) => o,
-        Err(e) => return e.into_response(),
+        Err(e) => return e.into_response(&headers),
     };
     let mut next = p.next;
     if let Some((path, was)) = p.remove_after {
         // Git can't restore CLAUDE.local.md, so it goes only once Global has its text.
         let sources = Arc::clone(&s.sources);
         let removed = tokio::task::spawn_blocking(move || {
-            let global = read_text(&sources.knowledge.join("AGENTS.md")).ok().flatten().unwrap_or_default();
+            let global = read_text(&sources.knowledge.join("AGENTS.md"))
+                .ok()
+                .flatten()
+                .unwrap_or_default();
             let still = read_text(&path).ok().flatten();
             if still.as_deref() == Some(was.as_str()) && contained(&was, &global, |_| false) {
                 fs::remove_file(&path).is_ok()
@@ -882,7 +1041,11 @@ pub(crate) async fn run(
         .await
         .unwrap_or(false);
         if !removed {
-            next.push_str(if next.contains('?') { "&kept=1" } else { "?kept=1" });
+            next.push_str(if next.contains('?') {
+                "&kept=1"
+            } else {
+                "?kept=1"
+            });
         }
     }
     if creating && matches!(outcome, Outcome::Unchanged) {
@@ -917,7 +1080,7 @@ pub(crate) async fn claude_option(
     let apply: change::Apply = Box::new(move || set_claude(&knowledge, choice));
     match change::commit_change(&s, &headers, &form.csrf, repos, apply).await {
         Ok(outcome) => change::respond(&s, &headers, &outcome, "/instructions"),
-        Err(e) => e.into_response(),
+        Err(e) => e.into_response(&headers),
     }
 }
 
@@ -961,8 +1124,8 @@ pub fn why_words(why: &Why, name: &str) -> String {
 #[must_use]
 pub fn home_words(access: &Access, agent: &AgentHome) -> String {
     match access {
-        Access::Link(f) => format!("through ~/{f}, a link to it"),
-        Access::Import(f) => format!("through ~/{f}'s import"),
+        Access::Link(f) => format!("reads it through ~/{f}, a link to it"),
+        Access::Import(f) => format!("reads it through ~/{f}'s import"),
         Access::Direct | Access::Setting => "reads it".to_owned(),
         Access::None(Why::Earlier(e)) => format!("reads ~/{e} instead"),
         Access::None(_) if agent.own_text.is_some() => format!("uses its own {}", agent.shown),

@@ -348,3 +348,24 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 :root[data-rail="collapsed"] .rail-foot { align-items: center; }
 
 .client-row { border-top: 1px solid var(--hair); }
+
+/* instructions */
+.instr-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0 0; padding: 0 8px; }
+.instr-go { flex: none; }
+.instr-readers, .instr-change { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.instr-readers .agent-note { align-items: flex-start; font-size: 12px; line-height: 1.4; }
+.instr-readers .agent-note svg { flex: none; margin-top: 1px; }
+.instr-readers .ok { color: var(--ink); }
+.instr-readers .warn { color: var(--oxblood); }
+.instr-readers .muted { color: var(--muted); }
+.instr-agent { font-weight: 500; }
+.instr-confirm { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.instr-confirm p { margin: 0; }
+.instr-preview { margin: 0; max-height: 50vh; overflow: auto; padding: 12px 14px; background: #16181D; color: #ECEAE3; box-shadow: inset 0 0 0 1px var(--gilt-orn); font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instr-text { width: 100%; min-height: 40vh; padding: 14px 16px; resize: vertical; background: var(--field); color: var(--ink); border: 1px solid var(--hair); border-radius: 0; font-family: var(--mono); font-size: 13px; line-height: 1.6; }
+.instr-text:focus { border-color: var(--ink); outline: none; box-shadow: inset 0 0 0 1px var(--gilt-orn); }
+.instr-select { width: 100%; min-width: 0; }
+.instr-error { flex: 1 1 100%; }
+@media (max-width: 640px) {
+  .instr-go { display: none; }
+}

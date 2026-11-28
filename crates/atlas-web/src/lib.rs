@@ -13,6 +13,7 @@ mod distribute;
 mod edit;
 mod icons;
 mod install;
+mod instructions_manage;
 mod markdown;
 pub mod release;
 pub mod remote;
@@ -140,8 +141,19 @@ pub fn router(state: AppState, access: Access) -> Router {
         .route("/", get(overview))
         .route("/skills", get(skills))
         .route("/skills/{home}/{name}", get(skill_detail))
-        .route("/instructions", get(instructions))
-        .route("/instructions/{scope}/{file}", get(instruction_detail))
+        .route("/instructions", get(instructions_manage::list))
+        .route(
+            "/instructions/{scope}/{file}",
+            get(instructions_manage::detail),
+        )
+        .route(
+            "/instructions/{scope}/{file}/{action}",
+            get(instructions_manage::confirm).post(instructions_manage::run),
+        )
+        .route(
+            "/instructions/claude-agents-md",
+            post(instructions_manage::claude_option),
+        )
         .route("/memory", get(memory))
         .route("/memory/{name}", get(memory_detail))
         .route("/hooks", get(hooks))
@@ -293,20 +305,6 @@ struct SkillsPage {
 struct SkillPage {
     page: Page,
     v: views::SkillDetail,
-}
-
-#[derive(Template)]
-#[template(path = "instructions.html")]
-struct InstructionsPage {
-    page: Page,
-    sections: Vec<views::InstructionSection>,
-}
-
-#[derive(Template)]
-#[template(path = "instruction.html")]
-struct InstructionPage {
-    page: Page,
-    v: views::InstructionDetail,
 }
 
 #[derive(Template)]
@@ -481,57 +479,6 @@ async fn skill_detail(
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
     Ok(Html(SkillPage { page, v }.render()?))
-}
-
-async fn instructions(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let scope = views::resolve_scope(&snap, &q.scope);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        "Instructions",
-        &snap,
-        &scope,
-        true,
-    );
-    page.totals = format!("{} files", snap.catalog.instructions.len());
-    q.apply(&mut page);
-    Ok(Html(
-        InstructionsPage {
-            page,
-            sections: views::instructions(&snap, &scope),
-        }
-        .render()?,
-    ))
-}
-
-async fn instruction_detail(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((scope_key, file)): Path<(String, String)>,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let v = views::instruction_detail(&snap, &scope_key, &file).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &scope_key);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        v.title.clone(),
-        &snap,
-        &scope,
-        false,
-    );
-    q.apply(&mut page);
-    page.edit_href = s
-        .writer
-        .is_some()
-        .then(|| format!("/instructions/{scope_key}/{file}/edit"));
-    Ok(Html(InstructionPage { page, v }.render()?))
 }
 
 async fn memory(

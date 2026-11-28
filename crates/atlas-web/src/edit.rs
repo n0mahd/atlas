@@ -168,6 +168,22 @@ impl Writer {
         Ok(())
     }
 
+    /// A fresh signed-in session for the crate's HTTP tests, as `(cookie header, CSRF
+    /// token)`. Only with the `testing` feature, which the hub binary never enables.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn test_session(&self) -> (String, String) {
+        let token = self.auth.sign_in();
+        let cookie = format!("{}={token}", auth::COOKIE);
+        let mut h = HeaderMap::new();
+        if let Ok(v) = cookie.parse() {
+            h.insert(axum::http::header::COOKIE, v);
+        }
+        let csrf = self.auth.session(&h).map_or_else(String::new, |s| s.csrf);
+        (cookie, csrf)
+    }
+
     /// The live session, if this is a same-origin request carrying the session's token.
     pub(crate) fn authorised(&self, headers: &HeaderMap, csrf: &str) -> bool {
         auth::same_origin(headers, &self.origin)
