@@ -45,6 +45,40 @@ fn hash(token: &str) -> String {
         })
 }
 
+/// Holds a code file for one load-check-store: a mutex for this process's threads and an
+/// exclusive file lock for other processes (the hub and `atlas-hub` commands share the
+/// state folder). Dropped, both are released.
+struct Locked {
+    _file: fs::File,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+fn lock(state_dir: &Path, file: &str) -> Result<Locked, SignerError> {
+    static IN_PROCESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let err = |e: std::io::Error| SignerError::Store(e.to_string());
+    let guard = IN_PROCESS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(state_dir)
+        .map_err(err)?;
+    let f = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(state_dir.join(format!("{file}.lock")))
+        .map_err(err)?;
+    f.lock().map_err(err)?;
+    Ok(Locked {
+        _file: f,
+        _guard: guard,
+    })
+}
+
 fn path(state_dir: &Path, file: &str) -> PathBuf {
     state_dir.join(file)
 }
@@ -85,11 +119,7 @@ pub fn issue(state_dir: &Path, ttl: Duration) -> Result<String, SignerError> {
 /// # Errors
 /// If the state folder can't be written.
 pub fn issue_in(state_dir: &Path, file: &str, ttl: Duration) -> Result<String, SignerError> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(state_dir)
-        .map_err(|e| SignerError::Store(e.to_string()))?;
+    let _lock = lock(state_dir, file)?;
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let now = crate::now();
     let mut links = load(state_dir, file);
@@ -142,6 +172,7 @@ pub fn redeem_in(state_dir: &Path, file: &str, token: &str) -> Result<bool, Sign
         return Ok(false);
     }
     let h = hash(token);
+    let _lock = lock(state_dir, file)?;
     let now = crate::now();
     let mut links = load(state_dir, file);
     let before = links.links.len();
@@ -184,6 +215,32 @@ mod tests {
                 & 0o777,
             0o600
         );
+    }
+
+    /// Two redeems of one code at the same moment: exactly one of them gets it.
+    #[test]
+    fn a_code_redeemed_twice_at_once_works_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        for _ in 0..50 {
+            let token = issue(tmp.path(), Duration::from_mins(15)).unwrap();
+            let start = std::sync::Barrier::new(2);
+            let wins = std::thread::scope(|s| {
+                let racers: Vec<_> = (0..2)
+                    .map(|_| {
+                        s.spawn(|| {
+                            start.wait();
+                            redeem(tmp.path(), &token).unwrap()
+                        })
+                    })
+                    .collect();
+                racers
+                    .into_iter()
+                    .map(|r| r.join().unwrap())
+                    .filter(|won| *won)
+                    .count()
+            });
+            assert_eq!(wins, 1);
+        }
     }
 
     #[test]
