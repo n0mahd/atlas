@@ -14,13 +14,29 @@ real_git="$(command -v git)"
 failures=0
 
 # Host tools the script may use; everything else is a stub or missing.
-host_tools=(bash env dirname id cat sed awk grep head tail mkdir touch rm install
-  cp chmod mktemp sleep git ls)
+host_tools=(bash sh env dirname id cat sed awk grep head tail mkdir touch rm install
+  cp chmod mktemp sleep git ls sha256sum tar gzip)
 
 stub() { # name body
   rm -f "$bin/$1"
   printf '#!/usr/bin/env bash\n%s\n' "$2" >"$bin/$1"
   chmod +x "$bin/$1"
+}
+
+# Build a fake GitHub release directory with binaries, deploy archive and SHA256SUMS.
+make_release() {
+  local dir="$1" arch
+  arch="$(uname -m)"
+  mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\necho "Open this link to add a passkey (works once, for 15 minutes):"\necho\necho "  https://hub.example.ts.net:7443/setup/0123abcd"\n' >"$dir/atlas-hub-linux-$arch"
+  chmod +x "$dir/atlas-hub-linux-$arch"
+  local f
+  for f in atlasd-linux-x86_64 atlasd-linux-aarch64 atlasd-macos-x86_64 atlasd-macos-aarch64; do
+    printf 'prebuilt %s\n' "$f" >"$dir/$f"
+    chmod +x "$dir/$f"
+  done
+  tar -C "$repo" -czf "$dir/atlas-deploy.tar.gz" deploy/install.sh deploy/atlas-hub.service deploy/hub.example.toml
+  (cd "$dir" && LC_ALL=C sha256sum atlas-deploy.tar.gz "atlas-hub-linux-$arch" atlasd-linux-x86_64 atlasd-linux-aarch64 atlasd-macos-x86_64 atlasd-macos-aarch64 >SHA256SUMS)
 }
 
 # A fresh world: $home, $bin, $log. Pass tool names to leave out.
@@ -35,6 +51,22 @@ world() {
   local t
   for t in "${host_tools[@]}"; do ln -s "$(command -v "$t")" "$bin/$t"; done
   stub uname '[[ "$1" == -s && -n "${STUB_OS:-}" ]] && { echo "$STUB_OS"; exit; }; exec '"$(command -v uname)"' "$@"'
+  # Stand-in curl: serves files from STUB_RELEASE_DIR by basename, or 404s when unset.
+  stub curl 'echo "curl $*" >>"$STUB_LOG"
+out=""; url=""
+while (($#)); do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    --connect-timeout|--max-time) shift ;;
+    -*) ;;
+    *) url="$1" ;;
+  esac
+  shift
+done
+[[ -n "${STUB_RELEASE_DIR:-}" ]] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }
+file="$STUB_RELEASE_DIR/${url##*/}"
+[[ -f "$file" ]] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }
+if [[ -n "$out" ]]; then cp "$file" "$out"; else cat "$file"; fi'
   stub tailscale 'echo "tailscale $*" >>"$STUB_LOG"
 case "$1" in
   ip) [[ -n "${STUB_LOGGED_OUT:-}" ]] && { echo "no current Tailscale IPs; state: NeedsLogin" >&2; exit 1; }; echo 100.64.0.1 ;;
@@ -209,6 +241,116 @@ status=0
 out="$(env -i HOME="$home" PATH="$bin" STUB_LOG="$log" bash "$repo/deploy/install.sh" hub 2>&1)" || status=$?
 check "exits 2" test "$status" -eq 2
 check "suggests this machine's address" says "https://hub.example.ts.net:7443"
+
+# --- Prebuilt release download paths -------------------------------------------------
+
+run_get() {
+  status=0
+  out="$(env -i HOME="$home" PATH="$bin" USER=tester STUB_LOG="$log" \
+    XDG_STATE_HOME="$w/state" XDG_RUNTIME_DIR="$w/run" XDG_CONFIG_HOME="$home/.config" \
+    GIT_CONFIG_NOSYSTEM=1 "$@" \
+    sh "$repo/deploy/get.sh" https://hub.example.ts.net:7443 </dev/null 2>&1)" || status=$?
+}
+
+case_name=download-without-cargo
+world "$case_name" cargo
+rel="$w/release"
+make_release "$rel"
+run STUB_RELEASE_DIR="$rel"
+check "succeeds without cargo" test "$status" -eq 0
+check "did not build" no_build
+check "hub binary installed" test -x "$home/.local/bin/atlas-hub"
+check "all four atlasd builds installed" test \
+  -x "$w/state/atlas-hub/dist/atlasd-linux-x86_64" \
+  -a -x "$w/state/atlas-hub/dist/atlasd-linux-aarch64" \
+  -a -x "$w/state/atlas-hub/dist/atlasd-macos-x86_64" \
+  -a -x "$w/state/atlas-hub/dist/atlasd-macos-aarch64"
+check "prints the setup link" says "/setup/0123abcd"
+
+case_name=download-flag-skips-cargo
+world "$case_name"
+rel="$w/release"
+make_release "$rel"
+status=0
+out="$(env -i HOME="$home" PATH="$bin" USER=tester STUB_LOG="$log" \
+  XDG_STATE_HOME="$w/state" XDG_RUNTIME_DIR="$w/run" XDG_CONFIG_HOME="$home/.config" \
+  GIT_CONFIG_NOSYSTEM=1 CARGO_TARGET_DIR="$w/target" STUB_RELEASE_DIR="$rel" \
+  bash "$repo/deploy/install.sh" --download https://hub.example.ts.net:7443 </dev/null 2>&1)" || status=$?
+check "succeeds" test "$status" -eq 0
+check "did not build" no_build
+check "mentions downloading the hub" says "download the hub"
+
+case_name=build-flag-ignores-release
+world "$case_name"
+rel="$w/release"
+make_release "$rel"
+status=0
+out="$(env -i HOME="$home" PATH="$bin" USER=tester STUB_LOG="$log" \
+  XDG_STATE_HOME="$w/state" XDG_RUNTIME_DIR="$w/run" XDG_CONFIG_HOME="$home/.config" \
+  GIT_CONFIG_NOSYSTEM=1 CARGO_TARGET_DIR="$w/target" STUB_RELEASE_DIR="$rel" \
+  bash "$repo/deploy/install.sh" --build https://hub.example.ts.net:7443 </dev/null 2>&1)" || status=$?
+check "succeeds" test "$status" -eq 0
+check "ran cargo" grep -q '^cargo' "$log"
+check "did not curl" bash -c "! grep -q '^curl' '$log'"
+
+case_name=fallback-no-release
+world "$case_name"
+run
+check "succeeds by falling back to build" test "$status" -eq 0
+check "explains why it fell back" says "No published release is available"
+check "ran cargo" grep -q '^cargo' "$log"
+
+case_name=download-bad-hub-checksum
+world "$case_name" cargo
+rel="$w/release"
+make_release "$rel"
+printf 'tampered\n' >>"$rel/atlas-hub-linux-$(uname -m)"
+run STUB_RELEASE_DIR="$rel"
+check "exits non-zero" failed
+check "reports checksum mismatch" says "Checksum mismatch"
+check "hub not installed" test ! -e "$home/.local/bin/atlas-hub"
+check "config not written" test ! -e "$home/.config/atlas/hub.toml"
+check "knowledge repo not created" test ! -e "$home/Knowledge"
+check "dist not populated" test ! -e "$w/state/atlas-hub/dist"
+check "tailscale serve not called" bash -c "! grep -q '^tailscale serve' '$log'"
+
+case_name=download-bad-atlasd-checksum
+world "$case_name" cargo
+rel="$w/release"
+make_release "$rel"
+printf 'tampered\n' >>"$rel/atlasd-macos-aarch64"
+run STUB_RELEASE_DIR="$rel"
+check "exits non-zero" failed
+check "reports checksum mismatch" says "Checksum mismatch"
+check "hub not installed when atlasd fails" test ! -e "$home/.local/bin/atlas-hub"
+check "dist not populated" test ! -e "$w/state/atlas-hub/dist"
+check "service not written" test ! -e "$home/.config/systemd/user/atlas-hub.service"
+
+case_name=get-sh-install
+world "$case_name" cargo
+rel="$w/release"
+make_release "$rel"
+run_get STUB_RELEASE_DIR="$rel"
+check "succeeds without a clone or cargo" test "$status" -eq 0
+check "hub binary installed" test -x "$home/.local/bin/atlas-hub"
+check "all four atlasd builds installed" test \
+  -x "$w/state/atlas-hub/dist/atlasd-linux-x86_64" \
+  -a -x "$w/state/atlas-hub/dist/atlasd-linux-aarch64" \
+  -a -x "$w/state/atlas-hub/dist/atlasd-macos-x86_64" \
+  -a -x "$w/state/atlas-hub/dist/atlasd-macos-aarch64"
+check "unit installed" test -f "$home/.config/systemd/user/atlas-hub.service"
+check "prints the setup link" says "/setup/0123abcd"
+
+case_name=get-sh-bad-checksum
+world "$case_name" cargo
+rel="$w/release"
+make_release "$rel"
+printf 'tampered\n' >>"$rel/atlas-deploy.tar.gz"
+run_get STUB_RELEASE_DIR="$rel"
+check "exits non-zero" failed
+check "reports checksum mismatch" says "Checksum mismatch"
+check "hub not installed" test ! -e "$home/.local/bin/atlas-hub"
+check "config not written" test ! -e "$home/.config/atlas/hub.toml"
 
 echo
 if ((failures)); then
