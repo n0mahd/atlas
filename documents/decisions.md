@@ -359,3 +359,20 @@ that matches it, on any desktop. Hand-made launchers (Omarchy's web app installe
 pick up the icon through `apple-touch-icon`, but they guess the window class from the
 browser, so the guide recommends the browser's install. A test checks the manifest is linked,
 allowed and that each icon it lists is served at the stated size.
+
+## 0033 · 2026-11-27 · atlasd on macOS
+atlasd runs on macOS with the same code: the harness folders it writes are the same paths
+there, and its hostname comes from `hostname -s` (lowercased, to match the tailnet name)
+when `/proc` and `/etc/hostname` are missing. The hub serves builds named
+`atlasd-<os>-<arch>` (`linux` or `macos`, `x86_64` or `aarch64`) from `<state>/dist/`, and
+one install script covers both: on Darwin it checks the download with `shasum -a 256` and
+loads a launchd agent (`deploy/atlasd.plist`, `~/Library/LaunchAgents/atlasd.plist`) that
+runs `atlasd run` at load and every 600 s, in the login's GUI domain, or its user domain
+when nobody is logged in at the Mac. macOS builds are made on a Mac, because rustls'
+platform verifier links Apple's Security framework; CI-signed builds stay the target.
+
+## 0034 · 2026-11-27 · Passkey sessions survive hub restarts
+Sessions were held only in memory, and the hub is redeployed often, so each restart asked
+for the passkey again. They are now saved to `<state>/sessions.json` (mode 0600), keyed by
+the SHA-256 of the cookie token so the file can't be replayed as a cookie, with wall-clock
+expiry. The 12-hour lifetime, cookie flags and CSRF are unchanged.

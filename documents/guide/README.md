@@ -31,5 +31,5 @@ Antigravity, Amp, Muse and Grok Build.
 
 - Viewing and editing skills, instruction files and memory in the hub.
 - Hooks are shown, and atlasd installs them, but you edit them in the repo, not the hub.
-- atlasd on Linux (x86_64 and ARM). macOS isn't supported yet.
+- atlasd on Linux (x86_64 and ARM) and macOS (Apple silicon and Intel).
 - MCP servers aren't managed yet. The MCP page says so.
