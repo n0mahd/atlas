@@ -15,6 +15,10 @@ pub enum Entry {
     BrokenLink(PathBuf),
     /// A real folder, such as a skill the user installed by hand.
     Dir,
+    /// A real folder that was fingerprinted (the caller does that only when it has a
+    /// desired skill's name): `atlas_fs::library::Tree::digest` of its files, present only
+    /// when it holds nothing but plain files and folders.
+    DirDigest(String),
     /// A regular file or anything else that isn't a link.
     File,
 }
@@ -33,6 +37,14 @@ pub enum SkillOp {
     RemoveLink {
         name: String,
         target: PathBuf,
+    },
+    /// Replace a real folder that is an exact copy of the skill's source with the link.
+    /// `digest` is what the folder held when planned; the caller checks it again just
+    /// before removing anything.
+    AdoptDir {
+        name: String,
+        target: PathBuf,
+        digest: String,
     },
 }
 
@@ -66,12 +78,46 @@ pub fn plan_skill_links(
     desired: &BTreeMap<String, PathBuf>,
     managed_roots: &[PathBuf],
 ) -> SkillPlan {
+    plan_skill_links_adopting(folder, current, desired, &BTreeMap::new(), managed_roots)
+}
+
+/// [`plan_skill_links`], except that a real folder at a desired skill's name whose
+/// [`Entry::DirDigest`] equals `source_digests[name]` (an exact copy of the source) is
+/// replaced by the link, when the source is in a managed root. A folder with any other
+/// contents stays a conflict.
+#[must_use]
+pub fn plan_skill_links_adopting(
+    folder: &Path,
+    current: &BTreeMap<String, Entry>,
+    desired: &BTreeMap<String, PathBuf>,
+    source_digests: &BTreeMap<String, String>,
+    managed_roots: &[PathBuf],
+) -> SkillPlan {
     let managed = |p: &Path| managed_roots.iter().any(|r| p.starts_with(normalize(r)));
     let mut plan = SkillPlan::default();
 
     for (name, entry) in current {
         let target = match entry {
             Entry::Link(t) | Entry::BrokenLink(t) => normalize(&folder.join(t)),
+            Entry::DirDigest(digest) => {
+                match desired.get(name).map(|s| normalize(s)) {
+                    Some(source)
+                        if managed(&source)
+                            && source_digests.get(name).is_some_and(|d| d == digest) =>
+                    {
+                        plan.ops.push(SkillOp::AdoptDir {
+                            name: name.clone(),
+                            target: source,
+                            digest: digest.clone(),
+                        });
+                    }
+                    Some(_) => plan
+                        .conflicts
+                        .push(SkillConflict::NotALink { name: name.clone() }),
+                    None => {}
+                }
+                continue;
+            }
             Entry::Dir | Entry::File => {
                 if desired.contains_key(name) {
                     plan.conflicts

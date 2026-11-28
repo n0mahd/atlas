@@ -18,6 +18,7 @@ pub mod plan;
 pub mod release;
 pub mod report;
 pub mod sources;
+pub mod tree;
 
 use std::path::Path;
 

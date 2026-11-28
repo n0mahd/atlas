@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// A fresh hidden name next to `path`, for a temp file or link.
-fn temp_beside(path: &Path) -> io::Result<PathBuf> {
+/// A fresh hidden name next to `path`, for a temp file, link or folder.
+pub fn temp_beside(path: &Path) -> io::Result<PathBuf> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("path has no folder"))?;

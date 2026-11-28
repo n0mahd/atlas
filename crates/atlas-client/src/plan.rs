@@ -12,13 +12,15 @@ use atlas_harness::instructions::{
     InstructionAction, InstructionConflict, InstructionFile, plan_claude_md, plan_instruction_link,
 };
 use atlas_harness::placement::Reach;
-use atlas_harness::skills::{Entry, SkillConflict, SkillOp, plan_skill_links};
+use atlas_harness::skills::{
+    Entry, SkillConflict, SkillOp, plan_skill_links, plan_skill_links_adopting,
+};
 use atlas_harness::switches::{render_switches, switch_file};
 use atlas_harness::{Change, FormatError, Layout, layouts};
 
 use crate::desired::Desired;
-use crate::display;
 use crate::place::{Placed, Placer};
+use crate::{display, tree};
 
 const MAX_FILE: u64 = 1024 * 1024;
 
@@ -47,6 +49,14 @@ pub enum Action {
     RemoveFile {
         path: PathBuf,
     },
+    /// Replace a real folder that is an exact copy of what Atlas holds with a link to it.
+    /// `digest` is what the folder held when planned; it is checked again before anything
+    /// is removed.
+    AdoptDir {
+        path: PathBuf,
+        target: PathBuf,
+        digest: String,
+    },
 }
 
 impl Action {
@@ -67,6 +77,11 @@ impl Action {
             Self::RemoveFile { path } => {
                 format!("remove {} (Atlas's entries were all it held)", d(path))
             }
+            Self::AdoptDir { path, target, .. } => format!(
+                "replace folder {}, a copy of what Atlas holds, with a link to {}",
+                d(path),
+                d(target)
+            ),
         }
     }
 }
@@ -134,8 +149,16 @@ pub fn plan(home: &Path, desired: &Desired, managed_roots: &[PathBuf]) -> Plan {
     let mut off = BTreeMap::new();
     if !desired.placements_invalid {
         let placed = home_skills(&harnesses, desired, home);
+        let mut digests = Digests::default();
         for (dir, skills) in &placed.folders {
-            skill_dir(&mut plan, home, &home.join(dir), skills, managed);
+            skill_dir(
+                &mut plan,
+                home,
+                &home.join(dir),
+                skills,
+                managed,
+                &mut digests,
+            );
         }
         // A folder no skill goes in any more loses the links Atlas made there.
         let mut seen: BTreeSet<&str> = placed.folders.iter().map(|(f, _)| *f).collect();
@@ -276,15 +299,56 @@ fn current_entries(dir: &Path, shown: &str) -> Result<Option<BTreeMap<String, En
     }
 }
 
+/// Digests of the skill sources an exact copy was compared with, so each is read once
+/// per pass.
+#[derive(Default)]
+struct Digests(BTreeMap<PathBuf, Option<String>>);
+
+impl Digests {
+    fn of(&mut self, source: &Path) -> Option<String> {
+        self.0
+            .entry(source.to_path_buf())
+            .or_insert_with(|| tree::digest(source))
+            .clone()
+    }
+}
+
+/// Fingerprints the real folders in `current` that have a wanted skill's name (only
+/// those, so a pass doesn't read every folder), and the sources they may be copies of.
+fn fingerprint(
+    dir: &Path,
+    current: &mut BTreeMap<String, Entry>,
+    skills: &BTreeMap<String, PathBuf>,
+    digests: &mut Digests,
+) -> BTreeMap<String, String> {
+    let mut sources = BTreeMap::new();
+    for (name, entry) in current.iter_mut() {
+        let Some(source) = skills.get(name) else {
+            continue;
+        };
+        if *entry != Entry::Dir {
+            continue;
+        }
+        if let Some((_, digest)) = tree::exact(&dir.join(name)) {
+            if let Some(d) = digests.of(source) {
+                sources.insert(name.clone(), d);
+            }
+            *entry = Entry::DirDigest(digest);
+        }
+    }
+    sources
+}
+
 fn skill_dir(
     plan: &mut Plan,
     home: &Path,
     dir: &Path,
     skills: &BTreeMap<String, PathBuf>,
     roots: &[PathBuf],
+    digests: &mut Digests,
 ) {
     let shown = display(home, dir);
-    let current = match current_entries(dir, &shown) {
+    let mut current = match current_entries(dir, &shown) {
         Ok(Some(entries)) => entries,
         Ok(None) => {
             if !skills.is_empty() {
@@ -297,7 +361,8 @@ fn skill_dir(
             return;
         }
     };
-    let planned = plan_skill_links(dir, &current, skills, roots);
+    let sources = fingerprint(dir, &mut current, skills, digests);
+    let planned = plan_skill_links_adopting(dir, &current, skills, &sources, roots);
     for op in planned.ops {
         plan.actions.push(match op {
             SkillOp::CreateLink { name, target } => Action::CreateLink {
@@ -312,6 +377,15 @@ fn skill_dir(
             SkillOp::RemoveLink { name, target } => Action::RemoveLink {
                 path: dir.join(name),
                 target,
+            },
+            SkillOp::AdoptDir {
+                name,
+                target,
+                digest,
+            } => Action::AdoptDir {
+                path: dir.join(name),
+                target,
+                digest,
             },
         });
     }
