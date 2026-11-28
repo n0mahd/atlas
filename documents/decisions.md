@@ -305,3 +305,17 @@ adapted to the hub and many machines. See `documents/skills.md`.
   switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
   repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
   one change; public skills are committed and never pushed (0016), not refused.
+
+## 0028 · 2026-11-27 · Instruction files: who reads what, Use Global instead
+Atlas matches the owner's T3 Code instructions work (skills series part 3). One table in
+`atlas_harness::readers` says which project and home files each agent reads and how it
+picks among them; the Instructions page applies it to the hub's machine. "Use Global
+instead" appends an agent's own text to Global; atlasd replaces that agent's file with the
+link or import only when every non-blank line is already in Global, re-checked at apply
+time, so nothing is lost (0027's exact-copy rule for files). Text moved between files is
+appended under an HTML comment `<!-- atlas: from <where> -->` (invisible when rendered,
+says where it came from) and skipped when the target already holds every line. Claude
+Code's AGENTS.md option (`pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`)
+is the owner's choice in `atlas/placements.toml [instructions]`, written by atlasd only
+when set. A new `CLAUDE.local.md` is kept out of git through Atlas's `.git/info/exclude`
+block, the only write Atlas makes inside `.git`.
