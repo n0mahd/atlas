@@ -1,0 +1,146 @@
+{
+  "desktop": {
+    "store": {
+      "bulkSkills": 300,
+      "bulkNotes": 300,
+      "projects": 5
+    },
+    "screens": {
+      "/": {
+        "ttfb": 78,
+        "fcp": 140,
+        "load": 118
+      },
+      "/skills": {
+        "ttfb": 60,
+        "fcp": 200,
+        "load": 363
+      },
+      "/skills/private/deploy": {
+        "ttfb": 56,
+        "fcp": 124,
+        "load": 132
+      },
+      "/instructions": {
+        "ttfb": 113,
+        "fcp": 160,
+        "load": 218
+      },
+      "/instructions/global/AGENTS.md": {
+        "ttfb": 112,
+        "fcp": 176,
+        "load": 156
+      },
+      "/memory": {
+        "ttfb": 71,
+        "fcp": 148,
+        "load": 132
+      },
+      "/memory/verify-outcomes": {
+        "ttfb": 95,
+        "fcp": 248,
+        "load": 228
+      },
+      "/hooks": {
+        "ttfb": 65,
+        "fcp": 196,
+        "load": 157
+      },
+      "/mcp": {
+        "ttfb": 129,
+        "fcp": 220,
+        "load": 329
+      },
+      "/machines": {
+        "ttfb": 202,
+        "fcp": 304,
+        "load": 287
+      },
+      "/settings": {
+        "ttfb": 164,
+        "fcp": 276,
+        "load": 260
+      },
+      "/skills/private/deploy/edit": {
+        "ttfb": 52,
+        "fcp": 100,
+        "load": 88
+      }
+    },
+    "save": 175,
+    "send": 311,
+    "atlasd_run": 284
+  },
+  "phone": {
+    "store": {
+      "bulkSkills": 300,
+      "bulkNotes": 300,
+      "projects": 5
+    },
+    "screens": {
+      "/": {
+        "ttfb": 98,
+        "fcp": 128,
+        "load": 123
+      },
+      "/skills": {
+        "ttfb": 46,
+        "fcp": 116,
+        "load": 343
+      },
+      "/skills/private/deploy": {
+        "ttfb": 58,
+        "fcp": 144,
+        "load": 143
+      },
+      "/instructions": {
+        "ttfb": 120,
+        "fcp": 172,
+        "load": 180
+      },
+      "/instructions/global/AGENTS.md": {
+        "ttfb": 115,
+        "fcp": 196,
+        "load": 186
+      },
+      "/memory": {
+        "ttfb": 48,
+        "fcp": 104,
+        "load": 110
+      },
+      "/memory/verify-outcomes": {
+        "ttfb": 112,
+        "fcp": 224,
+        "load": 253
+      },
+      "/hooks": {
+        "ttfb": 83,
+        "fcp": 220,
+        "load": 195
+      },
+      "/mcp": {
+        "ttfb": 359,
+        "fcp": 448,
+        "load": 443
+      },
+      "/machines": {
+        "ttfb": 122,
+        "fcp": 208,
+        "load": 226
+      },
+      "/settings": {
+        "ttfb": 236,
+        "fcp": 336,
+        "load": 320
+      },
+      "/skills/private/deploy/edit": {
+        "ttfb": 56,
+        "fcp": 120,
+        "load": 119
+      }
+    },
+    "save": 267,
+    "send": 202,
+    "atlasd_run": 212
+  }
+}

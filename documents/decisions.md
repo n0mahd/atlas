@@ -667,3 +667,17 @@ What changed is that an idle run is now read-only on the machine, and a minute's
 of runs costs the hub one small file write. Each run still logs a line ("Update N is
 applied.") to the journal, or to `~/Library/Logs/atlasd.log` on a Mac, which grows by
 about 30 KB a day there.
+
+## 0043 · 2026-11-27 · End-to-end verification skill
+Atlas is verified by running it, not by unit tests alone. The project skill
+`.agents/skills/verify` (inspired by pstack's verification skills) starts throwaway worlds:
+seeded repos with local bare remotes, a real `atlas-hub` with a sandboxed `HOME`, a proxy
+standing in for `tailscale serve`, Chromium with a CDP virtual passkey, and real `atlasd`
+on fake client homes. Playwright journeys in `e2e/` drive every feature at desktop and phone
+width and leave screenshots, video and traces in `target/verify/<run>/`. The feature map
+(`.agents/skills/verify/features/`) defines coverage, and `atlas-web`'s `feature_map` test
+fails when a route isn't in it. Update acceptance gets a bounded model check
+(`atlas-client/tests/model.rs`) instead of a separate formal tool, because the rules are
+small and the real `release::check` can be explored exhaustively. Real harness binaries are
+checked only through offline commands, never with the owner's logins copied into a sandbox.
+Node is a dev-only dependency for `e2e/` and is never part of the hub or atlasd.
