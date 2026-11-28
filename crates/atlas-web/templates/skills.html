@@ -4,54 +4,89 @@
       hx-get="/skills" hx-trigger="input delay:200ms from:input[name=q], submit"
       hx-target="#results" hx-select="#results" hx-swap="outerHTML" hx-push-url="true">
   <input type="hidden" name="scope" value="{{ page.scope }}">
+  {% if v.attention %}<input type="hidden" name="attention" value="1">{% endif %}
+  {% if v.select %}<input type="hidden" name="select" value="1">{% endif %}
   <label class="sr" for="skill-search">Filter skills</label>
   <input id="skill-search" class="search" type="search" name="q" value="{{ v.q }}" placeholder="Filter skills…" autocomplete="off">
+  <span class="tools">
+    <a class="tool{% if v.attention %} on{% endif %}" href="{{ v.attention_href }}"{% if v.attention %} aria-current="true"{% endif %}>Needs attention <span class="tool-count{% if v.attention_count > 0 %} warn{% endif %}">{{ v.attention_count }}</span></a>
+    {% if page.signed_in %}
+    <a class="tool{% if v.select %} on{% endif %}" href="{{ v.select_href }}"{% if v.select %} aria-current="true"{% endif %}>{% if v.select %}Done{% else %}Select{% endif %}</a>
+    <a class="tool" href="{{ v.new_href }}">New skill</a>
+    {% endif %}
+  </span>
 </form>
 {% if page.signed_in %}{% include "updates_button.html" %}{% endif %}
 
+{% if v.select && page.signed_in %}
+<form id="bulk" class="bulk-bar" method="post" action="/skills/bulk" data-send-on-save aria-label="Change the chosen skills">
+  <input type="hidden" name="csrf" value="{{ page.csrf }}">
+  <input type="hidden" name="back" value="{{ v.back }}">
+  <span class="bulk-group">
+    <label class="sr" for="bulk-agent">Agent</label>
+    <select id="bulk-agent" class="select" name="agent">{% for a in v.agents %}<option value="{{ a.value }}"{% if a.checked %} selected{% endif %}>{{ a.label }}</option>{% endfor %}</select>
+    <button class="button-plain" type="submit" name="action" value="on">Turn on</button>
+    <button class="button-plain" type="submit" name="action" value="off">Turn off</button>
+  </span>
+  <span class="bulk-group">
+    <label class="sr" for="bulk-to">Move to</label>
+    <select id="bulk-to" class="select" name="to">{% for d in v.destinations %}<option value="{{ d.value }}">{{ d.label }}</option>{% endfor %}</select>
+    <button class="button-plain" type="submit" name="action" value="move">Move</button>
+  </span>
+  <button class="button-plain danger" type="submit" name="action" value="delete">Delete</button>
+  <p class="marginalia warn-note" data-error hidden role="alert"></p>
+</form>
+{% endif %}
+
 <div id="results" class="sections">
+  {% if outside.tidy > 0 %}<p class="marginalia tidy-offer">{% if outside.tidy == 1 %}One thing{% else %}{{ outside.tidy }} things{% endif %} about your skills could be tidier. <a class="link-cap" href="/skills/tidy">Tidy up</a></p>{% endif %}
   {% for s in v.sections %}
   <section class="section" id="{{ s.id }}">
-    <div class="section-head"><span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2><span class="count">{{ s.rows.len() }}</span></div>
+    <div class="section-head">
+      <span class="num">{{ s.num }}</span><h2>{{ s.title }}</h2><span class="count">{{ s.shown() }}</span>
+      {% if page.signed_in && s.in_atlas() && s.shown() > 0 %}
+      <form class="switches" method="post" action="/skills/bulk" data-send-on-save>
+        <input type="hidden" name="csrf" value="{{ page.csrf }}">
+        <input type="hidden" name="back" value="{{ v.back }}">
+        {% for r in s.all_rows() %}<input type="hidden" name="s" value="{{ r.key() }}">{% endfor %}
+        <button class="mini" type="submit" name="action" value="on" aria-label="Turn every skill in {{ s.title }} on">All on</button>
+        <button class="mini" type="submit" name="action" value="off" aria-label="Turn every skill in {{ s.title }} off">All off</button>
+        <span class="warn-note switches-error" data-error hidden role="alert"></span>
+      </form>
+      {% endif %}
+    </div>
     {% if let Some(n) = s.notice %}<p class="marginalia">{{ n }}</p>{% endif %}
-    {% if s.rows.is_empty() %}
-    <p class="empty">{% if v.q.is_empty() %}None here.{% else %}No skill here matches.{% endif %}</p>
+    {% if s.shown() == 0 %}
+    <p class="empty">{% if v.attention %}Nothing here needs attention.{% else if v.q.is_empty() %}None here.{% else %}No skill here matches.{% endif %}</p>
     {% else %}
+    {% if !s.rows.is_empty() %}
     <ul class="rows">
-      {% for r in s.rows %}
-      <li>
-        {% let place_row = place.row(r.href.as_deref()) %}
-        <details class="row"{% if place.is_open(r.href.as_deref()) %} open{% endif %}>
-          <summary>
-            <span class="row-main">
-              <span class="row-name">{{ r.name }}</span>
-              <span class="row-desc">{{ r.description }}</span>
-            </span>
-            {% if r.also_global %}<span class="row-meta">Also global</span>{% endif %}
-            {% if let Some(p) = place_row %}{% if let Some(b) = p.badge %}<span class="row-meta place-badge">{{ b }}</span>{% endif %}{% endif %}
-            {% if !r.flag.is_empty() %}<span class="row-flag">{{ r.flag }}</span>{% endif %}
-            <span class="marks{% if r.all %} all{% endif %}">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
-            <span class="chev" aria-hidden="true"></span>
-          </summary>
-          <div class="drawer">
-            {% if let Some(p) = place_row %}
-            {% include "skill_place.html" %}
-            {% else %}
-            <ul class="agent-states">
-              {% for a in r.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
-            </ul>
-            {% endif %}
-            <div class="drawer-foot">
-              {% if !r.path.is_empty() %}<span class="mono muted">{{ r.path }}{% if r.files > 0 %} · {{ r.files }} more files{% endif %}</span>{% endif %}
-              {% if let Some(href) = r.href %}<a class="link-cap" href="{{ href }}">Read the skill</a>{% endif %}
-            </div>
-          </div>
-        </details>
-      </li>
-      {% endfor %}
+      {% for r in s.rows %}{% include "skill_row.html" %}{% endfor %}
     </ul>
+    {% endif %}
+    {% for g in s.groups %}
+    <div class="group" id="{{ g.id }}">
+      <div class="group-head">
+        <span class="group-name">From {{ g.source }}</span><span class="count">{{ g.rows.len() }}</span>
+        {% if page.signed_in && s.in_atlas() %}
+        <form class="switches" method="post" action="/skills/bulk" data-send-on-save>
+          <input type="hidden" name="csrf" value="{{ page.csrf }}">
+          <input type="hidden" name="back" value="{{ v.back }}">
+          {% for r in g.rows %}<input type="hidden" name="s" value="{{ r.key() }}">{% endfor %}
+          <button class="mini" type="submit" name="action" value="on" aria-label="Turn every skill from {{ g.source }} on">All on</button>
+          <button class="mini" type="submit" name="action" value="off" aria-label="Turn every skill from {{ g.source }} off">All off</button>
+          <span class="warn-note switches-error" data-error hidden role="alert"></span>
+        </form>
+        {% endif %}
+      </div>
+      <ul class="rows">
+        {% for r in g.rows %}{% include "skill_row.html" %}{% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
     {% endif %}
   </section>
   {% endfor %}
+  {% include "outside_skills.html" %}
 </div>
 {% endblock %}

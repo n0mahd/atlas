@@ -96,6 +96,7 @@ cat > "$units/atlasd.timer" <<'UNIT'
 {TIMER}UNIT
 systemctl --user daemon-reload
 systemctl --user enable --now atlasd.timer
+systemctl --user start --no-block atlasd.service 2>/dev/null || true
 loginctl enable-linger "$USER" 2>/dev/null || true
 
 echo

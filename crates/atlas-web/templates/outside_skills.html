@@ -1,0 +1,83 @@
+{# Outside Atlas and Built in parts of the Skills page (import::skills_outside). #}
+{% if outside.show %}
+{% if !outside.rows.is_empty() || outside.kept > 0 %}
+<section class="section" id="outside">
+  <div class="section-head"><span class="num">§</span><h2>Outside Atlas</h2><span class="count">{{ outside.rows.len() }}</span>
+    {% if page.signed_in && outside.importable > 1 %}
+    <form class="head-action" method="post" action="/import/skills" data-send-on-save>
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <button class="button-plain button-small" type="submit">Bring all in</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if outside.kept > 0 %}<p class="marginalia">{{ outside.kept }} you chose to leave outside {% if outside.kept == 1 %}isn't{% else %}aren't{% endif %} shown.</p>{% endif %}
+  <ul class="rows">
+    {% for r in outside.rows %}
+    <li>
+      <details class="row">
+        <summary>
+          <span class="row-main">
+            <span class="row-name">{{ r.name }}</span>
+            <span class="row-desc">{{ r.source }}</span>
+          </span>
+          {% if !r.flag.is_empty() %}<span class="row-flag{% if r.state == "same" %} quiet{% endif %}">{{ r.flag }}</span>{% endif %}
+          <span class="marks{% if r.all %} all{% endif %}">{% for m in r.marks %}<span class="mark" role="img" aria-label="{{ m.label }}" title="{{ m.label }}">{{ m.icon|safe }}</span>{% endfor %}</span>
+          <span class="chev" aria-hidden="true"></span>
+        </summary>
+        <div class="drawer">
+          <span class="mono muted">{{ r.entries }}</span>
+          {% if !r.left_out.is_empty() %}<p class="drawer-note warn">A copy leaves out {{ r.left_out }}, so atlasd won't replace this folder; delete it by hand once Atlas's copy works.</p>{% endif %}
+          {% if r.state == "same" %}<p class="drawer-note">Atlas has the same skill. atlasd puts Atlas's link in its place with the next update.</p>{% endif %}
+          {% if page.signed_in %}
+          <div class="row-actions">
+            {% if r.state == "import" %}
+            <form class="inline-form" method="post" action="/import/skill" data-send-on-save>
+              <input type="hidden" name="csrf" value="{{ page.csrf }}">
+              <input type="hidden" name="key" value="{{ r.key }}">
+              {% if let Some(p) = r.project %}
+              <label class="sr" for="to-{{ loop.index }}">Bring {{ r.name }} into</label>
+              <select id="to-{{ loop.index }}" class="select" name="to">
+                <option value="private">Global</option>
+                <option value="{{ p }}">{{ p }}'s .agents/skills</option>
+              </select>
+              {% endif %}
+              <button class="button-ink button-small" type="submit">Bring into Atlas</button>
+            </form>
+            {% endif %}
+            {% if let Some(href) = r.compare %}<a class="link-cap" href="{{ href }}">Compare</a>{% endif %}
+            {% if r.state != "same" %}
+            <form class="inline-form" method="post" action="/import/keep" data-send-on-save>
+              <input type="hidden" name="csrf" value="{{ page.csrf }}">
+              <input type="hidden" name="key" value="{{ r.key }}">
+              <button class="button-plain button-small" type="submit">Leave it outside</button>
+            </form>
+            {% endif %}
+          </div>
+          {% else if page.can_sign_in && r.state != "blocked" %}
+          <a class="link-cap" href="/signin?next=/skills">Sign in to bring it in</a>
+          {% endif %}
+        </div>
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if !outside.built_in.is_empty() %}
+<section class="section" id="built-in">
+  <details class="folded">
+    <summary class="section-head"><span class="num">§</span><h2>Built in and plugins</h2><span class="count">{{ outside.built_in.len() }}</span><span class="chev" aria-hidden="true"></span></summary>
+    <p class="marginalia">They come with their agent or a plugin, so Atlas lists them and leaves them where they are.</p>
+    <ul class="rows">
+      {% for b in outside.built_in %}
+      <li><div class="row static">
+        <span class="mark lead" role="img" aria-label="{{ b.agent }}" title="{{ b.agent }}">{{ b.icon|safe }}</span>
+        <span class="row-main"><span class="row-name">{{ b.name }}</span><span class="row-desc">{{ b.source }} · <span class="mono">{{ b.path }}</span></span></span>
+      </div></li>
+      {% endfor %}
+    </ul>
+  </details>
+</section>
+{% endif %}
+{% endif %}

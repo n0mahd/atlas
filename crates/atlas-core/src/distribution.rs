@@ -188,3 +188,56 @@ pub struct Report {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outside: Vec<OutsideSkill>,
 }
+
+// ---------------------------------------------------------------- hub ↔ admin CLI messages
+
+/// One paired OS account on a machine, as returned by the hub's admin API.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClientSummary {
+    pub id: String,
+    pub user: String,
+    pub paired: u64,
+    pub last_seen: Option<u64>,
+    pub release: Option<u64>,
+    #[serde(default)]
+    pub problems: Vec<String>,
+}
+
+/// One machine known to the hub, paired or not.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MachineSummary {
+    pub name: String,
+    pub hub: bool,
+    pub clients: Vec<ClientSummary>,
+}
+
+/// The hub's machine inventory for `atlasd machines`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MachinesListResponse {
+    pub hub: String,
+    pub origin: String,
+    pub latest_release: Option<u64>,
+    pub machines: Vec<MachineSummary>,
+}
+
+/// A fresh one-time pairing code and install command from the hub.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PairCodeResponse {
+    pub origin: String,
+    pub code: String,
+    pub command: String,
+    pub ttl_seconds: u64,
+}
+
+/// Request to add a tracked machine name on the hub.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AddMachineRequest {
+    pub name: String,
+}
+
+/// What removing a machine or client id deleted on the hub.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RemoveMachineResponse {
+    pub removed_machine: bool,
+    pub removed_clients: usize,
+}

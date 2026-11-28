@@ -42,5 +42,34 @@
     </div>
     <p class="marginalia warn-note" data-error hidden role="alert"></p>
   </section>
+  <section class="section" id="cli-tokens">
+    <div class="section-head"><span class="num">III</span><h2>CLI tokens</h2><span class="count">{{ tokens.len() }}</span></div>
+    {% if let Some(t) = new_token %}
+    <p class="marginalia" role="status">Token for <strong>{{ t.name }}</strong> (shown once). Run this on that machine:</p>
+    <div class="code-row">
+      <pre class="ink-block wrap">{{ t.command }}</pre>
+      <button class="button-plain button-sm copy-btn" type="button" data-copy="{{ t.command }}">Copy</button>
+    </div>
+    {% endif %}
+    {% if !token_error.is_empty() %}
+    <p class="marginalia warn-note" role="alert">{{ token_error }}</p>
+    {% endif %}
+    {% if !tokens.is_empty() %}
+    <ul class="rows">
+      {% for t in tokens %}
+      <li><div class="row static">
+        <span class="row-main"><span class="row-name">{{ t.name }}</span><span class="row-desc mono">created {{ t.created }} · last used {{ t.last_used }}</span></span>
+        <form method="post" action="/settings/tokens/{{ t.id }}/remove"><input type="hidden" name="csrf" value="{{ page.csrf }}"><button class="icon-button" type="submit" title="Revoke {{ t.name }}" aria-label="Revoke {{ t.name }}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></form>
+      </div></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/settings/tokens" class="setting-row">
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <span class="row-main"><span class="row-name">Create a CLI token</span><span class="row-desc">Lets <code>atlasd machines</code> on a workstation list, add (over its own SSH), and remove machines.</span></span>
+      <label class="field grow"><span class="sr">Name the CLI token</span><input class="search" name="name" placeholder="Name this workstation" required maxlength="60" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <button class="button-plain" type="submit">Create token</button>
+    </form>
+  </section>
 </div>
 {% endblock %}

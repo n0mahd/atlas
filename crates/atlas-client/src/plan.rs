@@ -1075,6 +1075,7 @@ mod tests {
             matcher: Some("Bash".into()),
             script: "/srv/guard.sh".into(),
             timeout: None,
+            replaces: None,
         };
         let off = BTreeMap::from([("pdf".to_owned(), PathBuf::from("/u/.claude/skills/pdf"))]);
         let mut plan = Plan::default();

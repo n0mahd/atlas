@@ -573,6 +573,168 @@ fn locale_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     })
 }
 
+// ---------------------------------------------------------------- moving records
+
+// The skill library carries a skill's record when the skill moves between Global and a
+// project, and drops it when the skill is deleted (only in locks inside repos Atlas
+// commits). Rewrites keep every other record, unknown fields and the file's formatting.
+
+impl LockFile {
+    /// An empty lock of `kind` at `path`, as the CLI first writes it.
+    #[must_use]
+    pub fn fresh(path: &Path, kind: LockKind) -> Self {
+        let mut data = Map::new();
+        data.insert("version".to_owned(), Value::from(kind.version()));
+        data.insert("skills".to_owned(), Value::Object(Map::new()));
+        if kind == LockKind::Global {
+            data.insert("dismissed".to_owned(), Value::Object(Map::new()));
+        }
+        Self {
+            path: path.to_path_buf(),
+            kind,
+            version: kind.version(),
+            records: BTreeMap::new(),
+            data,
+            indent: "  ".to_owned(),
+            trailing_newline: kind == LockKind::Project,
+            sorted: true,
+        }
+    }
+
+    /// `name`'s record exactly as the file has it, unknown fields included.
+    #[must_use]
+    pub fn raw(&self, name: &str) -> Option<&Value> {
+        self.data.get("skills")?.as_object()?.get(name)
+    }
+
+    /// Takes `name`'s record out, returning it whole.
+    pub fn remove(&mut self, name: &str) -> Option<Value> {
+        self.records.remove(name);
+        self.data
+            .get_mut("skills")?
+            .as_object_mut()?
+            .shift_remove(name)
+    }
+
+    /// Sets `name`'s record to `entry`, kept whole in the file.
+    pub fn insert(&mut self, name: &str, entry: Value) {
+        if let Some(record) = Record::from_json(&entry) {
+            self.records.insert(name.to_owned(), record);
+        }
+        if let Some(skills) = self.data.get_mut("skills").and_then(Value::as_object_mut) {
+            skills.insert(name.to_owned(), entry);
+        }
+    }
+
+    /// The file's text as it now stands, in its own formatting.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.render(self.data.clone())
+    }
+}
+
+/// Both hashes the CLI keeps for a folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderHashes {
+    /// Git's tree SHA, which GitHub reports and the global lock keeps (`skillFolderHash`).
+    pub tree_sha: String,
+    /// [`computed_hash`], which a project lock keeps (`computedHash`).
+    pub computed_hash: String,
+}
+
+/// The hashes of a skill folder on disk, or `None` when it can't be read or holds
+/// anything but plain files and folders (its tree SHA would then be unknowable here).
+#[must_use]
+pub fn hash_folder(folder: &Path) -> Option<FolderHashes> {
+    let tree = crate::library::read_tree(folder).ok()?;
+    tree.exact_digest()?;
+    let files: Vec<(String, &[u8], bool)> = tree
+        .files
+        .iter()
+        .map(|f| {
+            (
+                f.rel.to_string_lossy().replace('\\', "/"),
+                f.bytes.as_slice(),
+                f.executable,
+            )
+        })
+        .collect();
+    let items: Vec<TreeItem> = files
+        .iter()
+        .map(|(path, bytes, exec)| TreeItem {
+            path: path.clone(),
+            mode: if *exec { "100755" } else { "100644" }.to_owned(),
+            sha: git_blob_sha(bytes),
+        })
+        .collect();
+    let plain: Vec<(&str, &[u8])> = files.iter().map(|(p, b, _)| (p.as_str(), *b)).collect();
+    Some(FolderHashes {
+        tree_sha: git_tree_sha(&items),
+        computed_hash: computed_hash(&plain),
+    })
+}
+
+/// `entry` (a record of a `from` lock) in the shape a `to` lock keeps, or `None` when it
+/// can't be carried: a local source means nothing elsewhere, a global record needs the
+/// URL the CLI reinstalls from, and a project record needs the folder's `computedHash`,
+/// known only when the folder is exactly the tree the global record names (`hashes`).
+/// Follows T3 Code's `SkillLockFiles.convertRecord`.
+#[must_use]
+pub fn convert_record(
+    entry: &Value,
+    from: LockKind,
+    to: LockKind,
+    hashes: Option<&FolderHashes>,
+    now: &str,
+) -> Option<Value> {
+    let e = entry.as_object()?;
+    let source = e.get("source")?.as_str()?;
+    let source_type = e.get("sourceType")?.as_str()?;
+    if matches!(source_type, "local" | "node_modules") {
+        return None;
+    }
+    if from == to {
+        return Some(entry.clone());
+    }
+    let text = |k: &str| e.get(k).and_then(Value::as_str);
+    let mut out = Map::new();
+    let mut put = |k: &str, v: Option<&str>| {
+        if let Some(v) = v {
+            out.insert(k.to_owned(), Value::from(v));
+        }
+    };
+    let default_url = format!("https://github.com/{source}.git");
+    if from == LockKind::Project {
+        let url = text("sourceUrl")
+            .map(str::to_owned)
+            .or_else(|| (source_type == "github").then(|| default_url.clone()))?;
+        put("source", Some(source));
+        put("sourceType", Some(source_type));
+        put("sourceUrl", Some(&url));
+        put("ref", text("ref"));
+        put("skillPath", text("skillPath"));
+        // The CLI's "not version-tracked" value, so it never overwrites the skill.
+        put("skillFolderHash", Some(""));
+        put("installedAt", Some(now));
+        put("updatedAt", Some(now));
+        put("wellKnownDigest", text("wellKnownDigest"));
+    } else {
+        let recorded = text("skillFolderHash").filter(|h| !h.is_empty())?;
+        let hashes = hashes?;
+        if source_type != "github" || hashes.tree_sha != recorded {
+            return None;
+        }
+        put("source", Some(source));
+        put("sourceUrl", text("sourceUrl").filter(|u| *u != default_url));
+        put("ref", text("ref"));
+        put("sourceType", Some(source_type));
+        put("skillPath", text("skillPath"));
+        put("computedHash", Some(&hashes.computed_hash));
+        put("wellKnownDigest", text("wellKnownDigest"));
+    }
+    Some(Value::Object(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -913,5 +1075,91 @@ mod tests {
         for p in ["SKILL.md", "scripts/metadata.json.bak", "x/node_modules.md"] {
             assert!(!is_ignored_path(p), "{p}");
         }
+    }
+
+    #[test]
+    fn records_move_between_locks_keeping_everything_else() {
+        let global = "{\n  \"version\": 3,\n  \"skills\": {\n    \"pdf\": {\n      \"source\": \"acme/tools\",\n      \"sourceType\": \"github\",\n      \"sourceUrl\": \"https://github.com/acme/tools.git\",\n      \"skillFolderHash\": \"\",\n      \"extra\": 1\n    },\n    \"other\": {\n      \"source\": \"a/b\",\n      \"sourceType\": \"github\"\n    }\n  },\n  \"dismissed\": {},\n  \"future\": true\n}";
+        let mut lock = parse_lock(global, Path::new("g"), LockKind::Global).unwrap();
+        let pdf = lock.remove("pdf").unwrap();
+        assert_eq!(pdf["extra"], 1);
+        assert!(!lock.records.contains_key("pdf"));
+        let text = lock.text();
+        assert!(
+            text.contains("\"future\": true") && text.contains("\"other\""),
+            "{text}"
+        );
+        assert!(!text.ends_with('\n'));
+        lock.insert("pdf", pdf.clone());
+        assert!(lock.records.contains_key("pdf"));
+
+        // Untracked global records have no known hash, so they can't become project ones.
+        assert!(convert_record(&pdf, LockKind::Global, LockKind::Project, None, "now").is_none());
+        let project = serde_json::json!({"source": "acme/tools", "sourceType": "github", "computedHash": "ab"});
+        let back =
+            convert_record(&project, LockKind::Project, LockKind::Global, None, "now").unwrap();
+        assert_eq!(back["sourceUrl"], "https://github.com/acme/tools.git");
+        assert_eq!(back["skillFolderHash"], "");
+        let mut tracked = pdf;
+        tracked["skillFolderHash"] = Value::from("abc");
+        let hashes = FolderHashes {
+            tree_sha: "abc".to_owned(),
+            computed_hash: "def".to_owned(),
+        };
+        let to_project = convert_record(
+            &tracked,
+            LockKind::Global,
+            LockKind::Project,
+            Some(&hashes),
+            "now",
+        )
+        .unwrap();
+        assert_eq!(to_project["computedHash"], "def");
+        assert!(to_project.get("sourceUrl").is_none());
+        let local = serde_json::json!({"source": "./x", "sourceType": "local"});
+        assert!(convert_record(&local, LockKind::Global, LockKind::Global, None, "now").is_none());
+
+        let mut fresh = LockFile::fresh(Path::new("p"), LockKind::Project);
+        fresh.insert("zeta", project.clone());
+        fresh.insert("alpha", project);
+        let text = fresh.text();
+        assert!(
+            text.ends_with("}\n") && text.find("alpha") < text.find("zeta"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_folder_hashes_as_git_does() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("x/scripts")).unwrap();
+        std::fs::write(root.join("x/SKILL.md"), "---\nname: x\n---\n").unwrap();
+        std::fs::write(root.join("x/scripts/run.sh"), "echo hi\n").unwrap();
+        std::fs::set_permissions(
+            root.join("x/scripts/run.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        let expected = git(&["write-tree", "--prefix=x/"]);
+        assert_eq!(hash_folder(&root.join("x")).unwrap().tree_sha, expected);
+        std::os::unix::fs::symlink("SKILL.md", root.join("x/link")).unwrap();
+        assert!(hash_folder(&root.join("x")).is_none());
     }
 }

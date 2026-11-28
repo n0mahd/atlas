@@ -20,6 +20,7 @@ pub mod project;
 pub mod release;
 pub mod report;
 pub mod sources;
+pub mod ssh;
 pub mod tree;
 
 use std::path::Path;

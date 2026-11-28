@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="new-skill" method="post" action="/skills/new" data-send-on-save>
+  <input type="hidden" name="csrf" value="{{ page.csrf }}">
+  <p class="marginalia warn-note" data-error role="alert"{% if error.is_empty() %} hidden{% endif %}>{{ error }}</p>
+  <label class="field" for="new-name">Name
+    <input id="new-name" class="search" name="name" value="{{ name }}" required maxlength="64" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="pdf-tools" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="new-name-hint">
+  </label>
+  <span id="new-name-hint" class="field-hint">Lowercase letters, digits and hyphens</span>
+  <label class="field" for="new-description">One-line description
+    <input id="new-description" class="search" name="description" value="{{ description }}" required maxlength="{{ max }}" placeholder="What it does and when to use it" autocomplete="off">
+  </label>
+  <fieldset class="field new-place">
+    <legend>Where</legend>
+    <label class="choice"><input type="radio" name="where" value="global"{% if place == "global" %} checked{% endif %}> Global</label>
+    {% if let Some(p) = project %}<label class="choice"><input type="radio" name="where" value="{{ p }}"{% if place == p.as_str() %} checked{% endif %}> This project ({{ p }})</label>{% endif %}
+  </fieldset>
+  <div class="editor-actions">
+    <button class="button-ink" type="submit">Create</button>
+    <a class="link-cap" href="/skills{% if let Some(p) = project %}?scope={{ p }}{% endif %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -12,6 +12,10 @@
 //!   its own, so a user's groups are never edited, only stripped of Atlas handlers.
 //! - Antigravity (`~/.gemini/config/hooks.json`) names each hook at the top level,
 //!   so Atlas's are the keys starting with `atlas:`.
+//! - A hook brought into Atlas from a hand-made entry names that entry's command in
+//!   [`ManagedHook::replaces`]. Claude Code and Codex then drop the hand-made handler
+//!   when it is identical (same event, matcher, command and timeout); a group left empty
+//!   goes too. Antigravity's hooks aren't brought in, so its format has no such rule.
 
 mod antigravity;
 mod grouped;
@@ -36,6 +40,11 @@ pub struct ManagedHook {
     pub script: String,
     /// Seconds before the harness gives up on it.
     pub timeout: Option<u32>,
+    /// The hand-made command this hook was brought into Atlas from. A hand-made handler
+    /// with exactly this command, under the same event and matcher and with the same
+    /// timeout, is removed where the hook is written, so it doesn't run twice. Nothing
+    /// else of the owner's is touched.
+    pub replaces: Option<String>,
 }
 
 /// What follows the command in a handler Atlas wrote: a shell comment, so the harness
@@ -127,6 +136,7 @@ mod tests {
             matcher: None,
             script: script.into(),
             timeout: None,
+            replaces: None,
         }
     }
 

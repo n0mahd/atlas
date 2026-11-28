@@ -15,11 +15,22 @@
 
   document.addEventListener("click", function (event) {
     var toggle = event.target.closest("[data-rail-toggle]");
-    if (!toggle) return;
-    var collapsed = root.getAttribute("data-rail") === "collapsed";
-    if (collapsed) root.removeAttribute("data-rail"); else root.setAttribute("data-rail", "collapsed");
-    store(collapsed ? "open" : "collapsed");
-    toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+    if (toggle) {
+      var collapsed = root.getAttribute("data-rail") === "collapsed";
+      if (collapsed) root.removeAttribute("data-rail"); else root.setAttribute("data-rail", "collapsed");
+      store(collapsed ? "open" : "collapsed");
+      toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+      return;
+    }
+    var copy = event.target.closest("[data-copy]");
+    if (copy && navigator.clipboard && navigator.clipboard.writeText) {
+      var text = copy.getAttribute("data-copy");
+      var original = copy.textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        copy.textContent = "Copied";
+        window.setTimeout(function () { copy.textContent = original; }, 1500);
+      });
+    }
   });
 
   // Pickers marked data-autosubmit submit their form when changed.
@@ -42,5 +53,24 @@
   document.addEventListener("DOMContentLoaded", function () {
     var toggle = document.querySelector("[data-rail-toggle]");
     if (toggle) toggle.setAttribute("aria-expanded", root.getAttribute("data-rail") === "collapsed" ? "false" : "true");
+  });
+})();
+
+// "Copy path" buttons (hidden until this script can use the clipboard).
+(function () {
+  if (!navigator.clipboard) return;
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("button[data-copy]").forEach(function (b) { b.hidden = false; });
+  });
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("button[data-copy]");
+    if (!button) return;
+    var label = button.textContent;
+    navigator.clipboard.writeText(button.getAttribute("data-copy")).then(function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = label; }, 1600);
+    }, function () {
+      button.textContent = "Couldn't copy";
+    });
   });
 })();

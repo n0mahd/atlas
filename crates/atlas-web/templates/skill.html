@@ -18,11 +18,7 @@
       {% for a in v.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
     </ul>
     {% for a in v.agents %}{% if a.needs_words() %}<p class="agent-note warn">{{ a.icon|safe }}{{ a.state }}</p>{% endif %}{% endfor %}
-    {% if !v.files.is_empty() %}
-    <h2 class="aside-head">Files</h2>
-    <pre class="ink-block">{% for f in v.files %}{{ f }}
-{% endfor %}</pre>
-    {% endif %}
+    {% include "skill_files.html" %}
     {% if page.signed_in %}{% if let Some(href) = page.edit_href %}<a class="link-cap" href="{{ href.trim_end_matches("/edit") }}/update">Check for updates</a>{% endif %}{% endif %}
     <a class="link-cap" href="/skills">All skills</a>
   </aside>

@@ -281,7 +281,6 @@ fn explain(code: Option<i32>, output: &str, target: &Target) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn only_plain_ssh_addresses_pass() {
@@ -321,10 +320,25 @@ mod tests {
     }
 
     /// A fake `ssh` that writes its arguments, one per line, then exits as told.
+    ///
+    /// A separate `sh` writes the file, so this process never holds a write handle on it.
+    /// Otherwise a test thread forking at that moment inherits the handle and exec fails
+    /// with ETXTBSY ("text file busy").
     fn fake_ssh(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+        use std::io::Write as _;
         let path = dir.join("ssh");
-        std::fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' \"$@\"\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut writer = std::process::Command::new("sh")
+            .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = writer.stdin.take().unwrap();
+        stdin
+            .write_all(format!("#!/bin/sh\nprintf '%s\\n' \"$@\"\n{body}\n").as_bytes())
+            .unwrap();
+        drop(stdin);
+        assert!(writer.wait().unwrap().success());
         path
     }
 

@@ -305,6 +305,13 @@ adapted to the hub and many machines. See `documents/skills.md`.
   switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
   repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
   one change; public skills are committed and never pushed (0016), not refused.
+- **Bringing things in, details** (import work): Claude Code's notes are copied byte for
+  byte (atlasd's memory link compares bytes); host and project are recorded beside them in
+  `memory/projects/<project>/index.md` and the folder name, never added to the notes. An
+  imported hook's `hook.toml` gains `replaces` (the hand-made command), and the Claude Code
+  and Codex formats drop the identical hand-made handler where they write the hook. Hooks
+  for Grok Build and Muse, commands that look like they hold a secret, links into tools'
+  folders and built-in or plugin skills are not imported. See `documents/skills.md`.
 
 ## 0028 · 2026-11-27 · atlasd links Claude Code's subagents
 atlasd links each `<knowledge>/agents/<name>.md` in an update's pinned knowledge copy into
@@ -345,8 +352,36 @@ dependencies); clashing files are the owner's choice. The CLI's lock is updated 
 it sits in a repo Atlas commits; a global lock outside every repo is left alone, so an
 edited global skill shows as updatable again (the preview says so). One lock reader,
 `atlas_fs::lock`, serves updates and the skill library.
+## 0031 · 2026-11-27 · Managing machines from a workstation CLI and the Machines page
+An always-on hub often cannot SSH into every machine the owner can reach from their daily
+workstation, and the static `machines` list in `hub.toml` couldn't be edited without editing
+config on the hub.
+- **Tracked machines store**: the hub keeps editable machine names in `<state>/machines.json`
+  (mode 0600, seeded once from `hub.toml`'s `machines` list). On `/machines`, signed-out
+  visitors see a sign-in prompt instead of a bare page; signed-in owners can track new names,
+  generate machine-tailored pairing commands with a copy button, install over hub SSH, and
+  remove any non-hub machine (which also unpairs its clients). The top machine picker now
+  reflects paired status from `clients.json` instead of hardcoding `(not paired)`, and the
+  install script starts `atlasd.service --no-block` right after enabling the timer so new
+  machines report immediately.
+- **Passkey-issued CLI tokens**: Settings → CLI tokens (behind a passkey session and CSRF)
+  and `atlas-hub token <name>` mint revocable bearer tokens stored only as SHA-256 hashes in
+  `<state>/cli-tokens.json` (mode 0600), separated from `atlasd`'s sync tokens so an ordinary
+  paired login cannot add or remove other machines. Admin routes (`/api/admin/machines`,
+  `/api/admin/machines/{target}`, `/api/admin/pair-code`) require both `Tailscale-User-Login`
+  and a valid CLI token.
+- **Workstation CLI in `atlasd`**: `atlasd auth <hub> <token>` stores the token in
+  `~/.config/atlas/cli.toml` (mode 0600); `atlasd machines [list]`, `atlasd machines add
+  <you@host>`, `atlasd machines track <name>`, `atlasd machines remove <name-or-id>`, and
+  `atlasd pair-code` manage machines remotely. `atlasd machines add` requests a fresh
+  one-time pairing code from the hub and runs the workstation's own interactive `ssh`
+  (inheriting stdio so its SSH keys, agent, and prompts work natively).
+- **Banner alignment**: `<main>` wraps its children in `.page-inner` (`max-width: 1180px;
+  margin-inline: auto`) and `.marginalia`, `.flash`, `.empty`, and `.frontispiece` use
+  `margin-block` instead of `margin` shorthands so banners align cleanly with the masthead on
+  wide screens.
 
-## 0031 · 2026-11-27 · atlasd on each machine: projects, memory links, update format
+## 0032 · 2026-11-27 · atlasd on each machine: projects, memory links, update format
 - **Update format stays 1.** `Manifest::projects` (name and remote) is added last and left
   out when empty, so a manifest without projects keeps its exact signed bytes, and older
   clients, whose manifest type doesn't refuse unknown fields, ignore it and simply link no

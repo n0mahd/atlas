@@ -43,27 +43,6 @@ harnesses = ["claude-code"]</pre>
     {% endif %}
   </section>
 
-  <section class="section">
-    <div class="section-head"><span class="num">II</span><h2>Outside Atlas</h2><span class="count">{{ v.found.len() }}</span></div>
-    {% if v.found.is_empty() %}
-    <p class="empty">No agent on this machine has hooks of its own.</p>
-    {% else %}
-    <ul class="rows">
-      {% for f in v.found %}
-      <li>
-        <details class="row">
-          <summary>
-            <span class="mark lead" role="img" aria-label="{{ f.harness }}" title="{{ f.harness }}">{{ f.icon|safe }}</span>
-            <span class="row-main"><span class="row-name mono-name">{{ f.command }}</span></span>
-            <span class="row-meta">{{ f.event }} · {{ f.matcher }}</span>
-            <span class="chev" aria-hidden="true"></span>
-          </summary>
-          <div class="drawer"><span class="mono muted">{{ f.config }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span></div>
-        </details>
-      </li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-  </section>
+  {% include "outside_hooks.html" %}
 </div>
 {% endblock %}
