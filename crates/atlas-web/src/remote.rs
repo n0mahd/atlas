@@ -275,15 +275,35 @@ fn explain(code: Option<i32>, output: &str, target: &Target) -> String {
             "The hub couldn't sign in to {target} over SSH. Turn on Tailscale SSH on that machine (`sudo tailscale set --ssh`) or add the hub's SSH key to it, then try again."
         );
     }
-    // The install script stops on a system it has no build for; say which, up front.
-    if let Some(line) = output
-        .lines()
-        .map(str::trim)
-        .find(|l| l.contains("isn't available for"))
-    {
-        if line.contains("for Darwin") {
-            return format!("{target} runs macOS; atlasd is Linux-only for now.");
+    // The install script stops early, before pairing, with one plain line; say it up front.
+    if let Some(line) = output.lines().map(str::trim).find(|l| {
+        l.contains("has no atlasd build for macos") || l.contains("has no atlasd build for linux")
+    }) {
+        let arch = line
+            .trim_end_matches('.')
+            .rsplit(' ')
+            .next()
+            .unwrap_or_default();
+        if line.contains("for macos") {
+            return format!(
+                "{target} is a Mac, and this hub has no macOS build of atlasd for {arch}. Build one on a Mac and add it to the hub (hub guide, “Give the hub atlasd builds to hand out”)."
+            );
         }
+        return format!(
+            "This hub has no Linux build of atlasd for {arch}, which {target} needs (hub guide, “Give the hub atlasd builds to hand out”)."
+        );
+    }
+    if let Some(line) = output.lines().map(str::trim).find(|l| {
+        [
+            "isn't available for",
+            "no systemd user services",
+            "launchd has no session",
+            "no atlasd builds",
+            "The hub refused the download",
+        ]
+        .iter()
+        .any(|m| l.contains(m))
+    }) {
         return format!("The install on {target} stopped: {line}");
     }
     format!("The install on {target} failed.")
@@ -423,16 +443,43 @@ mod tests {
     #[tokio::test]
     async fn an_unsupported_system_is_named_in_the_headline() {
         let e = run_fake(
-            "echo \"atlasd isn't available for Darwin yet.\" >&2; exit 1",
+            "echo \"This hub has no atlasd build for macos on aarch64.\" >&2; exit 1",
             TIMEOUT,
         )
         .await
         .unwrap_err();
         assert_eq!(
             e.message,
-            "you@laptop runs macOS; atlasd is Linux-only for now."
+            "you@laptop is a Mac, and this hub has no macOS build of atlasd for aarch64. Build one on a Mac and add it to the hub (hub guide, “Give the hub atlasd builds to hand out”)."
         );
-        assert!(e.output.contains("isn't available for Darwin"));
+        assert!(e.output.contains("no atlasd build for macos"));
+
+        let e = run_fake(
+            "echo \"This hub has no atlasd build for linux on aarch64.\" >&2; exit 1",
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            e.message.starts_with(
+                "This hub has no Linux build of atlasd for aarch64, which you@laptop needs"
+            ),
+            "{}",
+            e.message
+        );
+
+        let e = run_fake(
+            "echo \"This machine has no systemd user services (WSL and containers often don't), so atlasd couldn't run on its own.\" >&2; exit 1",
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            e.message
+                .starts_with("The install on you@laptop stopped: This machine has no systemd"),
+            "{}",
+            e.message
+        );
 
         let e = run_fake(
             "echo \"atlasd isn't available for riscv64 yet.\" >&2; exit 1",
