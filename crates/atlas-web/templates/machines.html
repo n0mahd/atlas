@@ -23,6 +23,8 @@
     </div>
     <p class="editor-note">It installs atlasd and pairs it. The code works once, for 15 minutes.</p>
   </section>
+  {% else if page.signed_in && !builds %}
+  <p class="marginalia warn-note" role="status">No atlasd builds to hand out yet, so there is no install command. Add one with “Give the hub atlasd builds to hand out” in the hub guide, <span class="mono">documents/guide/install-hub.md</span>.</p>
   {% else if page.signed_in %}
   <form method="post" action="/machines/pair" class="setting-row">
     <input type="hidden" name="csrf" value="{{ page.csrf }}">
@@ -31,12 +33,14 @@
   </form>
   {% endif %}
   {% if page.signed_in %}
+  {% if builds %}
   <form method="post" action="/machines/pair/ssh" class="setting-row" data-busy="Installing…">
     <input type="hidden" name="csrf" value="{{ page.csrf }}">
     <span class="row-main"><span class="row-name">Or install it from the hub over SSH</span><span class="row-desc">Needs Tailscale SSH on the machine, or the hub's SSH key.</span></span>
     <label class="field grow"><span class="sr">The machine's SSH address</span><input class="search" name="target" placeholder="you@laptop"{% if let Some(r) = ssh_result %}{% if !r.ok %} value="{{ r.target }}"{% endif %}{% endif %} required maxlength="253" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <button class="button-plain" type="submit">Install</button>
   </form>
+  {% endif %}
   <form method="post" action="/machines/add" class="setting-row">
     <input type="hidden" name="csrf" value="{{ page.csrf }}">
     <span class="row-main"><span class="row-name">Track a machine</span><span class="row-desc">Add a machine name to this list before pairing it.</span></span>

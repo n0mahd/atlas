@@ -12,7 +12,7 @@ pub mod clients;
 mod distribute;
 mod edit;
 mod icons;
-mod install;
+pub mod install;
 mod markdown;
 pub mod release;
 pub mod remote;
@@ -404,6 +404,8 @@ struct MachinesPage {
     pair_command: Option<String>,
     pair_target: String,
     ssh_result: Option<SshResult>,
+    /// The hub has atlasd builds to hand out; without them there is no install command.
+    builds: bool,
 }
 
 /// The machine ledgers alone, polled by the Machines page.
@@ -412,6 +414,14 @@ struct MachinesPage {
 struct MachinesList {
     page: Page,
     machines: Vec<views::Machine>,
+    builds: bool,
+}
+
+/// Whether this hub has atlasd builds to hand out.
+pub(crate) fn has_builds(s: &AppState) -> bool {
+    s.writer
+        .as_ref()
+        .is_some_and(|w| install::has_builds(&w.state_dir))
 }
 
 /// What an install over SSH from the Machines page came to.
@@ -675,7 +685,16 @@ async fn machines_list(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let (page, machines) = machines_data(&s, &headers).await?;
-    Ok(Html(MachinesList { page, machines }.render()?).into_response())
+    let builds = has_builds(&s);
+    Ok(Html(
+        MachinesList {
+            page,
+            machines,
+            builds,
+        }
+        .render()?,
+    )
+    .into_response())
 }
 
 /// The page frame and the machines, for the Machines page and its polled list.
@@ -698,11 +717,12 @@ async fn machines_data(
     );
     let others = s.known_machines();
     let machines = views::machines(&snap, &s.hub, &others, &clients, latest);
-    let paired = machines
+    // Paired isn't reporting: a machine counts once one of its clients has sent a report.
+    let reporting = machines
         .iter()
-        .filter(|m| m.hub || !m.clients.is_empty())
+        .filter(|m| m.hub || m.clients.iter().any(|c| c.reporting))
         .count();
-    page.totals = format!("{} machines · {paired} reporting", machines.len());
+    page.totals = format!("{} machines · {reporting} reporting", machines.len());
     Ok((page, machines))
 }
 
@@ -724,6 +744,7 @@ pub(crate) async fn machines_page(
             pair_command,
             pair_target,
             ssh_result,
+            builds: has_builds(s),
         }
         .render()?,
     )

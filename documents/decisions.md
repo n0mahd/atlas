@@ -505,6 +505,24 @@ same files. Setup links keep their 64-character form and have no rate limit: the
 made on the hub itself and can't be guessed. The install script joins its arguments, so a
 code pasted with a space still works.
 
+## 0041 · 2026-11-28 · The install script runs the first pass in the foreground
+The served install script now runs `atlasd run --summary` itself, after pairing and before
+it starts the timer (or the launchd agent), so the person sees what happened in two or
+three lines: what was linked for which agents, and that nothing of theirs was deleted, or
+which older links were replaced. This replaces 0036's `systemctl --user start --no-block
+atlasd.service`: that first run was invisible and gave no summary. The cost is that the
+first run is outside the unit's sandbox settings; it is the same binary and user, and every
+later run is under systemd again. The summary comes from the actions the pass carried out,
+not a second count. The script checks for systemd user services (`systemctl --user
+show-environment`; `launchctl print` on macOS) before it downloads or pairs, so WSL or a
+container stops with one sentence and no paired machine that never reports. It no longer
+passes `--adopt "$HOME/Knowledge" "$HOME/Skills"`, which came from the owner's old setup;
+`atlasd pair --adopt` stays. Downloads use `curl -w '%{http_code}'` and print the hub's
+message on a refusal. With no builds in `<state>/dist/` the Machines page, the CLI's
+pair-code and `atlas-hub pair-code` issue no code and say how to add a build, and
+`/install` answers with a script that says the same and exits 1, served with status 200
+because the documented `curl -fsSL` would otherwise show only "error: 400".
+
 ## 00XX · 2026-11-28 · atlasd runs every minute because an idle run writes nothing
 A run with nothing new now writes nothing on the machine, so `deploy/atlasd.timer`
 (`OnCalendar=*:*:00`, still `OnBootSec=2min` and `Persistent=true`) and the launchd
@@ -545,6 +563,6 @@ Codex, OpenCode and Pi present; 15 no-change runs each):
 
 Time barely moved: on a small copy one `git status` costs about what a checkout does.
 What changed is that an idle run is now read-only on the machine, and a minute's worth
-of runs costs the hub one small file write. Each run still logs a line ("Release N is
+of runs costs the hub one small file write. Each run still logs a line ("Update N is
 applied.") to the journal, or to `~/Library/Logs/atlasd.log` on a Mac, which grows by
 about 30 KB a day there.

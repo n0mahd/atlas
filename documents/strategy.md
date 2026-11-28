@@ -60,7 +60,8 @@ skills work about to land):
    eight temp-file-and-rename writers, the owner-key type and its converter, and the
    session check (and, for sensitive actions, the grant check of decision 0038) that
    handlers call by hand instead of through an extractor.
-5. `atlas-hub` has no tests (configuration, socket, first run), and the passkey
+5. `atlas-hub` has one test (where its state folder is); configuration, the socket and
+   first run have none, and the passkey
    ceremonies are tested only through the hub's pages.
 6. Planned protections the architecture page lists as not built: a content scanner,
    `Secret<T>`, `VerifiedRelease`, Tailscale WhoIs, cargo-deny, signed binaries.

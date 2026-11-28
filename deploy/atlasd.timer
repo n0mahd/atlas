@@ -1,5 +1,5 @@
-# Runs atlasd.service every minute. See atlasd.service for install steps. A run with
-# nothing new is one release GET and one report POST and writes nothing on this machine.
+# Runs atlasd.service every minute, to apply the latest update. See atlasd.service.
+# A run with nothing new is one GET and one POST to the hub and writes nothing here.
 [Unit]
 Description=Run atlasd every minute
 

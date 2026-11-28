@@ -44,14 +44,15 @@ fn step(action: &Action) -> io::Result<()> {
     }
 }
 
-/// Applies every action in order. Returns what was done and what failed, in words.
+/// Applies every action in order. Returns the actions carried out, and what failed in
+/// words.
 #[must_use]
-pub fn apply(plan: &Plan, home: &Path) -> (Vec<String>, Vec<String>) {
+pub fn apply<'a>(plan: &'a Plan, home: &Path) -> (Vec<&'a Action>, Vec<String>) {
     let mut done = Vec::new();
     let mut failed = Vec::new();
     for action in &plan.actions {
         match step(action) {
-            Ok(()) => done.push(action.describe(home)),
+            Ok(()) => done.push(action),
             Err(e) => failed.push(format!("couldn't {}: {e}", action.describe(home))),
         }
     }

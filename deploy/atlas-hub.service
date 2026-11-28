@@ -1,7 +1,7 @@
-# User service for the Atlas hub. Install:
-#   cargo build --release -p atlas-hub && install -Dm755 target/release/atlas-hub ~/.local/bin/atlas-hub
-#   ln -sf "$PWD/deploy/atlas-hub.service" ~/.config/systemd/user/ && systemctl --user daemon-reload
-#   systemctl --user enable --now atlas-hub
+# User service for the Atlas hub. deploy/install.sh copies it to
+# ~/.config/systemd/user/ and enables it; by hand, copy it there (don't link it into the
+# clone, which may move or change branch), then:
+#   systemctl --user daemon-reload && systemctl --user enable --now atlas-hub
 #   loginctl enable-linger "$USER"   # keep it running without a login session
 #   tailscale serve --bg --https=<port> "unix:$XDG_RUNTIME_DIR/atlas/hub.sock"
 [Unit]
