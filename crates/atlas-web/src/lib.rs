@@ -5,6 +5,9 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
+// Used by the skills, instructions and import pages as they land (decision 0027).
+#[allow(dead_code)]
+mod change;
 pub mod clients;
 mod distribute;
 mod edit;
@@ -13,6 +16,12 @@ mod install;
 mod markdown;
 pub mod release;
 pub mod remote;
+// Stubs until the library and placement work lands (decision 0027).
+#[allow(dead_code, clippy::unused_async)]
+mod skill_ops;
+#[allow(dead_code, clippy::unused_async)]
+mod skills_place;
+pub mod tokens;
 pub mod views;
 
 use std::sync::Arc;
@@ -24,7 +33,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use serde::Deserialize;
 
 use atlas_core::kernel::Scope;
@@ -74,6 +83,9 @@ const SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 impl AppState {
     #[must_use]
     pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
+        if let Some(w) = &writer {
+            w.machines.seed(&others);
+        }
         Self {
             sources: Arc::new(sources),
             hub: Arc::from(hub),
@@ -81,6 +93,12 @@ impl AppState {
             writer: writer.map(Arc::new),
             cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    pub(crate) fn known_machines(&self) -> Vec<String> {
+        self.writer
+            .as_ref()
+            .map_or_else(|| self.others.to_vec(), |w| w.machines.list())
     }
 
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
@@ -119,7 +137,14 @@ impl AppState {
         scope: &Scope,
         scoped: bool,
     ) -> Page {
-        let mut page = Page::new(section, title, &self.hub, &self.others, snap, scope, scoped);
+        let others = self.known_machines();
+        let clients = self
+            .writer
+            .as_ref()
+            .map_or_else(Vec::new, |w| w.clients.list());
+        let mut page = Page::new(
+            section, title, &self.hub, &others, &clients, snap, scope, scoped,
+        );
         edit::decorate(&mut page, self, headers);
         page
     }
@@ -152,17 +177,33 @@ pub fn router(state: AppState, access: Access) -> Router {
             get(edit::settings_page).post(edit::settings_save),
         )
         .route("/settings/keys/{id}/remove", post(edit::remove_key))
+        .route("/settings/tokens", post(edit::create_token))
+        .route("/settings/tokens/{id}/remove", post(edit::remove_token))
         .route("/releases", get(distribute::releases_moved))
         .route("/send/start", post(distribute::send_start))
         .route("/send/finish", post(distribute::send_finish))
         .route("/machines/pair", post(distribute::pair_code))
         .route("/machines/pair/ssh", post(distribute::pair_ssh))
+        .route("/machines/add", post(distribute::add_machine_ui))
+        .route("/machines/forget", post(distribute::forget_machine_ui))
         .route("/machines/{id}/remove", post(distribute::unpair))
         .route("/install", get(install::script))
         .route("/install/{name}", get(install::binary))
         .route("/api/pair", post(distribute::api_pair))
         .route("/api/release", get(distribute::api_release))
         .route("/api/report", post(distribute::api_report))
+        .route(
+            "/api/admin/machines",
+            get(distribute::api_admin_machines).post(distribute::api_admin_add_machine),
+        )
+        .route(
+            "/api/admin/machines/{target}",
+            delete(distribute::api_admin_remove_machine),
+        )
+        .route(
+            "/api/admin/pair-code",
+            post(distribute::api_admin_pair_code),
+        )
         .route(
             "/skills/{home}/{name}/edit",
             get(edit::edit_skill).post(edit::save_skill),
@@ -335,6 +376,7 @@ struct MachinesPage {
     page: Page,
     machines: Vec<views::Machine>,
     pair_command: Option<String>,
+    pair_target: String,
     ssh_result: Option<SshResult>,
 }
 
@@ -464,6 +506,7 @@ async fn skills(
     let v = views::skills(&snap, &scope, &q.q);
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
+    q.apply(&mut page);
     Ok(Html(SkillsPage { page, v }.render()?))
 }
 
@@ -501,6 +544,7 @@ async fn instructions(
         true,
     );
     page.totals = format!("{} files", snap.catalog.instructions.len());
+    q.apply(&mut page);
     Ok(Html(
         InstructionsPage {
             page,
@@ -545,6 +589,7 @@ async fn memory(
     let v = views::memory(&snap, &scope, &q.q, &q.kind, &q.host);
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
+    q.apply(&mut page);
     Ok(Html(MemoryPage { page, v }.render()?))
 }
 
@@ -565,11 +610,16 @@ async fn memory_detail(
     Ok(Html(MemoryDetailPage { page, v }.render()?))
 }
 
-async fn hooks(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
+async fn hooks(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::hooks(&snap);
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
+    q.apply(&mut page);
     Ok(Html(HooksPage { page, v }.render()?))
 }
 
@@ -587,7 +637,7 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {
 }
 
 async fn machines(State(s): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
-    machines_page(&s, &headers, None, None).await
+    machines_page(&s, &headers, None, None, None).await
 }
 
 /// The machine list, polled every 10 seconds so a newly paired machine appears.
@@ -617,7 +667,8 @@ async fn machines_data(
         || (Vec::new(), None),
         |w| (w.clients.list(), w.releases.numbers().last().copied()),
     );
-    let machines = views::machines(&snap, &s.hub, &s.others, &clients, latest);
+    let others = s.known_machines();
+    let machines = views::machines(&snap, &s.hub, &others, &clients, latest);
     let paired = machines
         .iter()
         .filter(|m| m.hub || !m.clients.is_empty())
@@ -626,20 +677,23 @@ async fn machines_data(
     Ok((page, machines))
 }
 
-/// The Machines page; `pair_command` shows a fresh pairing command once, `ssh_result`
-/// how an install over SSH went.
+/// The Machines page; `pair_command` shows a fresh pairing command once, `pair_target`
+/// optionally names the machine for the SSH variant, `ssh_result` how an install over SSH went.
 pub(crate) async fn machines_page(
     s: &AppState,
     headers: &HeaderMap,
     pair_command: Option<String>,
+    pair_target: Option<String>,
     ssh_result: Option<SshResult>,
 ) -> Result<Response, AppError> {
     let (page, machines) = machines_data(s, headers).await?;
+    let pair_target = pair_target.unwrap_or_else(|| "you@machine".to_owned());
     Ok(Html(
         MachinesPage {
             page,
             machines,
             pair_command,
+            pair_target,
             ssh_result,
         }
         .render()?,

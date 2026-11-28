@@ -2,11 +2,13 @@
 //! folders of the login it runs as.
 //!
 //! Store reads go through cap-std, so a symlink inside a repo can't make the hub read
-//! files outside that repo. Nothing here writes.
+//! files outside that repo. Writes happen only in `edit` (one file) and `library`
+//! (folders and the placements file), atomically and inside the repo.
 
 mod catalog;
 pub mod edit;
 mod harness;
+pub mod library;
 mod paths;
 
 pub use catalog::load_catalog;

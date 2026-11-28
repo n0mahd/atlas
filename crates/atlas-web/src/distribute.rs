@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use atlas_core::distribution::{PairRequest, PairResponse, Report};
+use atlas_core::distribution::{
+    AddMachineRequest, ClientSummary, MachineSummary, MachinesListResponse, PairCodeResponse,
+    PairRequest, PairResponse, RemoveMachineResponse, Report,
+};
 use atlas_core::release::{Manifest, OwnerKey, Signature, SignedRelease, SourceId};
 use axum::Json;
 use axum::extract::{Form, Path, State};
@@ -432,21 +435,33 @@ pub(crate) async fn releases_moved() -> Redirect {
 
 // ---------------------------------------------------------------- pairing (owner side)
 
+#[derive(Deserialize)]
+pub(crate) struct PairForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    machine: String,
+}
+
 /// Issues a one-time pairing code and shows the command to run on the machine.
 pub(crate) async fn pair_code(
     State(s): State<AppState>,
     headers: HeaderMap,
-    Form(f): Form<CsrfForm>,
+    Form(f): Form<PairForm>,
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
-    if !w.authorised(&headers, f.csrf()) {
+    if !w.authorised(&headers, &f.csrf) {
         return Ok(forbidden("Sign in again to pair a machine.\n"));
     }
     let code = issue_pairing_code(w)?;
+    let pair_target = remote::Target::parse(&f.machine)
+        .ok()
+        .map(|t| t.to_string());
     crate::machines_page(
         &s,
         &headers,
         Some(remote::install_command(w.origin(), &code)),
+        pair_target,
         None,
     )
     .await
@@ -459,6 +474,66 @@ fn issue_pairing_code(w: &Writer) -> Result<String, AppError> {
         PAIRING_TTL,
     )
     .map_err(|e| AppError::Bad(e.to_string()))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MachineNameForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// Adds a machine name to the hub's tracked list.
+pub(crate) async fn add_machine_ui(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<MachineNameForm>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to add a machine.\n"));
+    }
+    let trimmed = f.name.trim();
+    if trimmed.eq_ignore_ascii_case(&s.hub) {
+        let result = SshResult {
+            ok: false,
+            message: format!("{trimmed} is already this hub."),
+            output: String::new(),
+            target: String::new(),
+        };
+        return crate::machines_page(&s, &headers, None, None, Some(result)).await;
+    }
+    match w.machines.add(trimmed) {
+        Ok(_) => Ok(Redirect::to("/machines").into_response()),
+        Err(message) => {
+            let result = SshResult {
+                ok: false,
+                message,
+                output: String::new(),
+                target: String::new(),
+            };
+            crate::machines_page(&s, &headers, None, None, Some(result)).await
+        }
+    }
+}
+
+/// Removes a tracked machine and unpairs any clients on it.
+pub(crate) async fn forget_machine_ui(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<MachineNameForm>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to remove a machine.\n"));
+    }
+    let name = f.name.trim();
+    if !name.is_empty() && !name.eq_ignore_ascii_case(&s.hub) {
+        w.machines.remove(name).map_err(AppError::Bad)?;
+        w.clients.remove_machine(name).map_err(AppError::Bad)?;
+    }
+    Ok(Redirect::to("/machines").into_response())
 }
 
 #[derive(Deserialize)]
@@ -488,12 +563,14 @@ pub(crate) async fn pair_ssh(
                 output: String::new(),
                 target: f.target.trim().to_owned(),
             };
-            return crate::machines_page(&s, &headers, None, Some(result)).await;
+            return crate::machines_page(&s, &headers, None, None, Some(result)).await;
         }
     };
     let code = issue_pairing_code(w)?;
     tracing::info!("installing atlasd on {target} over ssh");
-    let (result, command) = match remote::install_over_ssh(w.origin(), &code, &target).await {
+    let (result, command, pair_target) = match remote::install_over_ssh(w.origin(), &code, &target)
+        .await
+    {
         Ok(_) => (
             SshResult {
                 ok: true,
@@ -503,6 +580,7 @@ pub(crate) async fn pair_ssh(
                 output: String::new(),
                 target: String::new(),
             },
+            None,
             None,
         ),
         Err(e) => {
@@ -516,10 +594,11 @@ pub(crate) async fn pair_ssh(
                 },
                 // The code may still be unused, so offer the command to run by hand.
                 Some(remote::install_command(w.origin(), &code)),
+                Some(target.to_string()),
             )
         }
     };
-    crate::machines_page(&s, &headers, command, Some(result)).await
+    crate::machines_page(&s, &headers, command, pair_target, Some(result)).await
 }
 
 pub(crate) async fn unpair(
@@ -534,6 +613,151 @@ pub(crate) async fn unpair(
     }
     w.clients.remove(&id).map_err(AppError::Bad)?;
     Ok(Redirect::to("/machines").into_response())
+}
+
+// ---------------------------------------------------------------- admin CLI API
+
+fn unauthorised_cli(w: &Writer, headers: &HeaderMap) -> Option<Response> {
+    if w.tokens.authenticate(headers).is_some() {
+        None
+    } else {
+        Some((
+            StatusCode::UNAUTHORIZED,
+            "Invalid or missing CLI token. Create one in Settings → CLI tokens, then run `atlasd auth`.\n",
+        )
+            .into_response())
+    }
+}
+
+pub(crate) async fn api_admin_machines(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if let Some(res) = unauthorised_cli(w, &headers) {
+        return Ok(res);
+    }
+    let clients = w.clients.list();
+    let latest_release = w.releases.numbers().last().copied();
+    let mut names: Vec<String> = s
+        .known_machines()
+        .into_iter()
+        .filter(|n| !n.eq_ignore_ascii_case(&s.hub))
+        .collect();
+    for c in &clients {
+        if !c.machine.eq_ignore_ascii_case(&s.hub)
+            && !names.iter().any(|n| n.eq_ignore_ascii_case(&c.machine))
+        {
+            names.push(c.machine.clone());
+        }
+    }
+    let to_summary = |machine: &str, hub: bool| MachineSummary {
+        name: machine.to_owned(),
+        hub,
+        clients: clients
+            .iter()
+            .filter(|c| c.machine.eq_ignore_ascii_case(machine))
+            .map(|c| ClientSummary {
+                id: c.id.clone(),
+                user: c.user.clone(),
+                paired: c.paired,
+                last_seen: c.last_seen,
+                release: c.report.as_ref().and_then(|r| r.release),
+                problems: c
+                    .report
+                    .as_ref()
+                    .map_or_else(Vec::new, |r| r.problems.clone()),
+            })
+            .collect(),
+    };
+    let mut machines = vec![to_summary(&s.hub, true)];
+    machines.extend(names.iter().map(|n| to_summary(n, false)));
+    Ok(Json(MachinesListResponse {
+        hub: s.hub.to_string(),
+        origin: w.origin().to_owned(),
+        latest_release,
+        machines,
+    })
+    .into_response())
+}
+
+pub(crate) async fn api_admin_pair_code(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if let Some(res) = unauthorised_cli(w, &headers) {
+        return Ok(res);
+    }
+    let code = issue_pairing_code(w)?;
+    let origin = w.origin().to_owned();
+    let command = remote::install_command(&origin, &code);
+    Ok(Json(PairCodeResponse {
+        origin,
+        code,
+        command,
+        ttl_seconds: PAIRING_TTL.as_secs(),
+    })
+    .into_response())
+}
+
+pub(crate) async fn api_admin_add_machine(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AddMachineRequest>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if let Some(res) = unauthorised_cli(w, &headers) {
+        return Ok(res);
+    }
+    let trimmed = req.name.trim();
+    if trimmed.eq_ignore_ascii_case(&s.hub) {
+        return Err(AppError::Bad(format!("{trimmed} is already this hub.")));
+    }
+    let name = w.machines.add(trimmed).map_err(AppError::Bad)?;
+    Ok((StatusCode::CREATED, Json(AddMachineRequest { name })).into_response())
+}
+
+pub(crate) async fn api_admin_remove_machine(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(target): Path<String>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if let Some(res) = unauthorised_cli(w, &headers) {
+        return Ok(res);
+    }
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(AppError::Bad("Give a machine name or client id.".into()));
+    }
+    if w.clients.list().iter().any(|c| c.id == target) {
+        w.clients.remove(target).map_err(AppError::Bad)?;
+        return Ok(Json(RemoveMachineResponse {
+            removed_machine: false,
+            removed_clients: 1,
+        })
+        .into_response());
+    }
+    if target.eq_ignore_ascii_case(&s.hub) {
+        return Err(AppError::Bad(format!(
+            "{target} is this hub; unpair a specific client id if needed."
+        )));
+    }
+    let removed_machine = w.machines.remove(target).map_err(AppError::Bad)?;
+    let removed_clients = w.clients.remove_machine(target).map_err(AppError::Bad)?;
+    if !removed_machine && removed_clients == 0 {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            format!("No machine or paired client named \"{target}\".\n"),
+        )
+            .into_response());
+    }
+    Ok(Json(RemoveMachineResponse {
+        removed_machine,
+        removed_clients,
+    })
+    .into_response())
 }
 
 // ---------------------------------------------------------------- client API
@@ -1035,6 +1259,8 @@ mod tests {
     #[tokio::test]
     async fn the_machine_list_refreshes_without_the_pairing_forms() {
         let hub = SendHub::new();
+        let body = format!("csrf={}&name=workstation", hub.csrf);
+        call(&hub.app, post_form(&hub, "/machines/add", body)).await;
         let (status, page) = call(&hub.app, hub.get("/machines")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(page.contains(
@@ -1050,7 +1276,21 @@ mod tests {
         );
         assert!(list.contains("class=\"ledger"), "{list}");
         assert!(list.contains("<h2>hub</h2>"), "{list}");
-        for absent in ["/machines/pair", "<html", "Pair a machine", "<nav"] {
+        // The unpaired machine's own row keeps its Pair, Install and remove buttons.
+        assert!(list.contains("<h2>workstation</h2>"), "{list}");
+        assert!(
+            list.contains("name=\"machine\" value=\"workstation\""),
+            "{list}"
+        );
+        assert!(list.contains("action=\"/machines/forget\""), "{list}");
+        // The forms at the top of the page (typing, copying) are never replaced.
+        for absent in [
+            "Pair a machine",
+            "name=\"target\" placeholder",
+            "action=\"/machines/add\"",
+            "<html",
+            "<nav",
+        ] {
             assert!(!list.contains(absent), "{absent} in {list}");
         }
         // The same ledgers as the page, from the one partial.
@@ -1142,6 +1382,216 @@ mod tests {
                 "ssh you@machine 'curl -fsSL {ORIGIN}/install | sh -s -- "
             )),
             "{page}"
+        );
+    }
+
+    fn post_form(hub: &SendHub, path: &str, body: String) -> Request<Body> {
+        Request::post(path)
+            .header("tailscale-user-login", LOGIN)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                header::COOKIE,
+                format!("{}={}", crate::auth::COOKIE, hub.cookie),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn machines_ui_adds_pairs_and_forgets_machines() {
+        let hub = SendHub::new();
+
+        // Signed-out visitors see a prompt to sign in rather than a bare page.
+        let unsigned = Request::get("/machines")
+            .header("tailscale-user-login", LOGIN)
+            .body(Body::empty())
+            .unwrap();
+        let (status, page) = call(&hub.app, unsigned).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains("href=\"/signin?next=/machines\""), "{page}");
+
+        // Add, pair-tailor, and forget a machine via the UI.
+        let (status, _) = call(
+            &hub.app,
+            post_form(
+                &hub,
+                "/machines/add",
+                format!("csrf={}&name=workstation", hub.csrf),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (_, page) = call(&hub.app, hub.get("/machines")).await;
+        assert!(page.contains("workstation"), "{page}");
+
+        let (status, page) = call(
+            &hub.app,
+            post_form(
+                &hub,
+                "/machines/pair",
+                format!("csrf={}&machine=workstation", hub.csrf),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            page.contains(&format!(
+                "ssh workstation 'curl -fsSL {ORIGIN}/install | sh -s -- "
+            )),
+            "{page}"
+        );
+
+        let (status, _) = call(
+            &hub.app,
+            post_form(
+                &hub,
+                "/machines/forget",
+                format!("csrf={}&name=workstation", hub.csrf),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (_, page) = call(&hub.app, hub.get("/machines")).await;
+        assert!(!page.contains("workstation"), "{page}");
+    }
+
+    async fn mint_cli_token(hub: &SendHub, name: &str) -> String {
+        let (status, page) = call(
+            &hub.app,
+            post_form(
+                hub,
+                "/settings/tokens",
+                format!("csrf={}&name={name}", hub.csrf),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let prefix = format!("atlasd auth {ORIGIN} ");
+        let start = page.find(&prefix).expect("raw token shown once") + prefix.len();
+        let token = page[start..start + 64].to_owned();
+        assert!(token.bytes().all(|b| b.is_ascii_hexdigit()));
+        token
+    }
+
+    fn admin_req(req: axum::http::request::Builder, token: &str) -> axum::http::request::Builder {
+        req.header("tailscale-user-login", LOGIN)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+    }
+
+    #[tokio::test]
+    async fn admin_cli_api_manages_machines_behind_cli_tokens() {
+        let hub = SendHub::new();
+        let cli_token = mint_cli_token(&hub, "laptop").await;
+
+        // Missing token is rejected.
+        let no_auth = Request::get("/api/admin/machines")
+            .header("tailscale-user-login", LOGIN)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(call(&hub.app, no_auth).await.0, StatusCode::UNAUTHORIZED);
+
+        // Add tracked machine, list, and issue a pairing code.
+        let add_req = admin_req(Request::post("/api/admin/machines"), &cli_token)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"name":"workstation"}"#))
+            .unwrap();
+        assert_eq!(call(&hub.app, add_req).await.0, StatusCode::CREATED);
+
+        let (status, body) = call(
+            &hub.app,
+            admin_req(Request::get("/api/admin/machines"), &cli_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let listed: atlas_core::distribution::MachinesListResponse =
+            serde_json::from_str(&body).unwrap();
+        assert_eq!(listed.hub, "hub");
+        assert!(listed.machines.iter().any(|m| m.name == "workstation"));
+
+        let (status, body) = call(
+            &hub.app,
+            admin_req(Request::post("/api/admin/pair-code"), &cli_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let issued: atlas_core::distribution::PairCodeResponse =
+            serde_json::from_str(&body).unwrap();
+
+        // Pair using the issued code; header dropdown reflects paired state, and ordinary client token is refused on admin API.
+        let do_pair = Request::post("/api/pair")
+            .header("tailscale-user-login", LOGIN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(format!(
+                r#"{{"code":"{}","hub":"{ORIGIN}","machine":"workstation","user":"me"}}"#,
+                issued.code
+            )))
+            .unwrap();
+        let (status, body) = call(&hub.app, do_pair).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let paired: atlas_core::distribution::PairResponse = serde_json::from_str(&body).unwrap();
+        let (_, skills_html) = call(&hub.app, hub.get("/skills")).await;
+        assert!(
+            skills_html.contains("workstation (paired)"),
+            "{skills_html}"
+        );
+        assert!(!skills_html.contains("workstation (not paired)"));
+        assert_eq!(
+            call(
+                &hub.app,
+                admin_req(Request::get("/api/admin/machines"), &paired.token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+
+        // Removing workstation drops both the tracked entry and its paired client; second time is 404.
+        let del = || {
+            admin_req(
+                Request::delete("/api/admin/machines/workstation"),
+                &cli_token,
+            )
+            .body(Body::empty())
+            .unwrap()
+        };
+        let (status, body) = call(&hub.app, del()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let removed: atlas_core::distribution::RemoveMachineResponse =
+            serde_json::from_str(&body).unwrap();
+        assert!(removed.removed_machine);
+        assert_eq!(removed.removed_clients, 1);
+        assert_eq!(call(&hub.app, del()).await.0, StatusCode::NOT_FOUND);
+
+        // Revoking the CLI token immediately blocks it.
+        let tokens = crate::tokens::CliTokens::open(&hub.home.join("state")).list();
+        assert_eq!(tokens.len(), 1);
+        let (status, _) = call(
+            &hub.app,
+            post_form(
+                &hub,
+                &format!("/settings/tokens/{}/remove", tokens[0].id),
+                format!("csrf={}", hub.csrf),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(
+            call(
+                &hub.app,
+                admin_req(Request::get("/api/admin/machines"), &cli_token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
         );
     }
 }

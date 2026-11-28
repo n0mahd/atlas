@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="sections">
+  {% if !page.signed_in && page.can_sign_in %}
+  <p class="marginalia">Sign in with your passkey to add, pair, or remove machines. <a class="link-cap" href="/signin?next=/machines">Sign in</a></p>
+  {% endif %}
   {% if let Some(r) = ssh_result %}
   <p class="marginalia{% if !r.ok %} warn-note{% endif %}" role="status">{{ r.message }}</p>
   {% if !r.output.is_empty() %}<pre class="ink-block wrap">{{ r.output }}</pre>{% endif %}
@@ -9,9 +12,15 @@
   <section class="section">
     <div class="section-head"><span class="num">§</span><h2>Pair a machine</h2></div>
     <p>On the machine, in a terminal, as the account whose agents Atlas should manage:</p>
-    <pre class="ink-block wrap">{{ cmd }}</pre>
-    <p>Or from another computer:</p>
-    <pre class="ink-block wrap">ssh you@machine '{{ cmd }}'</pre>
+    <div class="code-row">
+      <pre class="ink-block wrap">{{ cmd }}</pre>
+      <button class="button-plain button-sm copy-btn" type="button" data-copy="{{ cmd }}">Copy</button>
+    </div>
+    <p>Or from another computer (such as your workstation):</p>
+    <div class="code-row">
+      <pre class="ink-block wrap">ssh {{ pair_target }} '{{ cmd }}'</pre>
+      <button class="button-plain button-sm copy-btn" type="button" data-copy="ssh {{ pair_target }} '{{ cmd }}'">Copy</button>
+    </div>
     <p class="editor-note">It installs atlasd and pairs it. The code works once, for 15 minutes.</p>
   </section>
   {% else if page.signed_in %}
@@ -24,9 +33,15 @@
   {% if page.signed_in %}
   <form method="post" action="/machines/pair/ssh" class="setting-row" data-busy="Installing…">
     <input type="hidden" name="csrf" value="{{ page.csrf }}">
-    <span class="row-main"><span class="row-name">Or install it from here over SSH</span><span class="row-desc">Needs Tailscale SSH on the machine, or the hub's SSH key.</span></span>
+    <span class="row-main"><span class="row-name">Or install it from the hub over SSH</span><span class="row-desc">Needs Tailscale SSH on the machine, or the hub's SSH key.</span></span>
     <label class="field grow"><span class="sr">The machine's SSH address</span><input class="search" name="target" placeholder="you@laptop"{% if let Some(r) = ssh_result %}{% if !r.ok %} value="{{ r.target }}"{% endif %}{% endif %} required maxlength="253" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <button class="button-plain" type="submit">Install</button>
+  </form>
+  <form method="post" action="/machines/add" class="setting-row">
+    <input type="hidden" name="csrf" value="{{ page.csrf }}">
+    <span class="row-main"><span class="row-name">Track a machine</span><span class="row-desc">Add a machine name to this list before pairing it.</span></span>
+    <label class="field grow"><span class="sr">Machine name</span><input class="search" name="name" placeholder="laptop" required maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <button class="button-plain" type="submit">Add</button>
   </form>
   {% endif %}
   {% include "machines_list.html" %}

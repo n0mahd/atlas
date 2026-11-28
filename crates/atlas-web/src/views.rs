@@ -121,11 +121,13 @@ fn scope_key(scope: &Scope) -> String {
 impl Page {
     /// `section` is the nav path; `scoped` pages carry the scope in links and show the picker.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         section: &'static str,
         title: impl Into<String>,
         hub: &str,
         others: &[String],
+        clients: &[crate::clients::Client],
         snap: &Snapshot,
         scope: &Scope,
         scoped: bool,
@@ -186,11 +188,30 @@ impl Page {
             checked: true,
             disabled: false,
         }];
-        machines.extend(others.iter().map(|m| Choice {
-            value: m.clone(),
-            label: format!("{m} (not paired)"),
-            checked: false,
-            disabled: true,
+        let mut names: Vec<String> = others
+            .iter()
+            .filter(|m| !m.eq_ignore_ascii_case(hub))
+            .cloned()
+            .collect();
+        for c in clients {
+            if !c.machine.eq_ignore_ascii_case(hub)
+                && !names.iter().any(|n| n.eq_ignore_ascii_case(&c.machine))
+            {
+                names.push(c.machine.clone());
+            }
+        }
+        machines.extend(names.into_iter().map(|m| {
+            let is_paired = clients.iter().any(|c| c.machine.eq_ignore_ascii_case(&m));
+            Choice {
+                label: if is_paired {
+                    format!("{m} (paired)")
+                } else {
+                    format!("{m} (not paired)")
+                },
+                value: m,
+                checked: false,
+                disabled: true,
+            }
         }));
         Self {
             title,
@@ -1322,10 +1343,16 @@ pub fn machines(
     latest: Option<u64>,
 ) -> Vec<Machine> {
     let mut out = vec![hub_machine(snap, hub)];
-    // Other machines: the configured names plus any machine a client paired from.
-    let mut names: Vec<String> = others.to_vec();
+    // Other machines: the tracked names plus any machine a client paired from.
+    let mut names: Vec<String> = others
+        .iter()
+        .filter(|m| !m.eq_ignore_ascii_case(hub))
+        .cloned()
+        .collect();
     for c in clients {
-        if c.machine != hub && !names.contains(&c.machine) {
+        if !c.machine.eq_ignore_ascii_case(hub)
+            && !names.iter().any(|n| n.eq_ignore_ascii_case(&c.machine))
+        {
             names.push(c.machine.clone());
         }
     }
@@ -1340,13 +1367,13 @@ pub fn machines(
     for m in &mut out {
         m.clients = clients
             .iter()
-            .filter(|c| c.machine == m.name)
+            .filter(|c| c.machine.eq_ignore_ascii_case(&m.name))
             .map(|c| paired(c, latest))
             .collect();
         if !m.hub {
             if let Some(report) = clients
                 .iter()
-                .filter(|c| c.machine == m.name)
+                .filter(|c| c.machine.eq_ignore_ascii_case(&m.name))
                 .find_map(|c| c.report.as_ref())
             {
                 m.harnesses = report
@@ -1420,11 +1447,18 @@ fn report_line(h: &atlas_core::distribution::HarnessReport) -> HarnessLine {
         skills_warn: parts.join(", "),
         instructions,
         instructions_class,
-        hooks: match h.hooks_managed {
-            0 => String::new(),
-            1 => "1 hook".to_owned(),
-            n => format!("{n} hooks"),
-        },
+        hooks: [
+            (h.hooks_managed, "hook", "hooks"),
+            (h.agents_from_atlas, "subagent", "subagents"),
+        ]
+        .into_iter()
+        .filter_map(|(n, one, many)| match n {
+            0 => None,
+            1 => Some(format!("1 {one}")),
+            n => Some(format!("{n} {many}")),
+        })
+        .collect::<Vec<_>>()
+        .join(" · "),
         dirs: Vec::new(),
     }
 }
@@ -1468,8 +1502,20 @@ pub fn mask_secrets(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_names, mask_secrets};
+    use super::{join_names, mask_secrets, report_line};
     use atlas_core::kernel::HarnessKind;
+
+    #[test]
+    fn a_harness_row_counts_hooks_and_subagents() {
+        // A report from an older client has no `agents_from_atlas`.
+        let old = r#"{"kind":"claude-code","present":true,"skills_from_atlas":1,"skills_outside":0,"broken":0,"instructions":"imports","hooks_managed":1}"#;
+        let mut h: atlas_core::distribution::HarnessReport = serde_json::from_str(old).unwrap();
+        assert_eq!(report_line(&h).hooks, "1 hook");
+        h.agents_from_atlas = 2;
+        assert_eq!(report_line(&h).hooks, "1 hook · 2 subagents");
+        h.hooks_managed = 0;
+        assert_eq!(report_line(&h).hooks, "2 subagents");
+    }
 
     #[test]
     fn masks_credentials_but_keeps_ordinary_commands() {

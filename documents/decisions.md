@@ -272,7 +272,84 @@ otherwise every hook meant for Grok. When Claude Code appears later the duplicat
 `atlas.json`, and the file is removed once it holds nothing. Replaces 0022's "Atlas writes
 no hooks for Grok".
 
-## 0027 · 2026-11-27 · The Machines page polls its list; installs start a first run
+## 0027 · 2026-11-27 · Where each skill goes, and bringing things into Atlas
+Atlas reaches parity with the owner's T3 Code Skills page (skills series parts 1–3),
+adapted to the hub and many machines. See `documents/skills.md`.
+- **Placements** live in the knowledge repo as `atlas/placements.toml`, listing only
+  exceptions: agents a skill is off for, and `only-projects` for a global skill used in some
+  projects only. In git so they reach every machine in the signed update; not inside skill
+  folders, so `npx skills` updates and the public repo stay untouched.
+- **Folders per skill** come from one pure solver (`atlas_harness::placement::solve`): a
+  folder no unwanted agent reads, else switch the unwanted reader off by its own setting
+  (`atlas_harness::switches`: Claude Code, Codex, OpenCode, Pi), else report that the agent
+  can't be excluded. With nothing off it gives the links atlasd made before.
+- **Projects reach machines**: an update names each project and its remote, unpinned;
+  atlasd finds the project's checkouts under `project_roots` and makes repo-local links
+  (kept out of git by `.git/info/exclude`) and switches there.
+- **Import moves** (owner's answer): the hub copies the item into the store and commits; on
+  each machine atlasd swaps a real folder or file for Atlas's link only when it is an exact
+  copy of what Atlas holds, and reports anything else. Tool-installed, built-in and plugin
+  skills are listed but never imported.
+- **Memory links** (owner's answer): Claude Code's per-repo memory folders become links into
+  `<knowledge>/memory/projects/<project>/` after their notes are imported, so new notes go
+  straight to git (0008).
+- **One way to change several files**: `atlas-web::change` (session, CSRF, git lock, `main`
+  for projects, clean paths, one commit per repo, restore on failure) over
+  `atlas_fs::library` (bounded, link-refusing folder writes) and `Repo::commit_paths`.
+- **Not now**: importing items seen only on other machines (they need Local Atlas or a
+  reviewed upload) and MCP tools that let agents change skills (writes need the passkey).
+- **After review** (Gemini 4 Neon, of the foundation): the solver picks the best set of
+  folders (fewest agents left seeing a skill they shouldn't, then fewest switched off),
+  keeping the old links whenever they are already best; an "exact copy" excludes any
+  folder holding a link, a `.git` or a special file, and compares execute bits; Codex
+  switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
+  repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
+  one change; public skills are committed and never pushed (0016), not refused.
+
+## 0028 · 2026-11-27 · atlasd links Claude Code's subagents
+atlasd links each `<knowledge>/agents/<name>.md` in an update's pinned knowledge copy into
+`~/.claude/agents/<name>.md` when Claude Code is set up for the login (`~/.claude` exists).
+Only regular top-level `*.md` files whose name is lowercase-with-hyphens count; hidden
+files are skipped, links and other names are reported. The links follow the skill-link
+rules of 0020 and 0023: only links into roots Atlas manages are created, repointed or
+removed (so a link into an `adopt` root is taken over and one for a subagent no longer in
+the update is pruned), and an own file or a link elsewhere is reported, never replaced.
+Other harnesses get no subagents until their formats are checked (`HARNESSES.md`). Reports
+carry `agents_from_atlas` per harness (absent from older clients, read as 0). The update
+manifest needs no change: it already pins the whole knowledge tree. This replaces the
+subagent part of `link-agents`, which must stop linking `~/.claude/agents` on machines
+running atlasd.
+
+## 0031 · 2026-11-27 · Managing machines from a workstation CLI and the Machines page
+An always-on hub often cannot SSH into every machine the owner can reach from their daily
+workstation, and the static `machines` list in `hub.toml` couldn't be edited without editing
+config on the hub.
+- **Tracked machines store**: the hub keeps editable machine names in `<state>/machines.json`
+  (mode 0600, seeded once from `hub.toml`'s `machines` list). On `/machines`, signed-out
+  visitors see a sign-in prompt instead of a bare page; signed-in owners can track new names,
+  generate machine-tailored pairing commands with a copy button, install over hub SSH, and
+  remove any non-hub machine (which also unpairs its clients). The top machine picker now
+  reflects paired status from `clients.json` instead of hardcoding `(not paired)`, and the
+  install script starts `atlasd.service --no-block` right after enabling the timer so new
+  machines report immediately.
+- **Passkey-issued CLI tokens**: Settings → CLI tokens (behind a passkey session and CSRF)
+  and `atlas-hub token <name>` mint revocable bearer tokens stored only as SHA-256 hashes in
+  `<state>/cli-tokens.json` (mode 0600), separated from `atlasd`'s sync tokens so an ordinary
+  paired login cannot add or remove other machines. Admin routes (`/api/admin/machines`,
+  `/api/admin/machines/{target}`, `/api/admin/pair-code`) require both `Tailscale-User-Login`
+  and a valid CLI token.
+- **Workstation CLI in `atlasd`**: `atlasd auth <hub> <token>` stores the token in
+  `~/.config/atlas/cli.toml` (mode 0600); `atlasd machines [list]`, `atlasd machines add
+  <you@host>`, `atlasd machines track <name>`, `atlasd machines remove <name-or-id>`, and
+  `atlasd pair-code` manage machines remotely. `atlasd machines add` requests a fresh
+  one-time pairing code from the hub and runs the workstation's own interactive `ssh`
+  (inheriting stdio so its SSH keys, agent, and prompts work natively).
+- **Banner alignment**: `<main>` wraps its children in `.page-inner` (`max-width: 1180px;
+  margin-inline: auto`) and `.marginalia`, `.flash`, `.empty`, and `.frontispiece` use
+  `margin-block` instead of `margin` shorthands so banners align cleanly with the masthead on
+  wide screens.
+
+## 00XX · 2026-11-27 · The Machines page polls its list; installs start a first run
 The machine ledgers live in one partial (`machines_list.html`) that the page renders and
 `GET /machines/list` serves alone; the page polls it every 10 seconds, and at once when
 the tab comes back into view, so a newly paired machine appears without a reload. Polling,

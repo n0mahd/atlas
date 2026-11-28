@@ -1,0 +1,19 @@
+# Codex settings, kept by hand.
+model = "gpt-5.5-codex"
+approval_policy = "on-request" # ask before running anything risky
+
+[projects."/home/u/Projects/app"]
+trust_level = "trusted"
+
+# I don't want this one in Codex.
+[[skills.config]]
+path = "/home/u/.agents/skills/deploy/SKILL.md"
+enabled = false
+
+[[skills.config]]
+name = "legacy-context"
+enabled = true
+
+[mcp_servers.docs]
+command = "docs-mcp"
+args = ["--stdio"]

@@ -153,9 +153,171 @@ impl Clients {
         self.save(&list)
     }
 
+    /// Forgets every paired client on `machine` (case-insensitive); their tokens stop working.
+    /// Returns how many clients were removed.
+    ///
+    /// # Errors
+    /// If the list can't be saved.
+    pub fn remove_machine(&self, machine: &str) -> Result<usize, String> {
+        let mut list = self.lock();
+        let before = list.len();
+        list.retain(|c| !c.machine.eq_ignore_ascii_case(machine));
+        let removed = before - list.len();
+        if removed > 0 {
+            self.save(&list)?;
+        }
+        Ok(removed)
+    }
+
     #[must_use]
     pub fn list(&self) -> Vec<Client> {
         self.lock().clone()
+    }
+}
+
+/// Checks a machine name (hostname-style label, no spaces or shell metacharacters).
+///
+/// # Errors
+/// A plain message when the name is empty or contains disallowed characters.
+pub fn validate_machine_name(text: &str) -> Result<String, String> {
+    let name = text.trim();
+    if name.is_empty() {
+        return Err("Type a machine name, such as laptop.".to_owned());
+    }
+    if name.len() > 64 {
+        return Err("Machine names can be at most 64 characters.".to_owned());
+    }
+    let mut chars = name.chars();
+    let ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if ok {
+        Ok(name.to_owned())
+    } else {
+        Err(format!(
+            "\"{name}\" isn't a valid machine name. Use letters, digits, dots, hyphens or underscores."
+        ))
+    }
+}
+
+#[derive(Debug)]
+struct MachinesState {
+    persisted: bool,
+    names: Vec<String>,
+}
+
+/// Tracked machine names (shown on `/machines` even before pairing), persisted in
+/// `<state_dir>/machines.json` and seeded once from `hub.toml`'s `machines` list.
+#[derive(Debug)]
+pub struct Machines {
+    path: PathBuf,
+    state: Mutex<MachinesState>,
+}
+
+impl Machines {
+    #[must_use]
+    pub fn open(state_dir: &std::path::Path) -> Self {
+        let path = state_dir.join("machines.json");
+        let loaded: Option<Vec<String>> = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok());
+        let state = match loaded {
+            Some(names) => MachinesState {
+                persisted: true,
+                names,
+            },
+            None => MachinesState {
+                persisted: false,
+                names: Vec::new(),
+            },
+        };
+        Self {
+            path,
+            state: Mutex::new(state),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, MachinesState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn save(&self, names: &[String]) -> Result<(), String> {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let bytes = serde_json::to_vec_pretty(names).map_err(|e| e.to_string())?;
+        let tmp = self.path.with_extension("json.tmp");
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| e.to_string())?;
+        f.write_all(&bytes)
+            .and_then(|()| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+    }
+
+    /// Seeds the list from `hub.toml` if `machines.json` has not been created yet.
+    pub fn seed(&self, initial: &[String]) {
+        let mut state = self.lock();
+        if state.persisted || !state.names.is_empty() {
+            return;
+        }
+        for raw in initial {
+            if let Ok(name) = validate_machine_name(raw)
+                && !state.names.iter().any(|n| n.eq_ignore_ascii_case(&name))
+            {
+                state.names.push(name);
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn list(&self) -> Vec<String> {
+        self.lock().names.clone()
+    }
+
+    /// Adds a machine name to the tracked list.
+    ///
+    /// # Errors
+    /// If the name is invalid or the file can't be saved.
+    pub fn add(&self, raw: &str) -> Result<String, String> {
+        let name = validate_machine_name(raw)?;
+        let mut state = self.lock();
+        if let Some(existing) = state
+            .names
+            .iter()
+            .find(|n| n.eq_ignore_ascii_case(&name))
+            .cloned()
+        {
+            return Ok(existing);
+        }
+        state.names.push(name.clone());
+        self.save(&state.names)?;
+        state.persisted = true;
+        Ok(name)
+    }
+
+    /// Removes a machine name (case-insensitive) from the tracked list.
+    ///
+    /// # Errors
+    /// If the file can't be saved.
+    pub fn remove(&self, name: &str) -> Result<bool, String> {
+        let mut state = self.lock();
+        let before = state.names.len();
+        state.names.retain(|n| !n.eq_ignore_ascii_case(name));
+        let removed = state.names.len() != before;
+        if removed {
+            self.save(&state.names)?;
+            state.persisted = true;
+        }
+        Ok(removed)
     }
 }
 
@@ -195,5 +357,26 @@ mod tests {
         );
         assert!(clients.authenticate(&h).is_some());
         assert_eq!(Clients::open(tmp.path()).list().len(), 1);
+        assert_eq!(clients.remove_machine("BOX").unwrap(), 1);
+        assert!(clients.list().is_empty());
+    }
+
+    #[test]
+    fn machines_seed_add_and_remove_persist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = Machines::open(tmp.path());
+        m.seed(&["laptop".to_owned(), "server".to_owned()]);
+        assert_eq!(m.list(), vec!["laptop", "server"]);
+        assert!(m.add("bad name").is_err());
+        assert!(m.add("-bad").is_err());
+        assert_eq!(m.add("workstation").unwrap(), "workstation");
+        // Duplicate (case-insensitive) returns existing name without duplicating.
+        assert_eq!(m.add("LAPTOP").unwrap(), "laptop");
+        assert_eq!(m.list(), vec!["laptop", "server", "workstation"]);
+        // Removing persists across reloads and stops re-seeding from hub.toml.
+        assert!(m.remove("SERVER").unwrap());
+        let reloaded = Machines::open(tmp.path());
+        reloaded.seed(&["laptop".to_owned(), "server".to_owned()]);
+        assert_eq!(reloaded.list(), vec!["laptop", "workstation"]);
     }
 }
