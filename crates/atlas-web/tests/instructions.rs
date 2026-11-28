@@ -556,3 +556,41 @@ async fn moving_a_claude_local_md_that_imports_global_removes_it() {
     );
     assert!(list.body.contains("New CLAUDE.local.md"));
 }
+
+#[tokio::test]
+async fn nothing_is_read_or_planned_before_the_session_is_checked() {
+    let h = hub(&[("AGENTS.md", "# Shop\n"), ("CLAUDE.md", "Rules.\n")]);
+    let path = "/instructions/shop/CLAUDE.md/to-agents";
+    // A stale base used to answer 409, and a plan that fails 400, before the session
+    // check: both mean the files were read and git ran for a stranger.
+    let res = post(&h, path, &[("csrf", &h.csrf), ("base", "stale")], false).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    let res = post(
+        &h,
+        "/instructions/shop/CLAUDE.local.md/to-global",
+        &[("csrf", &h.csrf)],
+        false,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    // Cross-origin, with the session cookie.
+    let req = Request::post(path)
+        .header("tailscale-user-login", LOGIN)
+        .header(header::ORIGIN, "https://elsewhere.test")
+        .header(header::COOKIE, &h.cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf={}&base=stale", h.csrf)))
+        .unwrap();
+    assert_eq!(send(&h, req).await.status, StatusCode::FORBIDDEN);
+    // Claude's option: an unknown value is refused only after the session check.
+    let res = post(
+        &h,
+        "/instructions/claude-agents-md",
+        &[("csrf", "nope"), ("value", "sometimes")],
+        true,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(read(&h.project.join("CLAUDE.md")), "Rules.\n");
+    assert_eq!((commits(&h.project), commits(&h.knowledge)), (1, 1));
+}

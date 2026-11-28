@@ -1007,6 +1007,10 @@ pub(crate) async fn run(
     UrlPath((scope, file, action)): UrlPath<(String, String, String)>,
     Form(form): Form<ChangeForm>,
 ) -> Response {
+    // Before any file is read or git runs for the plan.
+    if let Err(e) = authorised(&s, &headers, &form.csrf) {
+        return e.into_response(&headers);
+    }
     let Some(op) = parse(&s.sources, &scope, &file, &action) else {
         return AppError::NotFound.into_response();
     };
@@ -1081,6 +1085,17 @@ pub(crate) async fn run(
     change::respond(&s, &headers, &outcome, &next)
 }
 
+/// A change's session check, done before the change reads anything.
+/// [`change::commit_change`] checks again under its own rules.
+fn authorised(s: &AppState, headers: &HeaderMap, csrf: &str) -> Result<(), ChangeError> {
+    let w = s.writer.as_ref().ok_or(ChangeError::ReadOnly)?;
+    if w.authorised(headers, csrf) {
+        Ok(())
+    } else {
+        Err(ChangeError::Forbidden)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct ClaudeForm {
     csrf: String,
@@ -1093,6 +1108,9 @@ pub(crate) async fn claude_option(
     headers: HeaderMap,
     Form(form): Form<ClaudeForm>,
 ) -> Response {
+    if let Err(e) = authorised(&s, &headers, &form.csrf) {
+        return e.into_response(&headers);
+    }
     let Some(choice) = ClaudeAgentsMd::from_id(&form.value) else {
         return AppError::Bad("Unknown choice.".to_owned()).into_response();
     };
