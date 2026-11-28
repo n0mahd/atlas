@@ -144,7 +144,7 @@ It prints a link and a QR code that work once, for 15 minutes. Scan the QR code 
 your phone.
 
 Add a second passkey in **Settings → Passkeys** (a phone or a security key), so losing
-one device doesn't lock you out.
+one device doesn't lock you out. Adding it asks for a tap from your first passkey.
 
 ## Give the hub atlasd builds to hand out
 

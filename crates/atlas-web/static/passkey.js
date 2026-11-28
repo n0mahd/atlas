@@ -31,10 +31,39 @@
     return res.json();
   }
 
+  // Asks the authenticator to sign a server challenge; the answer in webauthn-rs's form.
+  async function assertion(pk) {
+    pk.challenge = toBuf(pk.challenge);
+    (pk.allowCredentials || []).forEach(function (c) { c.id = toBuf(c.id); });
+    var cred = await navigator.credentials.get({ publicKey: pk });
+    return {
+      id: cred.id,
+      rawId: toB64(cred.rawId),
+      type: cred.type,
+      extensions: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+      response: {
+        authenticatorData: toB64(cred.response.authenticatorData),
+        clientDataJSON: toB64(cred.response.clientDataJSON),
+        signature: toB64(cred.response.signature),
+        userHandle: cred.response.userHandle ? toB64(cred.response.userHandle) : null
+      }
+    };
+  }
+
+  // A fresh tap from an enrolled passkey for one sensitive action; resolves to a grant
+  // the action's request carries. The hub accepts it once, for that action only.
+  async function confirmAction(action) {
+    var start = await post("/auth/confirm/start", { action: action });
+    var credential = await assertion(start.options.publicKey);
+    var done = await post("/auth/confirm/finish", { flow: start.flow, credential: credential });
+    return done.grant;
+  }
+
   async function enrol(box) {
     var token = box.querySelector('[name="token"]');
     var name = box.querySelector('[name="name"]');
-    var start = await post("/auth/enrol/start", { token: token ? token.value : "", name: name ? name.value : "" });
+    var grant = box.dataset.confirm ? await confirmAction(box.dataset.confirm) : "";
+    var start = await post("/auth/enrol/start", { token: token ? token.value : "", name: name ? name.value : "", grant: grant });
     var pk = start.options.publicKey;
     pk.challenge = toBuf(pk.challenge);
     pk.user.id = toBuf(pk.user.id);
@@ -59,25 +88,8 @@
 
   async function signIn(box) {
     var start = await post("/auth/signin/start", { next: box.dataset.next || "/" });
-    var pk = start.options.publicKey;
-    pk.challenge = toBuf(pk.challenge);
-    (pk.allowCredentials || []).forEach(function (c) { c.id = toBuf(c.id); });
-    var cred = await navigator.credentials.get({ publicKey: pk });
-    var done = await post("/auth/signin/finish", {
-      flow: start.flow,
-      credential: {
-        id: cred.id,
-        rawId: toB64(cred.rawId),
-        type: cred.type,
-        extensions: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
-        response: {
-          authenticatorData: toB64(cred.response.authenticatorData),
-          clientDataJSON: toB64(cred.response.clientDataJSON),
-          signature: toB64(cred.response.signature),
-          userHandle: cred.response.userHandle ? toB64(cred.response.userHandle) : null
-        }
-      }
-    });
+    var credential = await assertion(start.options.publicKey);
+    var done = await post("/auth/signin/finish", { flow: start.flow, credential: credential });
     location.assign(done.next);
   }
 
@@ -160,6 +172,27 @@
           .catch(function () { location.assign(withParam(saved.next, "notsent")); });
       });
     }, plain);
+  });
+
+  // A form that changes who can act (remove a passkey, create a CLI token) first asks for
+  // a fresh tap, then submits with the grant.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form.matches("form[data-confirm]") || form.dataset.confirmed) return;
+    event.preventDefault();
+    var button = form.querySelector('[type="submit"]');
+    if (!window.PublicKeyCredential || !window.fetch) {
+      refused(form, button, "This browser can't use passkeys.");
+      return;
+    }
+    if (button) button.disabled = true;
+    confirmAction(form.dataset.confirm).then(function (grant) {
+      form.querySelector('[name="grant"]').value = grant;
+      form.dataset.confirmed = "1";
+      form.submit();
+    }).catch(function (e) {
+      refused(form, button, e && e.name === "NotAllowedError" ? "The passkey prompt was closed. Try again." : (e.message || String(e)));
+    });
   });
 
   document.addEventListener("click", function (event) {

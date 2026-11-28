@@ -18,7 +18,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{self, Auth, Flow};
+use crate::auth::{self, Auth, Authority, Flow};
 use crate::views::Page;
 use crate::{AppError, AppState};
 
@@ -73,6 +73,9 @@ pub struct Writer {
     pub releases: crate::release::Store,
     /// An update built and waiting for the owner's signature.
     pub pending: Mutex<Option<crate::distribute::Pending>>,
+    /// A CLI token just created, by session key, waiting to be shown once. Memory only:
+    /// it holds the raw token.
+    new_tokens: Mutex<std::collections::HashMap<String, NewToken>>,
 }
 
 impl std::fmt::Debug for Writer {
@@ -122,6 +125,7 @@ impl Writer {
             tokens: crate::tokens::CliTokens::open(state_dir),
             releases: crate::release::Store::new(state_dir),
             pending: Mutex::new(None),
+            new_tokens: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -191,6 +195,7 @@ pub(crate) fn decorate(page: &mut Page, state: &AppState, headers: &HeaderMap) {
         if let Some(s) = w.auth.session(headers) {
             page.signed_in = true;
             page.csrf = s.csrf;
+            page.notice = w.auth.take_notice(headers).unwrap_or_default();
         }
     }
 }
@@ -318,6 +323,9 @@ pub struct EnrolStart {
     /// A setup link's token, when enrolling through one.
     #[serde(default)]
     token: String,
+    /// A fresh tap from an enrolled passkey, when adding another while signed in.
+    #[serde(default)]
+    grant: String,
 }
 
 #[derive(Serialize)]
@@ -336,27 +344,34 @@ pub(crate) async fn enrol_start(
         return Ok(forbidden("Wrong origin.\n"));
     }
     let token = Some(req.token).filter(|t| !t.is_empty());
-    let added_by = if let Some(t) = &token {
+    let (added_by, authority) = if let Some(t) = token {
         // A setup link from `atlas-hub setup`: whoever ran it controls the hub.
-        if !atlas_signer::setup::is_valid(&w.state_dir, t) {
+        if !atlas_signer::setup::is_valid(&w.state_dir, &t) {
             return Ok(forbidden(
                 "This setup link has expired or was already used. Run atlas-hub setup for a new one.\n",
             ));
         }
-        "setup link".to_owned()
+        ("setup link".to_owned(), Authority::SetupLink(t))
     } else if w.signer.has_keys() {
-        // Adding another passkey needs a session and its token.
-        let csrf = headers
-            .get("x-atlas-csrf")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
-        if !w.authorised(&headers, csrf) {
+        // Adding another passkey needs a session, its token, and a fresh tap from a
+        // passkey already enrolled.
+        let csrf = csrf_header(&headers);
+        let Some(session) = w
+            .authorised(&headers, csrf)
+            .then(|| w.auth.session_key(&headers))
+            .flatten()
+        else {
             return Ok(forbidden("Sign in to add another passkey.\n"));
+        };
+        if !w.auth.use_grant(&req.grant, &session, CONFIRM_ENROL) {
+            return Ok(forbidden(
+                "Confirm with a passkey you already have, then add the new one.\n",
+            ));
         }
-        "signed in".to_owned()
+        ("signed in".to_owned(), Authority::Session(session))
     } else if w.first_run_open() {
         // First run: Tailscale already told us who this is (the login check ran first).
-        login(&headers)
+        (login(&headers), Authority::FirstRun)
     } else {
         return Ok(forbidden(
             "The first-run window has closed. On the hub, run atlas-hub setup for a link.\n",
@@ -370,9 +385,102 @@ pub(crate) async fn enrol_start(
         state: Box::new(state),
         name: req.name,
         added_by,
-        token,
+        authority,
     });
     Ok(Json(Started { flow, options }).into_response())
+}
+
+/// The CSRF token a page's script sends in its header.
+pub(crate) fn csrf_header(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-atlas-csrf")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+}
+
+/// Actions that need a fresh tap from an enrolled passkey, on top of a session.
+const CONFIRM_ENROL: &str = "enrol";
+const CONFIRM_CREATE_TOKEN: &str = "create_token";
+fn confirm_remove_key(id: &str) -> String {
+    format!("remove_key:{id}")
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmStart {
+    action: String,
+}
+
+/// Starts a fresh passkey tap for one sensitive action, by the signed-in owner.
+pub(crate) async fn confirm_start(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ConfirmStart>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    let Some(session) = w
+        .authorised(&headers, csrf_header(&headers))
+        .then(|| w.auth.session_key(&headers))
+        .flatten()
+    else {
+        return Ok(forbidden("Sign in again first.\n"));
+    };
+    let known = req.action == CONFIRM_ENROL
+        || req.action == CONFIRM_CREATE_TOKEN
+        || w.signer
+            .keys()
+            .iter()
+            .any(|k| req.action == confirm_remove_key(&k.id));
+    if !known {
+        return Err(AppError::Bad("Nothing to confirm.".into()));
+    }
+    let Some((options, state)) = w
+        .signer
+        .start_sign_in()
+        .map_err(|e| AppError::Bad(e.to_string()))?
+    else {
+        return Ok(forbidden("No passkey yet.\n"));
+    };
+    let flow = w.auth.start_flow(Flow::Confirm {
+        state: Box::new(state),
+        action: req.action,
+        session,
+    });
+    Ok(Json(Started { flow, options }).into_response())
+}
+
+#[derive(Serialize)]
+struct Granted {
+    grant: String,
+}
+
+/// Checks the tap and answers a grant: single-use, for that action and session only.
+pub(crate) async fn confirm_finish(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SignInFinish>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, csrf_header(&headers)) {
+        return Ok(forbidden("Sign in again first.\n"));
+    }
+    let Some(Flow::Confirm {
+        state,
+        action,
+        session,
+    }) = w.auth.take_flow(&req.flow)
+    else {
+        return Ok(forbidden("That passkey request expired. Try again.\n"));
+    };
+    if w.auth.session_key(&headers).as_deref() != Some(session.as_str()) {
+        return Ok(forbidden("Sign in again first.\n"));
+    }
+    if w.signer.finish_sign_in(&req.credential, &state).is_err() {
+        return Ok(forbidden("That passkey didn't check out.\n"));
+    }
+    Ok(Json(Granted {
+        grant: w.auth.grant(&session, &action),
+    })
+    .into_response())
 }
 
 /// The Tailscale login `tailscale serve` put on this request.
@@ -411,34 +519,45 @@ pub(crate) async fn enrol_finish(
         state,
         name,
         added_by,
-        token,
+        authority,
     }) = w.auth.take_flow(&req.flow)
     else {
         return Ok(forbidden("That passkey request expired. Try again.\n"));
     };
-    let first = !w.signer.has_keys();
-    // Check again at the finish: first run can be claimed once, and a link used once.
-    let still_allowed = match &token {
-        Some(t) => atlas_signer::setup::redeem(&w.state_dir, t)
+    // Finish only under the authority the enrolment started with, checked again now.
+    let still_allowed = match &authority {
+        // First run is claimed once: no passkey may exist yet.
+        Authority::FirstRun => w.first_run_open(),
+        // A link is used once.
+        Authority::SetupLink(t) => atlas_signer::setup::redeem(&w.state_dir, t)
             .map_err(|e| AppError::Bad(e.to_string()))?,
-        None => !first || w.first_run_open(),
+        // The same live session that started it.
+        Authority::Session(session) => {
+            w.auth.session_key(&headers).as_deref() == Some(session.as_str())
+        }
     };
     if !still_allowed {
         return Ok(forbidden(
             "This setup has already been used or has expired.\n",
         ));
     }
-    let key = w
+    let key = match w
         .signer
         .finish_enrol(&req.credential, &state, &name, &added_by)
-        .map_err(|e| AppError::Bad(e.to_string()))?;
+    {
+        Ok(key) => key,
+        Err(e @ atlas_signer::SignerError::CantSign) => {
+            return Ok((StatusCode::BAD_REQUEST, format!("{e}\n")).into_response());
+        }
+        Err(e) => return Err(AppError::Bad(e.to_string())),
+    };
     tracing::warn!("passkey \"{}\" enrolled ({added_by})", key.name);
     let mut res = Json(Done {
         next: "/settings".into(),
     })
     .into_response();
-    if first || w.auth.session(&headers).is_none() {
-        let id = w.auth.sign_in();
+    if !matches!(authority, Authority::Session(_)) {
+        let id = w.auth.sign_in(&key.id, None);
         res.headers_mut()
             .insert(header::SET_COOKIE, auth::set_cookie(&id));
     }
@@ -486,10 +605,20 @@ pub(crate) async fn signin_finish(
     let Some(Flow::SignIn { state, next }) = w.auth.take_flow(&req.flow) else {
         return Ok(forbidden("That sign-in expired. Try again.\n"));
     };
-    if w.signer.finish_sign_in(&req.credential, &state).is_err() {
+    let Ok(key) = w.signer.finish_sign_in(&req.credential, &state) else {
         return Ok(forbidden("That passkey didn't check out.\n"));
-    }
-    let id = w.auth.sign_in();
+    };
+    let notice = w
+        .signer
+        .take_new_keys(&key.id)
+        .map_err(|e| AppError::Bad(e.to_string()))?
+        .iter()
+        .map(|k| format!("A passkey was added: {}, {}.", k.name, when(k.added)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let id = w
+        .auth
+        .sign_in(&key.id, Some(notice).filter(|n| !n.is_empty()));
     let mut res = Json(Done { next }).into_response();
     res.headers_mut()
         .insert(header::SET_COOKIE, auth::set_cookie(&id));
@@ -519,6 +648,24 @@ pub(crate) async fn signout(
     }
     w.auth.sign_out(&headers);
     let mut res = Redirect::to("/").into_response();
+    res.headers_mut()
+        .insert(header::SET_COOKIE, auth::clear_cookie());
+    Ok(res)
+}
+
+/// Ends every session, this one included: each browser signs in again with a passkey.
+pub(crate) async fn signout_everywhere(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<CsrfForm>,
+) -> Result<Response, AppError> {
+    let w = writer(&s)?;
+    if !w.authorised(&headers, &f.csrf) {
+        return Ok(forbidden("Sign in again to sign out everywhere.\n"));
+    }
+    let ended = w.auth.end_all();
+    tracing::warn!("signed out everywhere ({ended} sessions)");
+    let mut res = Redirect::to("/signin?next=/settings").into_response();
     res.headers_mut()
         .insert(header::SET_COOKIE, auth::clear_cookie());
     Ok(res)
@@ -577,6 +724,16 @@ fn civil(secs: u64) -> (i64, i64, i64) {
     (y, m, d)
 }
 
+/// A moment such as "2026-11-27 14:05 UTC".
+pub(crate) fn when(secs: u64) -> String {
+    format!(
+        "{} {:02}:{:02} UTC",
+        day(secs),
+        secs % 86_400 / 3600,
+        secs % 3600 / 60
+    )
+}
+
 pub(crate) fn day(secs: u64) -> String {
     let (y, m, d) = civil(secs);
     format!("{y}-{m:02}-{d:02}")
@@ -611,11 +768,48 @@ pub(crate) async fn settings_page(
         "saved" => "Settings saved.",
         "removed" => "Passkey removed.",
         "last" => "That's your only passkey, so it stays.",
+        "unconfirmed_key" => "Confirm with your passkey to remove one.",
         "sent" => "On your machines within 10 minutes",
         "token_removed" => "CLI token revoked.",
         _ => "",
     };
-    render_settings(&s, &headers, flash, None, String::new()).await
+    let token_error = match q.flash.as_str() {
+        "token_name" => "Name the token first, such as laptop.",
+        "token_failed" => "The token couldn't be saved. Try again.",
+        "unconfirmed" => "Confirm with your passkey to do that.",
+        _ => "",
+    };
+    // A token just created shows on this one page view; a reload doesn't show it again.
+    let new_token = w.auth.session_key(&headers).and_then(|k| {
+        w.new_tokens
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(&k))
+    });
+    render_settings(&s, &headers, flash, new_token, token_error.to_owned()).await
+}
+
+/// How a passkey was added, as the end of "added <day> …".
+fn how_added(added_by: Option<&str>) -> String {
+    match added_by {
+        None | Some("") => String::new(),
+        Some("signed in") => "while signed in".to_owned(),
+        Some("setup link") => "from a setup link".to_owned(),
+        // First run records the Tailscale login that enrolled it.
+        Some(login) => format!("at first run, by {login}"),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_passkey_row_says_how_it_was_added() {
+    assert_eq!(how_added(Some("signed in")), "while signed in");
+    assert_eq!(how_added(Some("setup link")), "from a setup link");
+    assert_eq!(
+        how_added(Some("owner@example.com")),
+        "at first run, by owner@example.com"
+    );
+    assert_eq!(how_added(None), "");
 }
 
 async fn render_settings(
@@ -643,7 +837,7 @@ async fn render_settings(
             id: k.id,
             name: k.name,
             added: day(k.added),
-            added_by: k.added_by.unwrap_or_default(),
+            added_by: how_added(k.added_by.as_deref()),
             last_used: k.last_used.map_or_else(|| "never".to_owned(), day),
         })
         .collect();
@@ -684,6 +878,9 @@ pub struct TokenForm {
     csrf: String,
     #[serde(default)]
     name: String,
+    /// A fresh tap from an enrolled passkey.
+    #[serde(default)]
+    grant: String,
 }
 
 pub(crate) async fn create_token(
@@ -692,20 +889,37 @@ pub(crate) async fn create_token(
     Form(f): Form<TokenForm>,
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
-    if !w.authorised(&headers, &f.csrf) {
+    let Some(session) = w
+        .authorised(&headers, &f.csrf)
+        .then(|| w.auth.session_key(&headers))
+        .flatten()
+    else {
         return Ok(forbidden("Sign in again to create a CLI token.\n"));
+    };
+    if f.name.trim().is_empty() {
+        return Ok(Redirect::to("/settings?flash=token_name#cli-tokens").into_response());
     }
-    match w.tokens.create(&f.name) {
+    if !w.auth.use_grant(&f.grant, &session, CONFIRM_CREATE_TOKEN) {
+        return Ok(Redirect::to("/settings?flash=unconfirmed#cli-tokens").into_response());
+    }
+    let flash = match w.tokens.create(&f.name) {
         Ok((record, raw)) => {
             tracing::warn!("CLI token \"{}\" created", record.name);
             let new = NewToken {
                 name: record.name,
                 command: format!("atlasd auth {} {raw}", w.origin()),
             };
-            render_settings(&s, &headers, "", Some(new), String::new()).await
+            if let Ok(mut pending) = w.new_tokens.lock() {
+                pending.insert(session, new);
+            }
+            ""
         }
-        Err(msg) => render_settings(&s, &headers, "", None, msg).await,
-    }
+        Err(e) => {
+            tracing::warn!("CLI token not created: {e}");
+            "?flash=token_failed"
+        }
+    };
+    Ok(Redirect::to(&format!("/settings{flash}#cli-tokens")).into_response())
 }
 
 pub(crate) async fn remove_token(
@@ -749,18 +963,42 @@ pub(crate) async fn settings_save(
     Ok(Redirect::to("/settings?flash=saved").into_response())
 }
 
+#[derive(Deserialize)]
+pub struct RemoveKeyForm {
+    #[serde(default)]
+    csrf: String,
+    /// A fresh tap from an enrolled passkey.
+    #[serde(default)]
+    grant: String,
+}
+
+/// Removes a passkey after a fresh tap, and ends every session it opened.
 pub(crate) async fn remove_key(
     State(s): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Form(f): Form<CsrfForm>,
+    Form(f): Form<RemoveKeyForm>,
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
-    if !w.authorised(&headers, &f.csrf) {
+    let Some(session) = w
+        .authorised(&headers, &f.csrf)
+        .then(|| w.auth.session_key(&headers))
+        .flatten()
+    else {
         return Ok(forbidden("Sign in again to remove a passkey.\n"));
+    };
+    if !w
+        .auth
+        .use_grant(&f.grant, &session, &confirm_remove_key(&id))
+    {
+        return Ok(Redirect::to("/settings?flash=unconfirmed_key").into_response());
     }
     let flash = match w.signer.remove(&id) {
-        Ok(()) => "removed",
+        Ok(()) => {
+            let ended = w.auth.end_sessions_of(&id);
+            tracing::warn!("passkey removed; {ended} of its sessions ended");
+            "removed"
+        }
         Err(atlas_signer::SignerError::LastKey) => "last",
         Err(e) => return Err(AppError::Bad(e.to_string())),
     };
@@ -1158,6 +1396,7 @@ mod tests {
     use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
 
+    use crate::auth::Auth;
     use crate::{Access, AppState, router};
 
     const ORIGIN: &str = "https://hub.test";
@@ -1247,7 +1486,7 @@ mod tests {
             }],
         };
         let writer = super::Writer::open(ORIGIN, &home.join("state"), first_run).unwrap();
-        let cookie = writer.auth.sign_in();
+        let cookie = writer.auth.sign_in("test-key", None);
         let csrf = writer
             .auth
             .session(&{
@@ -1338,6 +1577,44 @@ mod tests {
     fn base_of(page: &str) -> String {
         let at = page.find(r#"name="base" value=""#).unwrap() + r#"name="base" value=""#.len();
         page[at..at + 32].to_owned()
+    }
+
+    /// After sign-in the hub goes back to `next`, which must be a page on this hub.
+    #[tokio::test]
+    async fn signing_in_returns_only_to_a_page_on_this_hub() {
+        let hub = hub();
+        let back = |next: &'static str| {
+            let hub = &hub;
+            async move {
+                let path = format!("/signin?next={}", urlencode(next));
+                let (status, location, _) = send(hub, get(hub, &path, true)).await;
+                assert_eq!(status, StatusCode::SEE_OTHER, "{next:?}");
+                location
+            }
+        };
+        for good in ["/skills?scope=x", "/settings#cli-tokens", "/memory/a%20b"] {
+            assert_eq!(back(good).await, good);
+        }
+        for bad in [
+            "//evil.example",
+            "https://evil.example",
+            "javascript:x",
+            "/\\evil.example",
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/\r/evil.example",
+            "/%09/evil.example",
+            "/%0a/evil.example",
+            "/%0d/evil.example",
+            "/%5Cevil.example",
+            "/%5c/evil.example",
+            "/%2F/evil.example",
+            "/%2fevil.example",
+            "/%zz",
+            "/caf\u{e9}",
+        ] {
+            assert_eq!(back(bad).await, "/", "{bad:?}");
+        }
     }
 
     #[tokio::test]
@@ -1668,5 +1945,528 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "used up");
         let (status, ..) = send(&hub, json("/auth/enrol/start", &start, ORIGIN)).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ------------------------------------------------------------ passkeys end to end
+
+    use crate::test_passkey::{Authenticator, Kind};
+
+    /// A browser: its cookie and the page's CSRF token once signed in.
+    #[derive(Clone, Default)]
+    struct Browser {
+        cookie: String,
+        csrf: String,
+    }
+
+    /// Posts JSON as the page's script does; returns status, the new cookie if one was
+    /// set, and the body.
+    async fn call_json(
+        hub: &Hub,
+        path: &str,
+        body: &serde_json::Value,
+        browser: &Browser,
+    ) -> (StatusCode, Option<String>, String) {
+        let mut req = Request::post(path)
+            .header("tailscale-user-login", LOGIN)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-atlas-csrf", &browser.csrf);
+        if !browser.cookie.is_empty() {
+            req = req.header(
+                header::COOKIE,
+                format!("{}={}", crate::auth::COOKIE, browser.cookie),
+            );
+        }
+        let res = hub
+            .app
+            .clone()
+            .oneshot(req.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        let status = res.status();
+        let cookie = res
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("__Host-atlas="))
+            .and_then(|v| v.split(';').next())
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
+        let body = to_bytes(res.into_body(), 1 << 22).await.unwrap();
+        (status, cookie, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// A GET as `browser`: status, Location and body.
+    async fn page_as(hub: &Hub, path: &str, browser: &Browser) -> (StatusCode, String, String) {
+        let mut req = Request::get(path).header("tailscale-user-login", LOGIN);
+        if !browser.cookie.is_empty() {
+            req = req.header(
+                header::COOKIE,
+                format!("{}={}", crate::auth::COOKIE, browser.cookie),
+            );
+        }
+        send(hub, req.body(Body::empty()).unwrap()).await
+    }
+
+    /// A form POST as `browser`.
+    async fn form_as(
+        hub: &Hub,
+        path: &str,
+        fields: &[(&str, &str)],
+        browser: &Browser,
+    ) -> (StatusCode, String, String) {
+        let body: String = fields
+            .iter()
+            .map(|(k, v)| format!("{k}={}", urlencode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let req = Request::post(path)
+            .header("tailscale-user-login", LOGIN)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                header::COOKIE,
+                format!("{}={}", crate::auth::COOKIE, browser.cookie),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        send(hub, req).await
+    }
+
+    /// Fills in the CSRF token from a page, as the browser would have it.
+    async fn with_csrf(hub: &Hub, cookie: String) -> Browser {
+        let mut b = Browser {
+            cookie,
+            csrf: String::new(),
+        };
+        let (status, _, page) = page_as(hub, "/settings", &b).await;
+        assert_eq!(status, StatusCode::OK, "signed in");
+        let marker = r#"<meta name="atlas-csrf" content=""#;
+        let at = page.find(marker).unwrap() + marker.len();
+        b.csrf = page[at..at + 64].to_owned();
+        b
+    }
+
+    fn options(body: &str) -> (String, serde_json::Value) {
+        let v: serde_json::Value = serde_json::from_str(body).unwrap();
+        (v["flow"].as_str().unwrap().to_owned(), v["options"].clone())
+    }
+
+    /// Starts an enrolment; answers the flow and options.
+    async fn enrol_start(
+        hub: &Hub,
+        browser: &Browser,
+        body: serde_json::Value,
+    ) -> (String, serde_json::Value) {
+        let (status, _, body) = call_json(hub, "/auth/enrol/start", &body, browser).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        options(&body)
+    }
+
+    async fn enrol_finish(
+        hub: &Hub,
+        browser: &Browser,
+        flow: &str,
+        options: &serde_json::Value,
+        key: &mut Authenticator,
+    ) -> (StatusCode, Option<String>, String) {
+        let credential = key.register(options);
+        call_json(
+            hub,
+            "/auth/enrol/finish",
+            &serde_json::json!({ "flow": flow, "credential": credential }),
+            browser,
+        )
+        .await
+    }
+
+    /// Enrols the first passkey in the first-run window; the browser is then signed in.
+    async fn first_passkey(hub: &Hub, key: &mut Authenticator) -> Browser {
+        let anon = Browser::default();
+        let (flow, opts) = enrol_start(hub, &anon, serde_json::json!({ "name": "Laptop" })).await;
+        let (status, cookie, body) = enrol_finish(hub, &anon, &flow, &opts, key).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        with_csrf(hub, cookie.unwrap()).await
+    }
+
+    async fn sign_in_with(hub: &Hub, key: &mut Authenticator) -> Browser {
+        let anon = Browser::default();
+        let (status, _, body) = call_json(
+            hub,
+            "/auth/signin/start",
+            &serde_json::json!({ "next": "/settings" }),
+            &anon,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (flow, opts) = options(&body);
+        let credential = key.assert(&opts);
+        let (status, cookie, body) = call_json(
+            hub,
+            "/auth/signin/finish",
+            &serde_json::json!({ "flow": flow, "credential": credential }),
+            &anon,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        Browser {
+            cookie: cookie.unwrap(),
+            csrf: String::new(),
+        }
+    }
+
+    /// One fresh tap for `action`; the grant, or the refusal's status.
+    async fn confirm(
+        hub: &Hub,
+        browser: &Browser,
+        key: &mut Authenticator,
+        action: &str,
+    ) -> Result<String, StatusCode> {
+        let (status, _, body) = call_json(
+            hub,
+            "/auth/confirm/start",
+            &serde_json::json!({ "action": action }),
+            browser,
+        )
+        .await;
+        if status != StatusCode::OK {
+            return Err(status);
+        }
+        let (flow, opts) = options(&body);
+        let credential = key.assert(&opts);
+        let (status, _, body) = call_json(
+            hub,
+            "/auth/confirm/finish",
+            &serde_json::json!({ "flow": flow, "credential": credential }),
+            browser,
+        )
+        .await;
+        if status != StatusCode::OK {
+            return Err(status);
+        }
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        Ok(v["grant"].as_str().unwrap().to_owned())
+    }
+
+    /// Adds a second passkey from a signed-in browser, with a tap from `existing`.
+    async fn add_passkey(
+        hub: &Hub,
+        browser: &Browser,
+        existing: &mut Authenticator,
+        new: &mut Authenticator,
+        name: &str,
+    ) {
+        let grant = confirm(hub, browser, existing, "enrol").await.unwrap();
+        let (flow, opts) = enrol_start(
+            hub,
+            browser,
+            serde_json::json!({ "name": name, "grant": grant }),
+        )
+        .await;
+        let (status, _, body) = enrol_finish(hub, browser, &flow, &opts, new).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    /// How many passkeys the hub holds, from its store on disk.
+    fn writer_keys(hub: &Hub) -> usize {
+        let text = fs::read_to_string(hub.state.join("passkeys.json")).unwrap_or_default();
+        serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["keys"].as_array().map(Vec::len))
+            .unwrap_or(0)
+    }
+
+    fn stored_sessions(hub: &Hub) -> usize {
+        let text = fs::read_to_string(hub.state.join("sessions.json")).unwrap();
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
+            .unwrap()
+            .len()
+    }
+
+    #[tokio::test]
+    async fn adding_a_passkey_asks_for_a_tap_from_an_enrolled_one() {
+        let hub = hub();
+        let mut laptop = Authenticator::new(11, Kind::Es256, ORIGIN);
+        let mut phone = Authenticator::new(12, Kind::Es256, ORIGIN);
+        let owner = first_passkey(&hub, &mut laptop).await;
+
+        // A session and its CSRF token alone don't add a passkey.
+        let (status, _, body) = call_json(
+            &hub,
+            "/auth/enrol/start",
+            &serde_json::json!({ "name": "Phone" }),
+            &owner,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+        // A tap for another action, or from another session, doesn't count.
+        let other = with_csrf(&hub, sign_in_with(&hub, &mut laptop).await.cookie).await;
+        for (grant, who) in [
+            (
+                confirm(&hub, &owner, &mut laptop, "create_token")
+                    .await
+                    .unwrap(),
+                &owner,
+            ),
+            (
+                confirm(&hub, &other, &mut laptop, "enrol").await.unwrap(),
+                &owner,
+            ),
+        ] {
+            let (status, ..) = call_json(
+                &hub,
+                "/auth/enrol/start",
+                &serde_json::json!({ "name": "Phone", "grant": grant }),
+                who,
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        // One tap, then the enrolment; the tap is used up by it.
+        let grant = confirm(&hub, &owner, &mut laptop, "enrol").await.unwrap();
+        let start = serde_json::json!({ "name": "Phone", "grant": grant });
+        let (flow, opts) = enrol_start(&hub, &owner, start.clone()).await;
+        let (status, ..) = call_json(&hub, "/auth/enrol/start", &start, &owner).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a grant works once");
+        let (status, _, body) = enrol_finish(&hub, &owner, &flow, &opts, &mut phone).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        // The next sign-in with a key the owner already had says so, once; the new
+        // key's own sign-in doesn't use that up.
+        let by_phone = sign_in_with(&hub, &mut phone).await;
+        let (_, _, page) = page_as(&hub, "/settings", &by_phone).await;
+        assert!(!page.contains("A passkey was added"));
+        let next = sign_in_with(&hub, &mut laptop).await;
+        let (_, _, page) = page_as(&hub, "/settings", &next).await;
+        assert!(page.contains("A passkey was added: Phone, "), "{page}");
+        let (_, _, page) = page_as(&hub, "/settings", &next).await;
+        assert!(!page.contains("A passkey was added"));
+        let later = sign_in_with(&hub, &mut laptop).await;
+        let (_, _, page) = page_as(&hub, "/", &later).await;
+        assert!(!page.contains("A passkey was added"), "told once");
+    }
+
+    #[tokio::test]
+    async fn removing_a_passkey_asks_for_a_tap_and_ends_its_sessions() {
+        let hub = hub();
+        let mut laptop = Authenticator::new(21, Kind::Es256, ORIGIN);
+        let mut phone = Authenticator::new(22, Kind::Es256, ORIGIN);
+        let owner = first_passkey(&hub, &mut laptop).await;
+        add_passkey(&hub, &owner, &mut laptop, &mut phone, "Phone").await;
+        let on_phone = sign_in_with(&hub, &mut phone).await;
+        let path = format!("/settings/keys/{}/remove", phone.id());
+
+        let (status, location, _) = form_as(&hub, &path, &[("csrf", &owner.csrf)], &owner).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(location, "/settings?flash=unconfirmed_key");
+        let laptop_action = format!("remove_key:{}", laptop.id());
+        let wrong = confirm(&hub, &owner, &mut laptop, &laptop_action)
+            .await
+            .unwrap();
+        let _ = form_as(
+            &hub,
+            &path,
+            &[("csrf", &owner.csrf), ("grant", &wrong)],
+            &owner,
+        )
+        .await;
+        assert_eq!(writer_keys(&hub), 2, "a tap for another key");
+
+        let sessions_before = stored_sessions(&hub);
+        let grant = confirm(
+            &hub,
+            &owner,
+            &mut laptop,
+            &format!("remove_key:{}", phone.id()),
+        )
+        .await
+        .unwrap();
+        let (status, location, _) = form_as(
+            &hub,
+            &path,
+            &[("csrf", &owner.csrf), ("grant", &grant)],
+            &owner,
+        )
+        .await;
+        assert_eq!(
+            (status, location.as_str()),
+            (StatusCode::SEE_OTHER, "/settings?flash=removed")
+        );
+        assert_eq!(writer_keys(&hub), 1);
+        let (status, location, _) = page_as(&hub, "/settings", &on_phone).await;
+        assert_eq!(
+            (status, location.as_str()),
+            (StatusCode::SEE_OTHER, "/signin?next=/settings"),
+            "the removed key's session ended"
+        );
+        assert_eq!(stored_sessions(&hub), sessions_before - 1, "and on disk");
+        let (status, ..) = page_as(&hub, "/settings", &owner).await;
+        assert_eq!(status, StatusCode::OK, "other sessions stay");
+    }
+
+    #[tokio::test]
+    async fn signing_out_everywhere_ends_every_session() {
+        let hub = hub();
+        let mut laptop = Authenticator::new(31, Kind::Es256, ORIGIN);
+        let owner = first_passkey(&hub, &mut laptop).await;
+        let elsewhere = sign_in_with(&hub, &mut laptop).await;
+        let (status, location, _) = form_as(
+            &hub,
+            "/settings/signout-everywhere",
+            &[("csrf", &owner.csrf)],
+            &owner,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(location, "/signin?next=/settings");
+        for b in [&owner, &elsewhere] {
+            let (status, ..) = page_as(&hub, "/settings", b).await;
+            assert_eq!(status, StatusCode::SEE_OTHER);
+        }
+        assert_eq!(stored_sessions(&hub), 0);
+        let restarted = Auth::open(&hub.state);
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            header::COOKIE,
+            format!("{}={}", crate::auth::COOKIE, elsewhere.cookie)
+                .parse()
+                .unwrap(),
+        );
+        assert!(restarted.session(&h).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_cli_token_asks_for_a_tap_and_is_shown_on_one_page_view() {
+        let hub = hub();
+        let mut laptop = Authenticator::new(41, Kind::Es256, ORIGIN);
+        let owner = first_passkey(&hub, &mut laptop).await;
+        let (status, location, _) = form_as(
+            &hub,
+            "/settings/tokens",
+            &[("csrf", &owner.csrf), ("name", "desk")],
+            &owner,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(location, "/settings?flash=unconfirmed#cli-tokens");
+        let (_, _, page) = page_as(&hub, "/settings", &owner).await;
+        assert!(!page.contains("atlasd auth"));
+
+        let grant = confirm(&hub, &owner, &mut laptop, "create_token")
+            .await
+            .unwrap();
+        let fields = [
+            ("csrf", owner.csrf.as_str()),
+            ("name", "desk"),
+            ("grant", &grant),
+        ];
+        let (status, location, body) = form_as(&hub, "/settings/tokens", &fields, &owner).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "post, then redirect: {body}");
+        assert_eq!(location, "/settings#cli-tokens");
+        assert!(!location.contains("atlasd") && !body.contains("atlasd auth"));
+        let (_, _, page) = page_as(&hub, "/settings", &owner).await;
+        assert!(page.contains(&format!("atlasd auth {ORIGIN} ")), "{page}");
+        let (_, _, page) = page_as(&hub, "/settings", &owner).await;
+        assert!(
+            !page.contains("atlasd auth"),
+            "a reload doesn't show it again"
+        );
+        assert!(page.contains("desk"));
+
+        // The tap was used up: the same form again creates nothing.
+        let (_, location, _) = form_as(&hub, "/settings/tokens", &fields, &owner).await;
+        assert_eq!(location, "/settings?flash=unconfirmed#cli-tokens");
+        // Only the session that made it sees it.
+        let grant = confirm(&hub, &owner, &mut laptop, "create_token")
+            .await
+            .unwrap();
+        let fields = [
+            ("csrf", owner.csrf.as_str()),
+            ("name", "desk2"),
+            ("grant", &grant),
+        ];
+        let _ = form_as(&hub, "/settings/tokens", &fields, &owner).await;
+        let other = sign_in_with(&hub, &mut laptop).await;
+        let (_, _, page) = page_as(&hub, "/settings", &other).await;
+        assert!(!page.contains("atlasd auth"));
+    }
+
+    /// A signed-in enrolment started after a tap.
+    async fn signed_in_enrol_start(
+        hub: &Hub,
+        b: &Browser,
+        key: &mut Authenticator,
+    ) -> (String, serde_json::Value) {
+        let grant = confirm(hub, b, key, "enrol").await.unwrap();
+        enrol_start(hub, b, serde_json::json!({ "name": "C", "grant": grant })).await
+    }
+
+    #[tokio::test]
+    async fn enrolment_finishes_only_under_the_authority_it_started_with() {
+        let hub = hub();
+        let anon = Browser::default();
+        let mut laptop = Authenticator::new(51, Kind::Es256, ORIGIN);
+        let mut late = Authenticator::new(52, Kind::Es256, ORIGIN);
+
+        // First run is claimed once, even by flows started while it was open.
+        let (f1, o1) = enrol_start(&hub, &anon, serde_json::json!({ "name": "A" })).await;
+        let (f2, o2) = enrol_start(&hub, &anon, serde_json::json!({ "name": "B" })).await;
+        let (status, cookie, _) = enrol_finish(&hub, &anon, &f1, &o1, &mut laptop).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, cookie2, _) = enrol_finish(&hub, &anon, &f2, &o2, &mut late).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(cookie2.is_none());
+        assert_eq!(writer_keys(&hub), 1);
+
+        // A signed-in flow finishes only with the same live session.
+        let owner = with_csrf(&hub, cookie.unwrap()).await;
+        let other = with_csrf(&hub, sign_in_with(&hub, &mut laptop).await.cookie).await;
+        let (flow, opts) = signed_in_enrol_start(&hub, &owner, &mut laptop).await;
+        let (status, ..) = enrol_finish(&hub, &other, &flow, &opts, &mut late).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "another session");
+        let (flow, opts) = signed_in_enrol_start(&hub, &other, &mut laptop).await;
+        let (status, ..) = form_as(&hub, "/auth/signout", &[("csrf", &other.csrf)], &other).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (status, ..) = enrol_finish(&hub, &other, &flow, &opts, &mut late).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "signed out meanwhile");
+        let (status, ..) = enrol_finish(&hub, &anon, &flow, &opts, &mut late).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // A setup-link flow finishes only while that link is unused.
+        let token =
+            atlas_signer::setup::issue(&hub.state, std::time::Duration::from_mins(15)).unwrap();
+        let link = serde_json::json!({ "name": "D", "token": token });
+        let (fa, oa) = enrol_start(&hub, &anon, link.clone()).await;
+        let (fb, ob) = enrol_start(&hub, &anon, link).await;
+        let (status, ..) = enrol_finish(&hub, &anon, &fa, &oa, &mut late).await;
+        assert_eq!(status, StatusCode::OK);
+        let mut third = Authenticator::new(53, Kind::Es256, ORIGIN);
+        let (status, ..) = enrol_finish(&hub, &anon, &fb, &ob, &mut third).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "the link was used");
+        assert_eq!(writer_keys(&hub), 2);
+    }
+
+    #[tokio::test]
+    async fn a_passkey_that_cannot_sign_updates_is_refused_at_enrolment() {
+        let hub = hub();
+        let anon = Browser::default();
+        let (flow, opts) = enrol_start(&hub, &anon, serde_json::json!({ "name": "Old key" })).await;
+        let params = opts["publicKey"]["pubKeyCredParams"].as_array().unwrap();
+        assert_eq!(params.len(), 1, "{params:?}");
+        assert_eq!(params[0]["alg"], -7, "ES256 only");
+        let mut rsa = Authenticator::new(61, Kind::Rs256, ORIGIN);
+        let (status, cookie, body) = enrol_finish(&hub, &anon, &flow, &opts, &mut rsa).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.contains("Add a passkey that can sign (ES256 or Ed25519)"),
+            "{body}"
+        );
+        assert!(cookie.is_none());
+        assert_eq!(writer_keys(&hub), 0);
+        // First run is still open for a key that can sign.
+        let mut laptop = Authenticator::new(62, Kind::Es256, ORIGIN);
+        let _ = first_passkey(&hub, &mut laptop).await;
     }
 }

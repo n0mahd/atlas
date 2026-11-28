@@ -128,12 +128,8 @@ fn pairing(home: &Path, config: &Config) -> (String, String) {
     if !atlas_web::install::has_builds(&state) {
         fail(atlas_web::install::NO_BUILDS);
     }
-    let code = atlas_signer::setup::issue_in(
-        &state,
-        atlas_signer::setup::PAIRING_CODES,
-        atlas_web::remote::PAIRING_TTL,
-    )
-    .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));
+    let code = atlas_signer::setup::issue_pairing(&state, atlas_web::remote::PAIRING_TTL)
+        .unwrap_or_else(|e| fail(format!("can't write the pairing code: {e}")));
     (origin, code)
 }
 
