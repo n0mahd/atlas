@@ -107,12 +107,21 @@ impl AppState {
         }
     }
 
+    /// Where the `skills` CLI keeps its global lock on this machine. The binary works it
+    /// out (the CLI honours `XDG_STATE_HOME`); without this, `~/.agents/.skill-lock.json`.
+    #[must_use]
+    pub fn with_skills_lock(mut self, global_lock: std::path::PathBuf) -> Self {
+        self.updates = Arc::new(updates::Updates::with(updates::GITHUB_API, global_lock));
+        self
+    }
+
     /// For tests only: reads skill sources from a stand-in for GitHub's API on
     /// `http://127.0.0.1:<port>` and the `skills` CLI's global lock from `global_lock`,
     /// so a test never reaches the network or the machine's own lock.
     ///
     /// # Panics
     /// If `api` isn't a loopback `http://127.0.0.1:` address.
+    #[cfg(any(test, feature = "testing"))]
     #[doc(hidden)]
     #[must_use]
     pub fn with_github_stand_in(mut self, api: &str, global_lock: std::path::PathBuf) -> Self {

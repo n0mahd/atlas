@@ -243,7 +243,11 @@ async fn main() {
         }
         Some(_) => {}
     }
-    let state = AppState::new(sources, &hub_name, config.machines, writer);
+    // The `skills` CLI keeps its global lock under XDG_STATE_HOME when that is set.
+    let xdg_state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from);
+    let skills_lock = atlas_fs::lock::global_lock_path(&home, xdg_state.as_deref());
+    let state =
+        AppState::new(sources, &hub_name, config.machines, writer).with_skills_lock(skills_lock);
     let app = atlas_web::router(state, Access::new(config.allowed_logins));
 
     let socket = config.socket.map_or_else(

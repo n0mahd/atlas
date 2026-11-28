@@ -738,7 +738,7 @@ async fn rate_limits_say_when_to_try_again() {
 
 #[tokio::test]
 async fn updates_need_a_passkey_session() {
-    let (api, _) = stand_in(Canned::default()).await;
+    let (api, served) = stand_in(Canned::default()).await;
     let hub = hub(
         &api,
         |home| home.join(".agents/.skill-lock.json"),
@@ -759,6 +759,19 @@ async fn updates_need_a_passkey_session() {
         .body(Body::from("csrf=wrong"))
         .unwrap();
     assert_eq!(hub.send(req).await.0, StatusCode::FORBIDDEN);
+    // A skill's update preview is a GET that reads from GitHub, so it too needs the
+    // session (its cookie is SameSite=Strict, so another site can't make one start).
+    let req = Request::get("/skills/private/anything/update")
+        .header("tailscale-user-login", LOGIN)
+        .body(Body::empty())
+        .unwrap();
+    let (status, location, _) = hub.send(req).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.starts_with("/signin"), "{location}");
+    assert!(
+        served.hits.lock().unwrap().is_empty(),
+        "nothing was asked of GitHub"
+    );
 }
 
 /// A redirect is followed only to the API's own origin: a renamed repository on the same
