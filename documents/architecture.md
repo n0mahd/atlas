@@ -17,6 +17,14 @@ when this page and the code disagree about which crates exist or which paths it 
 | What atlasd does on a machine | `crates/atlas-client/src/pass.rs` (one run), `crates/atlas-client/src/plan.rs`, `crates/atlas-client/src/apply.rs` |
 | How one agent's config is written | `crates/atlas-harness/src/lib.rs` and that format's module; golden files in `crates/atlas-harness/tests/` |
 | Reading the store and agent folders | `crates/atlas-fs/src/catalog.rs`, `crates/atlas-fs/src/harness.rs` |
+| Where a skill goes (agents, projects) | `documents/skills.md`, `crates/atlas-core/src/catalog/placement.rs`, `crates/atlas-harness/src/placement.rs`, `crates/atlas-web/src/skills_place.rs` |
+| A change that touches several files | `crates/atlas-web/src/change.rs`, `crates/atlas-fs/src/library.rs` |
+| Per-agent skill switches | `crates/atlas-harness/src/switches.rs`, `crates/atlas-harness/HARNESSES.md` |
+| Creating, moving, deleting skills | `crates/atlas-web/src/skill_ops.rs`, `crates/atlas-web/src/library_pages.rs` |
+| Bringing things into Atlas, Tidy up | `crates/atlas-fs/src/outside.rs`, `crates/atlas-web/src/import.rs`, `crates/atlas-web/src/tidy.rs` |
+| Instruction files | `crates/atlas-harness/src/readers.rs`, `crates/atlas-harness/src/instructions.rs`, `crates/atlas-web/src/instructions_manage.rs` |
+| Skill updates from GitHub | `crates/atlas-fs/src/lock.rs`, `crates/atlas-web/src/updates.rs` |
+| Projects and memory on each machine | `crates/atlas-client/src/project.rs`, `crates/atlas-client/src/tree.rs` |
 
 ## Components
 - **atlas-hub**: runs on whichever machine the user picks. Web UI over Tailscale, git
@@ -102,8 +110,13 @@ Elsewhere or planned:
    sees a check page built from the exact manifest bytes being signed (decision 0040).
 5. atlasd pulls the update and checks the signature, that N is higher than the last
    one it applied, and the tree hash.
-6. atlasd computes a pure plan, viewable as a dry run.
-7. atlasd writes only the entries it manages, atomically, and reports status.
+6. atlasd computes a pure plan, viewable as a dry run: home skill folders per skill from
+   `atlas/placements.toml`, then each project checkout it finds under `project_roots`
+   (links, its `.git/info/exclude` block, Claude Code's memory link), then every switch
+   file once (decision 0027).
+7. atlasd writes only the entries it manages, atomically, re-checking each destructive
+   step (an exact copy is moved aside and checked again before it goes), and reports
+   status, with the skills it saw outside Atlas.
 
 Memory skips steps 3–5 by default: agents write it straight to git (decision 0008).
 
@@ -119,7 +132,9 @@ Memory skips steps 3–5 by default: agents write it straight to git (decision 0
 - Who can act is guarded by a tap too: once a passkey exists, adding another, removing
   one and creating a CLI token each need a fresh tap from an enrolled passkey, and an
   enrolment finishes only under the authority it started with (decision 0038).
-- GitHub is untrusted storage.
+- GitHub is untrusted storage. The hub also reads public GitHub repos (no sign-in) when the
+  owner checks skills installed with `npx skills` for updates; every file is checked
+  against its git SHA and nothing fetched is run (decision 0030).
 - atlasd runs as a user service, never as root, and never executes content it receives.
   A local stdio MCP server starts, and a hook is installed, only if it arrived in a
   signed release (decisions 0009, 0010).
@@ -215,3 +230,7 @@ to run it and how to read the evidence, and its `features/` map defines coverage
 | Projects, machines | `atlas.toml` in the hub's data repo |
 
 `<knowledge>` is the user's knowledge repo, configured on the hub.
+
+On each machine, atlasd copies anything it replaces that the new content doesn't hold byte
+for byte to `~/.local/state/atlas-client/replaced/<UTC date>/<path in the home>` first, and
+its report names each copy (`atlas-client::keep`; decision "atlasd keeps a copy of what it replaces").

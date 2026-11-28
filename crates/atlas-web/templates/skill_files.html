@@ -1,0 +1,12 @@
+{% if !files.scripts.is_empty() %}<p class="marginalia warn-note">It has scripts ({{ files.scripts|join(", ") }}). An agent using it may run them, so read them first; Atlas never runs them.</p>{% endif %}
+{% if !files.entries.is_empty() %}
+<h2 class="aside-head">Files</h2>
+<ul class="file-tree">
+  {% for f in files.entries %}<li><a href="{{ f.href }}" title="{{ f.rel }}"><span class="muted">{{ f.dir }}</span>{{ f.leaf }}</a>{% if f.script %} <span class="row-flag">script</span>{% endif %}</li>{% endfor %}
+</ul>
+{% if files.truncated %}<p class="editor-note">Only the first 200 files are listed.</p>{% endif %}
+<div class="skill-menu">
+  <button class="button-plain copy" type="button" data-copy="{{ files.folder }}" hidden>Copy path</button>
+  {% if let Some(d) = files.delete_href %}<a class="link-cap warn" href="{{ d }}">Delete…</a>{% endif %}
+</div>
+{% endif %}

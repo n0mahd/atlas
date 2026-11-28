@@ -107,6 +107,9 @@ wait for the next run, within a minute.
    rm -r ~/.local/state/atlas-client
    ```
 
+   `~/.local/state/atlas-client/replaced` holds copies of files atlasd replaced, by date;
+   move it somewhere first if you may want any of them back.
+
    On macOS, replace the first two lines with:
 
    ```sh

@@ -107,6 +107,7 @@ fn universe() -> Vec<Offer> {
                     hub: HUB.into(),
                     sources: Vec::new(),
                     owner_keys: keys.iter().map(|w| owner_key(*w)).collect(),
+                    projects: Vec::new(),
                 };
                 let bytes = serde_json::to_vec(&manifest).unwrap();
                 let digest = Sha256::digest(&bytes)

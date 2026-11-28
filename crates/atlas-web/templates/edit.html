@@ -4,7 +4,7 @@
   <input type="hidden" name="csrf" value="{{ page.csrf }}">
   <input type="hidden" name="base" value="{{ base }}">
   <div class="editor-bar">
-    <span class="mono muted">{{ shown }}</span>
+    <span class="mono muted">{{ crate::views::breakable(shown)|safe }}</span>
     <span class="editor-actions">
       <a class="link-cap" href="{{ back }}">Cancel</a>
       <button class="button-ink" type="submit">Save</button>

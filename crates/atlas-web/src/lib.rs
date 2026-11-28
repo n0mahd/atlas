@@ -5,26 +5,27 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
-// Used by the skills, instructions and import pages as they land (decision 0027).
-#[allow(dead_code)]
 mod change;
 pub mod clients;
 mod distribute;
 mod edit;
 mod icons;
+mod import;
 pub mod install;
+mod instructions_manage;
+mod library;
+mod library_pages;
 mod markdown;
 pub mod release;
 pub mod remote;
 mod review;
-// Stubs until the library and placement work lands (decision 0027).
-#[allow(dead_code, clippy::unused_async)]
 mod skill_ops;
-#[allow(dead_code, clippy::unused_async)]
 mod skills_place;
 #[cfg(test)]
 mod test_passkey;
+mod tidy;
 pub mod tokens;
+mod updates;
 pub mod views;
 
 use std::sync::Arc;
@@ -74,10 +75,19 @@ pub struct AppState {
     writer: Option<Arc<Writer>>,
     /// The last read of the store, shared by requests for a few seconds.
     cache: Arc<tokio::sync::Mutex<Option<Cached>>>,
+    /// Check for updates: the GitHub reader and the last check (`updates`).
+    updates: Arc<updates::Updates>,
 }
 
 /// A read of the store and when it was made.
-type Cached = (std::time::Instant, Arc<Snapshot>);
+#[derive(Debug)]
+struct Cached {
+    at: std::time::Instant,
+    snap: Arc<Snapshot>,
+    /// The Instructions pages' facts about this machine, read on first use with this
+    /// snapshot and dropped with it.
+    instructions: instructions_manage::FactsSlot,
+}
 
 /// How long one read of the store serves requests. Changes made outside Atlas show up
 /// within this; saves made through Atlas clear it at once.
@@ -86,16 +96,44 @@ const SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 impl AppState {
     #[must_use]
     pub fn new(sources: Sources, hub: &str, others: Vec<String>, writer: Option<Writer>) -> Self {
+        let updates = Arc::new(updates::Updates::new(&sources));
         if let Some(w) = &writer {
             w.machines.seed(&others);
         }
         Self {
+            updates,
             sources: Arc::new(sources),
             hub: Arc::from(hub),
             others: others.into(),
             writer: writer.map(Arc::new),
             cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// Where the `skills` CLI keeps its global lock on this machine. The binary works it
+    /// out (the CLI honours `XDG_STATE_HOME`); without this, `~/.agents/.skill-lock.json`.
+    #[must_use]
+    pub fn with_skills_lock(mut self, global_lock: std::path::PathBuf) -> Self {
+        self.updates = Arc::new(updates::Updates::with(updates::GITHUB_API, global_lock));
+        self
+    }
+
+    /// For tests only: reads skill sources from a stand-in for GitHub's API on
+    /// `http://127.0.0.1:<port>` and the `skills` CLI's global lock from `global_lock`,
+    /// so a test never reaches the network or the machine's own lock.
+    ///
+    /// # Panics
+    /// If `api` isn't a loopback `http://127.0.0.1:` address.
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_github_stand_in(mut self, api: &str, global_lock: std::path::PathBuf) -> Self {
+        assert!(
+            api.starts_with("http://127.0.0.1:"),
+            "the GitHub stand-in must be on 127.0.0.1"
+        );
+        self.updates = Arc::new(updates::Updates::with(api, global_lock));
+        self
     }
 
     pub(crate) fn known_machines(&self) -> Vec<String> {
@@ -107,23 +145,52 @@ impl AppState {
     /// The store as of at most [`SNAPSHOT_TTL`] ago. Requests that arrive while it's being
     /// read wait for that one read instead of starting their own.
     async fn snapshot(&self) -> Result<Arc<Snapshot>, AppError> {
+        Ok(self.cached().await?.0)
+    }
+
+    /// [`AppState::snapshot`] with the slot that keeps the Instructions pages' facts for
+    /// as long as that snapshot serves.
+    async fn cached(&self) -> Result<(Arc<Snapshot>, instructions_manage::FactsSlot), AppError> {
         let mut slot = self.cache.lock().await;
-        if let Some((at, snap)) = slot.as_ref()
-            && at.elapsed() < SNAPSHOT_TTL
+        if let Some(c) = slot.as_ref()
+            && c.at.elapsed() < SNAPSHOT_TTL
         {
-            return Ok(Arc::clone(snap));
+            return Ok((Arc::clone(&c.snap), Arc::clone(&c.instructions)));
         }
         let sources = Arc::clone(&self.sources);
-        let snap = tokio::task::spawn_blocking(move || Snapshot {
-            catalog: atlas_fs::load_catalog(&sources),
-            harnesses: atlas_fs::scan_harnesses(&sources),
-            projects: atlas_fs::scan_projects(&sources),
+        let lock = self.updates.global_lock().to_path_buf();
+        let snap = tokio::task::spawn_blocking(move || {
+            let catalog = atlas_fs::load_catalog(&sources);
+            let harnesses = atlas_fs::scan_harnesses(&sources);
+            let library = library::Index::read(&sources, &lock, &catalog, &harnesses);
+            let outside = atlas_fs::outside::scan(
+                &sources,
+                &catalog,
+                &harnesses,
+                &atlas_fs::outside::Rules::default(),
+            );
+            Snapshot {
+                catalog,
+                harnesses,
+                projects: atlas_fs::scan_projects(&sources),
+                library,
+                outside,
+                delivered: false,
+            }
         })
         .await
-        .map(Arc::new)
         .map_err(|_| AppError::Internal)?;
-        *slot = Some((std::time::Instant::now(), Arc::clone(&snap)));
-        Ok(snap)
+        let snap = Arc::new(Snapshot {
+            delivered: distribute::delivered(self).await,
+            ..snap
+        });
+        let instructions = instructions_manage::FactsSlot::default();
+        *slot = Some(Cached {
+            at: std::time::Instant::now(),
+            snap: Arc::clone(&snap),
+            instructions: Arc::clone(&instructions),
+        });
+        Ok((snap, instructions))
     }
 
     /// Drops the cached read, so the next page shows a change just made.
@@ -153,15 +220,64 @@ impl AppState {
     }
 }
 
+/// The skills, instructions and import pages (decision 0027).
+fn catalog_routes() -> Router<AppState> {
+    Router::new()
+        .route("/skills", get(skills))
+        .route(
+            "/skills/new",
+            get(library_pages::new_form).post(library_pages::new_save),
+        )
+        .route("/skills/confirm", get(library_pages::confirm))
+        .route("/skills/bulk", post(library_pages::bulk))
+        .route(
+            "/skills/{home}/{name}/files/{*path}",
+            get(library_pages::file_view),
+        )
+        .route("/skills/tidy", get(tidy::page).post(tidy::run))
+        .route("/skills/{home}/{name}", get(skill_detail))
+        .route(
+            "/skills/{home}/{name}/agents",
+            post(skills_place::post_agents),
+        )
+        .route("/skills/{home}/{name}/use", post(skills_place::post_use))
+        .route("/skills/updates", get(updates::list))
+        .route("/skills/updates/check", post(updates::check))
+        .route(
+            "/skills/{home}/{name}/update",
+            get(updates::preview).post(updates::apply),
+        )
+        .route("/instructions", get(instructions_manage::list))
+        .route(
+            "/instructions/{scope}/{file}",
+            get(instructions_manage::detail),
+        )
+        .route(
+            "/instructions/{scope}/{file}/{action}",
+            get(instructions_manage::confirm).post(instructions_manage::run),
+        )
+        .route(
+            "/instructions/claude-agents-md",
+            post(instructions_manage::claude_option),
+        )
+        .route("/import/skill", post(import::bring_skill))
+        .route("/import/skill/theirs", post(import::take_theirs))
+        .route("/import/skills", post(import::bring_all_skills))
+        .route("/import/note", post(import::bring_note))
+        .route("/import/notes", post(import::bring_all_notes))
+        .route("/import/hook", post(import::bring_hook))
+        .route("/import/hooks", post(import::bring_all_hooks))
+        .route("/import/keep", post(import::keep))
+        .route("/import/compare", get(import::compare))
+        .route("/import/compare-copies", get(tidy::compare_copies))
+}
+
 /// Builds the hub's router.
 pub fn router(state: AppState, access: Access) -> Router {
     let access = Arc::new(access);
     Router::new()
         .route("/", get(overview))
-        .route("/skills", get(skills))
-        .route("/skills/{home}/{name}", get(skill_detail))
-        .route("/instructions", get(instructions))
-        .route("/instructions/{scope}/{file}", get(instruction_detail))
+        .merge(catalog_routes())
         .route("/memory", get(memory))
         .route("/memory/{name}", get(memory_detail))
         .route("/hooks", get(hooks))
@@ -324,6 +440,8 @@ struct OverviewPage {
     v: views::Overview,
     /// "3 changes aren't on your machines yet", when some are waiting.
     waiting: Option<String>,
+    /// Send can deliver something (offered only then).
+    can_send: bool,
 }
 
 #[derive(Template)]
@@ -331,6 +449,8 @@ struct OverviewPage {
 struct SkillsPage {
     page: Page,
     v: views::SkillsList,
+    outside: import::SkillsOutside,
+    place: skills_place::ListPlace,
 }
 
 #[derive(Template)]
@@ -338,20 +458,13 @@ struct SkillsPage {
 struct SkillPage {
     page: Page,
     v: views::SkillDetail,
-}
-
-#[derive(Template)]
-#[template(path = "instructions.html")]
-struct InstructionsPage {
-    page: Page,
-    sections: Vec<views::InstructionSection>,
-}
-
-#[derive(Template)]
-#[template(path = "instruction.html")]
-struct InstructionPage {
-    page: Page,
-    v: views::InstructionDetail,
+    files: library_pages::FileTree,
+    /// Who gets the skill: the switches and "Use in…".
+    p: skills_place::SkillPlace,
+    /// Its Check for updates page, for a skill installed from GitHub.
+    update_href: Option<String>,
+    /// Where this machine's agents differ from the switches (`machine_differs`).
+    differs: Vec<String>,
 }
 
 #[derive(Template)]
@@ -359,6 +472,7 @@ struct InstructionPage {
 struct MemoryPage {
     page: Page,
     v: views::MemoryList,
+    outside: import::MemoryOutside,
 }
 
 #[derive(Template)]
@@ -373,6 +487,7 @@ struct MemoryDetailPage {
 struct HooksPage {
     page: Page,
     v: views::Hooks,
+    outside: import::HooksOutside,
 }
 
 /// The check before sending an update that adds or changes hooks.
@@ -445,6 +560,12 @@ struct ListQuery {
     kind: String,
     #[serde(default)]
     host: String,
+    /// Skills: only those that need attention.
+    #[serde(default)]
+    attention: Option<String>,
+    /// Skills: show checkboxes and the bulk bar.
+    #[serde(default)]
+    select: Option<String>,
     /// After a save: the commit, and what happened to the push.
     #[serde(default)]
     saved: String,
@@ -462,6 +583,19 @@ struct ListQuery {
     sent: Option<String>,
     #[serde(default)]
     notsent: Option<String>,
+    /// After bringing something into Atlas: what to add to the notice (`import::done_text`).
+    #[serde(default)]
+    done: String,
+    /// After a skill's switch or "Use in…": what changed (`turned` and `agent`, or `used`).
+    #[serde(default)]
+    turned: String,
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    used: String,
+    /// The Skills list row to open, as `<home>/<name>`.
+    #[serde(default)]
+    open: String,
 }
 
 impl ListQuery {
@@ -472,6 +606,15 @@ impl ListQuery {
                 "Nothing changed, so nothing was committed.".to_owned(),
                 false,
             );
+        }
+        if let Some(did) = skills_place::did_text(&self.turned, &self.agent, &self.used) {
+            if self.sent.is_some() {
+                return (format!("{did} · on your machines within a minute"), false);
+            }
+            if self.notsent.is_some() {
+                return (format!("{did}. Not on your machines yet"), true);
+            }
+            return (did, false);
         }
         let saved = !self.saved.is_empty() && self.saved.bytes().all(|b| b.is_ascii_hexdigit());
         if self.sent.is_some() {
@@ -506,7 +649,14 @@ impl ListQuery {
     }
 
     fn apply(&self, page: &mut Page, s: &AppState) {
-        let (text, send) = self.flash();
+        let (mut text, send) = self.flash();
+        if let Some(extra) = import::done_text(&self.done) {
+            text = if text.is_empty() {
+                extra
+            } else {
+                format!("{text} {extra}")
+            };
+        }
         page.flash = text;
         page.flash_action = send.then_some("Send");
         if self.sent.is_some() {
@@ -524,12 +674,15 @@ async fn overview(
     let mut page = s.page(&headers, "/", "Home", &snap, &Scope::Global, false);
     page.totals = format!("Hub · {}", page.hub);
     q.apply(&mut page, &s);
-    let waiting = distribute::waiting(&s).await.and_then(|w| w.text());
+    let waiting = distribute::waiting(&s).await;
+    let can_send = waiting.as_ref().is_some_and(distribute::Waiting::sendable);
+    let waiting = waiting.and_then(|w| w.text());
     Ok(Html(
         OverviewPage {
             page,
             v: views::overview(&snap),
             waiting,
+            can_send,
         }
         .render()?,
     ))
@@ -542,11 +695,27 @@ async fn skills(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let scope = views::resolve_scope(&snap, &q.scope);
-    let v = views::skills(&snap, &scope, &q.q);
+    let v = views::skills_library(
+        &snap,
+        &scope,
+        &q.q,
+        q.attention.is_some(),
+        q.select.is_some(),
+    );
     let mut page = s.page(&headers, "/skills", "Skills", &snap, &scope, true);
     page.totals = format!("{} skills", v.total);
     q.apply(&mut page, &s);
-    Ok(Html(SkillsPage { page, v }.render()?))
+    let outside = import::skills_outside(&snap, &scope, &q.q);
+    let place = skills_place::list(&s, &snap, &scope, &page, &q.open);
+    Ok(Html(
+        SkillsPage {
+            page,
+            v,
+            outside,
+            place,
+        }
+        .render()?,
+    ))
 }
 
 async fn skill_detail(
@@ -557,65 +726,41 @@ async fn skill_detail(
 ) -> PageResult {
     let snap = s.snapshot().await?;
     let v = views::skill_detail(&snap, &home, &name).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &home);
+    let skill = snap
+        .catalog
+        .skills
+        .iter()
+        .find(|s| s.home.key() == home && s.name.as_str() == name)
+        .ok_or(AppError::NotFound)?;
+    // A link from a project's list carries it, so "This project only" means that one.
+    let scope = views::resolve_scope(&snap, if q.scope.is_empty() { &home } else { &q.scope });
     let mut page = s.page(&headers, "/skills", v.name.clone(), &snap, &scope, false);
     q.apply(&mut page, &s);
     page.edit_href = s
         .writer
         .is_some()
         .then(|| format!("/skills/{home}/{name}/edit"));
-    Ok(Html(SkillPage { page, v }.render()?))
-}
-
-async fn instructions(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let scope = views::resolve_scope(&snap, &q.scope);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        "Instructions",
-        &snap,
-        &scope,
-        true,
-    );
-    page.totals = format!("{} files", snap.catalog.instructions.len());
-    q.apply(&mut page, &s);
+    let files = library_pages::file_tree(&snap, &home, &name, page.signed_in);
+    let p = skills_place::detail(&s, &snap, skill, &scope, &page);
+    // Only a skill installed from GitHub has anything to check.
+    let update_href = (s.writer.is_some()
+        && snap
+            .library
+            .source(&skill.home, skill.name.as_str())
+            .is_some())
+    .then(|| format!("/skills/{home}/{name}/update"));
+    let differs = skills_place::machine_differs(&p.switches, &v.agents, snap.delivered);
     Ok(Html(
-        InstructionsPage {
+        SkillPage {
             page,
-            sections: views::instructions(&snap, &scope),
+            v,
+            files,
+            p,
+            update_href,
+            differs,
         }
         .render()?,
     ))
-}
-
-async fn instruction_detail(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((scope_key, file)): Path<(String, String)>,
-    Query(q): Query<ListQuery>,
-) -> PageResult {
-    let snap = s.snapshot().await?;
-    let v = views::instruction_detail(&snap, &scope_key, &file).ok_or(AppError::NotFound)?;
-    let scope = views::resolve_scope(&snap, &scope_key);
-    let mut page = s.page(
-        &headers,
-        "/instructions",
-        v.title.clone(),
-        &snap,
-        &scope,
-        false,
-    );
-    q.apply(&mut page, &s);
-    page.edit_href = s
-        .writer
-        .is_some()
-        .then(|| format!("/instructions/{scope_key}/{file}/edit"));
-    Ok(Html(InstructionPage { page, v }.render()?))
 }
 
 async fn memory(
@@ -629,7 +774,8 @@ async fn memory(
     let mut page = s.page(&headers, "/memory", "Memory", &snap, &scope, true);
     page.totals = format!("{} notes", v.total);
     q.apply(&mut page, &s);
-    Ok(Html(MemoryPage { page, v }.render()?))
+    let outside = import::memory_outside(&snap, &scope, &s.sources.home);
+    Ok(Html(MemoryPage { page, v, outside }.render()?))
 }
 
 async fn memory_detail(
@@ -659,7 +805,8 @@ async fn hooks(
     let mut page = s.page(&headers, "/hooks", "Hooks", &snap, &Scope::Global, false);
     page.totals = format!("{} in Atlas · {} outside", v.atlas.len(), v.found.len());
     q.apply(&mut page, &s);
-    Ok(Html(HooksPage { page, v }.render()?))
+    let outside = import::hooks_outside(&snap);
+    Ok(Html(HooksPage { page, v, outside }.render()?))
 }
 
 async fn mcp(State(s): State<AppState>, headers: HeaderMap) -> PageResult {

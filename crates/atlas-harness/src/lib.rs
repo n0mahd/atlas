@@ -8,13 +8,16 @@
 pub mod change;
 pub mod hooks;
 pub mod instructions;
+mod json;
 pub mod placement;
+pub mod readers;
 pub mod skills;
 pub mod switches;
 
 use std::path::{Path, PathBuf};
 
 pub use change::{Change, FormatError};
+pub use json::in_atlas_layout;
 
 use atlas_core::kernel::HarnessKind;
 

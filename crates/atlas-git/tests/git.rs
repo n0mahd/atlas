@@ -63,7 +63,7 @@ fn commits_only_the_file_and_leaves_other_changes_alone() {
     assert_eq!(sh(p, &["show", "HEAD:a.md"]), "a v2\n");
     assert_eq!(
         sh(p, &["log", "-1", "--format=%an <%ae>%n%B"]).trim(),
-        "Test <test@example.invalid>\nEdit a"
+        "Test <test@example.invalid>\nEdit a\n\nAtlas-Change: hub"
     );
     let after = sh(p, &["status", "--porcelain"]);
     assert_eq!(after, " M b.md\nM  c.md\n");
@@ -191,6 +191,32 @@ fn pathspec_magic_is_taken_literally() {
         .unwrap();
     assert_eq!(files_in(p, "HEAD").trim(), ":(glob)*.md");
     assert_eq!(sh(p, &["status", "--porcelain"]), " M b.md\n");
+}
+
+#[test]
+fn ignored_names_what_git_ignores() {
+    let dir = fixture();
+    let p = dir.path();
+    fs::write(p.join(".gitignore"), "*.local.md\na.md\n").unwrap();
+    fs::write(p.join(".git/info/exclude"), "/notes.txt\n").unwrap();
+    for f in ["CLAUDE.local.md", "notes.txt", "kept.md"] {
+        fs::write(p.join(f), "x\n").unwrap();
+    }
+    fs::create_dir_all(p.join(".claude")).unwrap();
+    fs::write(p.join(".claude/CLAUDE.local.md"), "x\n").unwrap();
+    let repo = Repo::open(p).unwrap();
+    let ignored = |rel: &str| repo.is_ignored(Path::new(rel)).unwrap();
+    assert!(ignored("CLAUDE.local.md"));
+    assert!(ignored(".claude/CLAUDE.local.md"));
+    assert!(ignored("notes.txt"));
+    assert!(!ignored("kept.md"));
+    assert!(!ignored("missing.md"));
+    // Tracked, so not ignored although a pattern matches it.
+    assert!(!ignored("a.md"));
+    assert!(matches!(
+        repo.is_ignored(Path::new("../x")),
+        Err(GitError::InvalidPath(_))
+    ));
 }
 
 #[test]
@@ -511,8 +537,13 @@ fn reads_what_changed_between_two_commits() {
     fs::remove_file(p.join("b.md")).unwrap();
     fs::create_dir_all(p.join("hooks/guard")).unwrap();
     fs::write(p.join("hooks/guard/run.sh"), "echo hi\n").unwrap();
-    sh(p, &["add", "-A"]);
-    sh(p, &["commit", "--quiet", "-m", "Edit a in Atlas"]);
+    // Made through Atlas, with a subject that doesn't say so: the trailer does.
+    repo.commit_paths(
+        &[Path::new("a.md"), Path::new("b.md"), Path::new("hooks")],
+        "Bring a into Atlas from elsewhere",
+        None,
+    )
+    .unwrap();
     fs::write(p.join("c.md"), "c v2\n").unwrap();
     sh(p, &["commit", "--quiet", "-am", "by hand"]);
     let head = sh(p, &["rev-parse", "HEAD"]).trim().to_owned();
@@ -574,7 +605,13 @@ fn reads_what_changed_between_two_commits() {
 
     let commits = repo.commits_between(&base, &head).unwrap();
     let subjects: Vec<_> = commits.iter().map(|c| c.1.as_str()).collect();
-    assert_eq!(subjects, vec!["by hand", "Edit a in Atlas"]);
+    assert_eq!(
+        subjects,
+        vec!["by hand", "Bring a into Atlas from elsewhere"]
+    );
+    // Commits Atlas makes carry its trailer whatever their subject; the owner's don't.
+    let by_atlas: Vec<bool> = commits.iter().map(|c| c.2).collect();
+    assert_eq!(by_atlas, vec![false, true]);
     assert_eq!(repo.paths_in_commit(&commits[0].0).unwrap(), vec!["c.md"]);
     assert!(repo.has_commit(&base));
     assert!(!repo.has_commit(&"0".repeat(40)));

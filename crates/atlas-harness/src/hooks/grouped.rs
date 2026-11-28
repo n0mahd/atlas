@@ -5,8 +5,9 @@ use std::collections::HashSet;
 use atlas_core::catalog::HookEvent;
 use serde_json::{Map, Value};
 
-use super::{ManagedHook, command_for, finish, handler, managed_name, parse_object, shape};
-use crate::change::{Change, FormatError};
+use super::{ManagedHook, command_for, handler, managed_name};
+use crate::change::{Change, FormatError, shape};
+use crate::json::{finish, parse_object};
 
 /// Claude Code's name for an Atlas event.
 #[must_use]
@@ -52,6 +53,24 @@ struct Wanted<'a> {
     event: &'static str,
     name: &'a str,
     group: Value,
+    hook: &'a ManagedHook,
+}
+
+impl Wanted<'_> {
+    /// Whether a hand-made handler in a group with `matcher` under this event is the very
+    /// entry this hook was brought in from: same command, matcher and timeout.
+    fn replaces(&self, matcher: Option<&str>, handler: &Value) -> bool {
+        let Some(command) = self.hook.replaces.as_deref() else {
+            return false;
+        };
+        let kind_ok = handler
+            .get("type")
+            .is_none_or(|t| t.as_str() == Some("command"));
+        kind_ok
+            && handler.get("command").and_then(Value::as_str) == Some(command)
+            && handler.get("timeout").and_then(Value::as_u64) == self.hook.timeout.map(u64::from)
+            && matcher == self.hook.matcher.as_deref()
+    }
 }
 
 fn group(hook: &ManagedHook) -> Value {
@@ -94,6 +113,7 @@ fn render(
                 event: event_name(h.event)?,
                 name: h.name.as_str(),
                 group: group(h),
+                hook: h,
             })
         })
         .collect();
@@ -129,9 +149,19 @@ fn render(
                 kept.push(w.group.clone());
                 continue;
             }
+            let matcher = g
+                .get("matcher")
+                .and_then(Value::as_str)
+                .filter(|m| !m.is_empty())
+                .map(str::to_owned);
+            let replaced = |h: &Value| {
+                wanted
+                    .iter()
+                    .any(|w| w.event == event.as_str() && w.replaces(matcher.as_deref(), h))
+            };
             if let Some(handlers) = g.get_mut("hooks").and_then(Value::as_array_mut) {
                 let before = handlers.len();
-                handlers.retain(|h| handler_name(h).is_none());
+                handlers.retain(|h| handler_name(h).is_none() && !replaced(h));
                 if before > 0 && handlers.is_empty() {
                     continue;
                 }

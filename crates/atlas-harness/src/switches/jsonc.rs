@@ -439,6 +439,7 @@ pub(super) fn indent_unit(text: &str) -> String {
         )
 }
 
+/// The line ending for new lines: `\r\n` if the file has one anywhere.
 fn eol(text: &str) -> &'static str {
     if text.contains("\r\n") { "\r\n" } else { "\n" }
 }
@@ -453,11 +454,15 @@ pub(super) fn remove_member(text: &str, object: &Object, index: usize) -> String
     let whole_line = text[ls..start].trim().is_empty() && text[end..le].trim().is_empty();
     if whole_line {
         start = ls;
-        end = if le < text.len() {
-            le + eol(text).len()
-        } else {
-            le
-        };
+        // The ending this line has, which in a file with both kinds may not be the
+        // file's usual one.
+        let rest = &text[le..];
+        end = le
+            + if rest.starts_with("\r\n") {
+                2
+            } else {
+                usize::from(rest.starts_with('\n'))
+            };
     } else {
         let rest = &text[end..];
         end += rest.len() - rest.trim_start_matches([' ', '\t']).len();
@@ -638,6 +643,31 @@ mod tests {
         let one_line = "{\"a\": 1, \"b\": 2}";
         assert_eq!(remove_member(one_line, &root(one_line), 1), "{\"a\": 1}");
         assert_eq!(remove_member(one_line, &root(one_line), 0), "{\"b\": 2}");
+    }
+
+    #[test]
+    fn removing_a_line_takes_only_its_own_line_ending() {
+        // A file with both endings: each line goes with the ending it actually has.
+        for (text, index, want) in [
+            (
+                "{\r\n  \"a\": 1,\n  \"b\": 2\r\n}\r\n",
+                0,
+                "{\r\n  \"b\": 2\r\n}\r\n",
+            ),
+            ("{\n  \"a\": 1,\r\n  \"b\": 2\n}\n", 0, "{\n  \"b\": 2\n}\n"),
+            // The member's line is the last before the closing brace at the end of the file.
+            ("{\r\n  \"a\": 1,\n  \"b\": 2\n}", 1, "{\r\n  \"a\": 1\n}"),
+            // The next line starts with a multi-byte character.
+            (
+                "{\r\n\"a\": 1,\n\"\u{e9}\": 2\r\n}",
+                0,
+                "{\r\n\"\u{e9}\": 2\r\n}",
+            ),
+        ] {
+            let got = remove_member(text, &root(text), index);
+            assert_eq!(got, want, "{text:?}");
+            parse(&got).unwrap();
+        }
     }
 
     #[test]

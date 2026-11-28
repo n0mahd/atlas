@@ -55,6 +55,9 @@ pub struct Skill {
     pub path: String,
     /// Other files in the skill folder, relative to it.
     pub files: Vec<String>,
+    /// Why machines won't install it, in atlasd's words, when the folder breaks the rule
+    /// for what Atlas installs (a link leading out of the skill's own folder).
+    pub skipped: Option<String>,
     pub body: Untrusted<Markdown>,
 }
 

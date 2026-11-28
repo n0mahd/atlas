@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="place-step">
+  {% if let Some(a) = ask %}
+  <p class="marginalia">{{ a.text }}</p>
+  {% if !a.still.is_empty() %}<p class="marginalia warn-note">{{ a.still }}</p>{% endif %}
+  <form method="post" action="{{ a.action }}" class="place-step-form"{% if a.send %} data-send-on-save{% endif %}>
+    <input type="hidden" name="csrf" value="{{ page.csrf }}">
+    <input type="hidden" name="agent" value="all">
+    <input type="hidden" name="on" value="0">
+    <input type="hidden" name="confirmed" value="1">
+    <input type="hidden" name="back" value="{{ a.back }}">
+    <input type="hidden" name="scope" value="{{ a.scope }}">
+    <a class="link-cap" href="{{ back_href }}">Cancel</a>
+    <button class="button-ink" type="submit" autofocus>Turn off</button>
+  </form>
+  {% endif %}
+  {% if !refused.is_empty() %}
+  <p class="marginalia warn-note" role="alert">{{ refused }}</p>
+  <p><a class="link-cap" href="{{ back_href }}">Back</a></p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -126,7 +126,6 @@ test("Claude Code runs the no-rm hook cleanly", async () => {
 
 test("a skill switched off for some agents is gone for them only", async ({ owner, world }) => {
   test.skip(!laptop, "the laptop didn't pair");
-  test.fail(true, "known bug: atlasd ignores atlas/placements.toml");
   test.info().annotations.push({
     type: "bug",
     description:
@@ -163,7 +162,6 @@ test("a skill switched off for some agents is gone for them only", async ({ owne
 
 test("a project checkout's own skill shows inside it", async ({ world }) => {
   test.skip(!laptop, "the laptop didn't pair");
-  test.fail(true, "known bug: atlasd makes no project links, so Claude Code doesn't see project skills");
   test.info().annotations.push({
     type: "bug",
     description:
@@ -185,7 +183,8 @@ test("a project checkout's own skill shows inside it", async ({ world }) => {
   }
   // The links atlasd makes in a checkout stay out of the project's git.
   const exclude = fs.readFileSync(path.join(shop, ".git/info/exclude"), "utf8");
-  expect.soft(exclude, "atlasd's .claude/skills links are git-excluded").toMatch(/^\/?\.claude\/skills\/?$/m);
+  // Each link atlasd makes is excluded, between its own markers.
+  expect.soft(exclude, "atlasd's .claude/skills links are git-excluded").toMatch(/# atlas:begin\n(?:.*\n)*?\/\.claude\/skills\/stock\n(?:.*\n)*?# atlas:end/);
   expect.soft(git(world, shop, "status", "--porcelain"), "the checkout stays clean").toBe("");
 });
 

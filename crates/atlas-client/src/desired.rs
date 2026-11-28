@@ -1,12 +1,14 @@
 //! What should be installed for this login, read from the local copies: global skills,
-//! the global instructions, the global hooks and Claude Code's subagents.
+//! where each goes (`atlas/placements.toml`), the global instructions, the global hooks
+//! and Claude Code's subagents.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use atlas_core::catalog::HookManifest;
+use atlas_core::catalog::{ClaudeAgentsMd, HookManifest, PLACEMENTS_FILE, Placement, Placements};
 use atlas_core::kernel::{HarnessKind, Slug};
+use atlas_fs::library::LibraryError;
 use atlas_harness::hooks::ManagedHook;
 
 const MAX_HOOK_TOML: u64 = 64 * 1024;
@@ -22,8 +24,16 @@ pub struct HookSpec {
 pub struct Desired {
     /// Skill name → its folder in a local copy.
     pub skills: BTreeMap<String, PathBuf>,
+    /// Where each skill goes. Only exceptions are listed.
+    pub placements: Placements,
+    /// `atlas/placements.toml` couldn't be read. No skill link or switch changes then, so
+    /// a typo can't strip every skill; the reason is in `problems`.
+    pub placements_invalid: bool,
     /// The global `AGENTS.md` in the knowledge copy.
     pub instructions: Option<PathBuf>,
+    /// The owner's choice for when Claude Code reads a project's `AGENTS.md`; `None`
+    /// leaves Claude Code's setting as it is.
+    pub claude_agents_md: Option<ClaudeAgentsMd>,
     pub hooks: Vec<HookSpec>,
     /// Subagent file name (`<name>.md`) → the file in the knowledge copy.
     pub agents: BTreeMap<String, PathBuf>,
@@ -31,6 +41,15 @@ pub struct Desired {
 }
 
 impl Desired {
+    /// Where a global skill goes; the default when it isn't listed or isn't a valid name.
+    #[must_use]
+    pub fn placement(&self, name: &str) -> Placement {
+        Slug::new(name)
+            .ok()
+            .and_then(|s| self.placements.global.get(&s).cloned())
+            .unwrap_or_default()
+    }
+
     /// The hooks one harness should get.
     #[must_use]
     pub fn hooks_for(&self, kind: HarnessKind) -> Vec<ManagedHook> {
@@ -44,16 +63,26 @@ impl Desired {
 
 /// Folders under `dir` that hold a `SKILL.md`, by name. Names that aren't slugs are
 /// reported and skipped.
-fn skills_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf> {
+pub(crate) fn skills_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf> {
     let mut out = BTreeMap::new();
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
         let path = entry.path();
-        // Only real folders: a link in a repo could point anywhere.
-        let is_dir = fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
-        if name.starts_with('.') || !is_dir || !path.join("SKILL.md").is_file() {
+        if name.starts_with('.') {
+            continue;
+        }
+        let link = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        let has_entry = fs::symlink_metadata(path.join("SKILL.md")).is_ok();
+        if !link && (!atlas_fs::library::is_real_dir(&path) || !has_entry) {
+            // Not a skill at all (a stray file or a folder without SKILL.md).
+            continue;
+        }
+        // The installable rule (atlas-fs): a real folder whose files and links all stay
+        // inside it.
+        if let Err(why) = atlas_fs::library::installable_folder(&path, "SKILL.md") {
+            problems.push(format!("skill {name} skipped: {why}"));
             continue;
         }
         if Slug::new(name.as_str()).is_err() {
@@ -82,9 +111,8 @@ fn agents_in(dir: &Path, problems: &mut Vec<String>) -> BTreeMap<String, PathBuf
             continue;
         }
         let path = entry.path();
-        // Only real files: a link in a repo could point anywhere.
-        if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
-            problems.push(format!("subagent {name} skipped: it isn't a regular file"));
+        if let Err(why) = atlas_fs::library::installable_file(&path, dir) {
+            problems.push(format!("subagent {name} skipped: {why}"));
             continue;
         }
         if Slug::new(stem).is_err() {
@@ -109,31 +137,13 @@ fn is_executable(_: &fs::Metadata) -> bool {
     true
 }
 
-/// The first symbolic link under `dir` (not following any), relative to it.
-fn first_link(dir: &Path, rel: &Path) -> Option<PathBuf> {
-    let mut entries: Vec<_> = fs::read_dir(dir.join(rel)).ok()?.flatten().collect();
-    entries.sort_by_key(fs::DirEntry::file_name);
-    for entry in entries {
-        let path = rel.join(entry.file_name());
-        let kind = entry.file_type().ok()?;
-        if kind.is_symlink() {
-            return Some(path);
-        }
-        if kind.is_dir()
-            && let Some(found) = first_link(dir, &path)
-        {
-            return Some(found);
-        }
-    }
-    None
-}
-
 fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
     let slug = Slug::new(name).map_err(|e| e.to_string())?;
     let file = dir.join("hook.toml");
-    let meta = fs::symlink_metadata(&file).map_err(|e| format!("no hook.toml ({e})"))?;
-    if !meta.is_file() || meta.len() > MAX_HOOK_TOML {
-        return Err("hook.toml isn't a small regular file".to_owned());
+    atlas_fs::library::installable_file(&file, dir)
+        .map_err(|why| format!("its hook.toml: {why}"))?;
+    if fs::metadata(&file).map_or(true, |m| m.len() > MAX_HOOK_TOML) {
+        return Err("hook.toml is larger than 64 KiB".to_owned());
     }
     let text = fs::read_to_string(&file).map_err(|e| e.to_string())?;
     let manifest: HookManifest = toml::from_str(&text).map_err(|e| e.message().to_owned())?;
@@ -154,8 +164,9 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
         return Err(format!("its script {run} is missing"));
     }
     // What runs must be exactly what the update shows: no file in the folder may point
-    // elsewhere, since a change there wouldn't look like a change to this hook.
-    if let Some(link) = first_link(dir, Path::new("")) {
+    // elsewhere, even inside it, since a change there wouldn't look like a change to this
+    // hook (the strict form of the installable rule in atlas_fs::library).
+    if let Some(link) = atlas_fs::library::links_in(dir)?.first() {
         return Err(format!(
             "its folder holds a link ({}), so machines will skip this hook",
             link.display()
@@ -173,6 +184,7 @@ fn hook(dir: &Path, name: &str) -> Result<HookSpec, String> {
             matcher: manifest.matcher,
             script: script.to_string_lossy().into_owned(),
             timeout: manifest.timeout,
+            replaces: manifest.replaces,
         },
         harnesses: manifest.harnesses,
     })
@@ -202,6 +214,24 @@ pub fn read(knowledge: Option<&Path>, public_skills: Option<&Path>) -> Desired {
     let Some(knowledge) = knowledge else {
         return d;
     };
+    // One reader for the whole file, skills and instructions alike: only a missing file
+    // means the defaults; anything else wrong changes no skill link, switch or setting.
+    match atlas_fs::library::read_placements(knowledge) {
+        Ok((placements, _)) => {
+            d.claude_agents_md = placements.instructions.claude_reads_agents_md;
+            d.placements = placements;
+        }
+        Err(e) => {
+            d.placements_invalid = true;
+            let why = match e {
+                LibraryError::Invalid(_) | LibraryError::Symlink(_) => e.to_string(),
+                other => format!("{PLACEMENTS_FILE} can't be read: {other}"),
+            };
+            d.problems.push(format!(
+                "{why}; no skill links, switches or Claude Code setting change until it is fixed"
+            ));
+        }
+    }
     let agents = knowledge.join("AGENTS.md");
     if fs::symlink_metadata(&agents).is_ok_and(|m| m.is_file()) {
         d.instructions = Some(agents);

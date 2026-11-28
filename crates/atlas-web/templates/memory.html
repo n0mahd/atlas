@@ -30,10 +30,9 @@
     <ul class="rows">
       {% for r in v.rows %}
       <li>
-        <a class="row" href="{{ r.href }}">
+        <a class="row" href="{{ r.href }}"{% if !r.description.is_empty() %} title="{{ r.description }}"{% endif %}>
           <span class="row-main">
             <span class="row-name">{{ r.name }}</span>
-            <span class="row-desc">{{ r.description }}</span>
           </span>
           {% if !r.host.is_empty() %}<span class="row-meta">{{ r.host }}</span>{% endif %}
           <span class="row-kind {{ r.kind_class }}">{{ r.kind }}</span>
@@ -44,5 +43,6 @@
     </ul>
     {% endif %}
   </section>
+  {% include "outside_memory.html" %}
 </div>
 {% endblock %}

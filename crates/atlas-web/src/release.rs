@@ -5,7 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use atlas_core::kernel::TreeHash;
-use atlas_core::release::{CommitId, FORMAT, Manifest, OwnerKey, SignedRelease, Source, SourceId};
+use atlas_core::release::{
+    CommitId, FORMAT, Manifest, OwnerKey, ProjectRef, SignedRelease, Source, SourceId,
+    without_credentials,
+};
 use atlas_fs::Sources;
 
 /// A repo left out of an update, and why.
@@ -17,7 +20,10 @@ pub struct Skipped {
 
 /// Builds the next manifest from the sources machines use (Knowledge and public skills),
 /// each pinned at its upstream's commit: that is what a machine can fetch. Project repos
-/// stay out, because atlasd doesn't distribute them.
+/// aren't pinned, because atlasd doesn't distribute them; each is named with its remote
+/// (a user name taken out of http(s) addresses) so machines can find their own checkouts,
+/// sorted by name so the signed bytes don't depend on the order projects were registered
+/// in. A project whose remote holds a password or token is left out with a reason.
 ///
 /// # Errors
 /// A sentence for the owner when a source's remote address holds a password or token:
@@ -58,6 +64,21 @@ pub fn build(
             }),
         }
     }
+    let mut projects: Vec<ProjectRef> = Vec::new();
+    for p in &sources.projects {
+        match project_remote(&p.root) {
+            Ok(remote) => projects.push(ProjectRef {
+                name: p.name.clone(),
+                remote,
+            }),
+            Err(reason) => skipped.push(Skipped {
+                source: p.name.to_string(),
+                reason,
+            }),
+        }
+    }
+    projects.sort();
+    projects.dedup_by(|a, b| a.name == b.name);
     let manifest = Manifest {
         format: FORMAT,
         number,
@@ -65,35 +86,20 @@ pub fn build(
         hub: hub.to_owned(),
         sources: pinned,
         owner_keys,
+        projects,
     };
     Ok((manifest, skipped))
 }
 
-/// The remote as machines may see it. A user name alone is dropped from `http(s)` addresses
-/// (it may be a token) and kept for SSH, which needs it. None when the address holds a
-/// password or token (`user:secret@`), which must never go into an update.
-fn without_credentials(remote: &str) -> Option<String> {
-    let Some((scheme, rest)) = remote.split_once("://") else {
-        // Paths and scp-style `git@host:path` carry no password.
-        return Some(remote.to_owned());
-    };
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let (authority, path) = rest.split_at(authority_end);
-    let Some((userinfo, host)) = authority.rsplit_once('@') else {
-        return Some(remote.to_owned());
-    };
-    if userinfo.contains(':') {
-        return None;
-    }
-    let ssh = matches!(
-        scheme.to_ascii_lowercase().as_str(),
-        "ssh" | "git+ssh" | "ssh+git"
-    );
-    if ssh {
-        Some(remote.to_owned())
-    } else {
-        Some(format!("{scheme}://{host}{path}"))
-    }
+fn project_remote(root: &Path) -> Result<String, String> {
+    let repo = atlas_git::Repo::open(root).map_err(|e| e.to_string())?;
+    let remote = repo
+        .remote_url()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "has no git remote, so machines can't find their checkouts".to_owned())?;
+    without_credentials(&remote).ok_or_else(|| {
+        "its remote address contains a password or token, so it was left out; remove it from the remote URL".to_owned()
+    })
 }
 
 /// The name the UI uses for a source.
@@ -218,6 +224,53 @@ mod tests {
     }
 
     #[test]
+    fn the_signed_bytes_are_the_same_whatever_order_projects_were_registered_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut projects = Vec::new();
+        for name in ["zoo", "atlas", "shop"] {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let run = |args: &[&str]| {
+                let ok = std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&dir)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success();
+                assert!(ok, "git {args:?}");
+            };
+            run(&["init", "-q"]);
+            run(&[
+                "remote",
+                "add",
+                "origin",
+                &format!("git@git.example:o/{name}.git"),
+            ]);
+            projects.push(atlas_fs::Project {
+                name: atlas_core::kernel::Slug::new(name).unwrap(),
+                root: dir,
+            });
+        }
+        let bytes = |projects: Vec<atlas_fs::Project>| {
+            let sources = Sources {
+                home: tmp.path().into(),
+                knowledge: tmp.path().join("missing"),
+                public_skills: None,
+                projects,
+            };
+            serde_json::to_vec(&build(&sources, 7, "https://hub", Vec::new(), 5).unwrap().0)
+                .unwrap()
+        };
+        let one = bytes(projects.clone());
+        projects.reverse();
+        assert_eq!(bytes(projects), one);
+        let m: Manifest = serde_json::from_slice(&one).unwrap();
+        let names: Vec<&str> = m.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["atlas", "shop", "zoo"]);
+    }
+
+    #[test]
     fn remotes_go_out_without_credentials() {
         assert_eq!(
             without_credentials("https://user:token@host/repo.git"),
@@ -307,17 +360,34 @@ mod tests {
             public_skills: None,
             projects: vec![atlas_fs::Project {
                 name: atlas_core::kernel::Slug::new("shop").unwrap(),
-                root: shop,
+                root: shop.clone(),
             }],
         };
         let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
-        assert_eq!(m.sources, Vec::new(), "projects never go in");
-        assert_eq!(skipped.len(), 1);
+        assert_eq!(m.sources, Vec::new(), "projects are never pinned");
+        assert_eq!(m.projects, Vec::new());
+        assert_eq!(skipped.len(), 2);
         assert!(skipped[0].reason.contains("no git remote"));
+        assert_eq!(skipped[1].source, "shop");
+        assert!(
+            skipped[1].reason.contains("can't find their checkouts"),
+            "{skipped:?}"
+        );
 
         let bare = tmp.path().join("k.git");
         git(tmp.path(), &["init", "-q", "--bare", "k.git"]);
         git(&k, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        // A token alone in an https address is taken out; a user:password pair would
+        // leave the project out instead (see project_remote).
+        git(
+            &shop,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://tok@git.example/o/shop.git",
+            ],
+        );
         let (_, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert!(skipped[0].reason.contains("isn't pushed"), "{skipped:?}");
 
@@ -326,6 +396,14 @@ mod tests {
         git(&k, &["commit", "-q", "--allow-empty", "-m", "local only"]);
         let (m, skipped) = build(&sources, 1, "https://hub", Vec::new(), 0).unwrap();
         assert_eq!(skipped, Vec::new());
+        assert_eq!(
+            m.projects,
+            [ProjectRef {
+                name: atlas_core::kernel::Slug::new("shop").unwrap(),
+                remote: "https://git.example/o/shop.git".into(),
+            }],
+            "named with its remote, never its token, and not pinned"
+        );
         assert_eq!(m.sources.len(), 1);
         assert_eq!(m.sources[0].id, SourceId::Knowledge);
         assert_eq!(m.sources[0].remote, bare.to_str().unwrap());

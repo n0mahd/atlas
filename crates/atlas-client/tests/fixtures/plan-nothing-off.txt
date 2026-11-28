@@ -1,0 +1,87 @@
+remove link ~/.claude/skills/retired (it pointed at ~/.local/share/atlas/sources/knowledge/skills/retired)
+link ~/.claude/skills/gamma → ~/.local/share/atlas/sources/knowledge/skills/gamma
+link ~/.claude/skills/moved → ~/.local/share/atlas/sources/knowledge/skills/moved
+repoint ~/.agents/skills/moved from /R/old/moved to ~/.local/share/atlas/sources/knowledge/skills/moved
+link ~/.agents/skills/alpha → ~/.local/share/atlas/sources/knowledge/skills/alpha
+link ~/.agents/skills/beta → ~/.local/share/atlas/sources/public-skills/beta
+link ~/.agents/skills/gamma → ~/.local/share/atlas/sources/knowledge/skills/gamma
+link ~/.agents/skills/kept → ~/.local/share/atlas/sources/knowledge/skills/kept
+create folder ~/.gemini/config/skills
+link ~/.gemini/config/skills/alpha → ~/.local/share/atlas/sources/knowledge/skills/alpha
+link ~/.gemini/config/skills/beta → ~/.local/share/atlas/sources/public-skills/beta
+link ~/.gemini/config/skills/gamma → ~/.local/share/atlas/sources/knowledge/skills/gamma
+link ~/.gemini/config/skills/kept → ~/.local/share/atlas/sources/knowledge/skills/kept
+link ~/.gemini/config/skills/moved → ~/.local/share/atlas/sources/knowledge/skills/moved
+write ~/.claude/CLAUDE.md (add the import of the global instructions)
+    | # Mine
+    | @/R/home/.local/share/atlas/sources/knowledge/AGENTS.md
+keep a copy in ~/.local/state/atlas-client/replaced and write ~/.claude/settings.json (update Atlas's hooks)
+    | {
+    |   "theme": "dark",
+    |   "hooks": {
+    |     "Stop": [
+    |       {
+    |         "hooks": [
+    |           {
+    |             "type": "command",
+    |             "command": "mine.sh"
+    |           }
+    |         ]
+    |       }
+    |     ],
+    |     "PreToolUse": [
+    |       {
+    |         "matcher": "Bash",
+    |         "hooks": [
+    |           {
+    |             "type": "command",
+    |             "command": "/R/home/.local/share/atlas/sources/knowledge/hooks/guard/run.sh # atlas:guard"
+    |           }
+    |         ]
+    |       }
+    |     ]
+    |   }
+    | }
+link ~/.codex/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
+write ~/.codex/hooks.json (update Atlas's hooks)
+    | {
+    |   "hooks": {
+    |     "PreToolUse": [
+    |       {
+    |         "matcher": "Bash",
+    |         "hooks": [
+    |           {
+    |             "type": "command",
+    |             "command": "/R/home/.local/share/atlas/sources/knowledge/hooks/guard/run.sh # atlas:guard"
+    |           }
+    |         ]
+    |       }
+    |     ]
+    |   }
+    | }
+link ~/.pi/agent/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
+write ~/.gemini/config/hooks.json (update Atlas's hooks)
+    | {
+    |   "atlas:guard": {
+    |     "PreToolUse": [
+    |       {
+    |         "matcher": "Bash",
+    |         "hooks": [
+    |           {
+    |             "type": "command",
+    |             "command": "/R/home/.local/share/atlas/sources/knowledge/hooks/guard/run.sh"
+    |           }
+    |         ]
+    |       }
+    |     ]
+    |   }
+    | }
+link ~/.config/amp/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
+link ~/.config/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
+link ~/.config/muse/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
+link ~/.grok/AGENTS.md → ~/.local/share/atlas/sources/knowledge/AGENTS.md
+conflict: ~/.claude/skills/alpha is your own folder or file, so Atlas didn't link its skill alpha there
+conflict: ~/.claude/skills/beta links to /opt/elsewhere/beta, which Atlas doesn't manage, so it was left alone
+conflict: ~/.pi/agent/skills is a link to another folder; Atlas leaves it and its skills alone
+conflict: ~/.config/opencode/AGENTS.md has text that isn't in the global instructions, so Atlas kept it and didn't link them there (Use Global instead on the hub's Instructions page adds it to them first)
+conflict: ~/.gemini/config/AGENTS.md links to /opt/dotfiles/AGENTS.md, which Atlas doesn't manage, so it was left alone

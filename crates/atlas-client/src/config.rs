@@ -34,6 +34,9 @@ pub struct Paths {
     pub state: PathBuf,
     /// `~/.local/share/atlas/sources`: one local copy per release source.
     pub sources: PathBuf,
+    /// `~/.local/state/atlas-client/replaced`: copies of what atlasd replaced or removed
+    /// when what took its place doesn't hold the same bytes, by UTC date ([`crate::keep`]).
+    pub replaced: PathBuf,
 }
 
 impl Paths {
@@ -45,6 +48,7 @@ impl Paths {
             cli: home.join(".config/atlas/cli.toml"),
             state: home.join(".local/state/atlas-client/state.json"),
             sources: home.join(".local/share/atlas/sources"),
+            replaced: home.join(".local/state/atlas-client/replaced"),
         }
     }
 }
@@ -101,6 +105,30 @@ pub struct Config {
     /// Links into them count as Atlas's, so atlasd may repoint them. `~/` is the home.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adopt: Vec<String>,
+    /// Folders whose direct children are the owner's project checkouts. `~/` is the home.
+    #[serde(default = "default_project_roots")]
+    pub project_roots: Vec<String>,
+    /// The owner's own checkout of the knowledge repo (such as `~/Knowledge`), which
+    /// Claude Code's per-repo memory folders link into, so new notes reach git through the
+    /// owner's sync. Unset: the first `adopt` folder inside such a checkout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_store: Option<String>,
+}
+
+/// Where project checkouts are looked for unless `client.toml` says otherwise.
+#[must_use]
+pub fn default_project_roots() -> Vec<String> {
+    vec!["~/Projects".to_owned()]
+}
+
+/// `~/` is the home; anything else must be absolute.
+fn expand(home: &Path, path: &str) -> Option<PathBuf> {
+    let p = match path.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None if path == "~" => home.to_path_buf(),
+        None => PathBuf::from(path),
+    };
+    p.is_absolute().then_some(p)
 }
 
 impl fmt::Debug for Config {
@@ -111,6 +139,8 @@ impl fmt::Debug for Config {
             .field("token", &"<hidden>")
             .field("machine", &self.machine)
             .field("adopt", &self.adopt)
+            .field("project_roots", &self.project_roots)
+            .field("memory_store", &self.memory_store)
             .finish()
     }
 }
@@ -119,14 +149,22 @@ impl Config {
     /// The `adopt` folders as absolute paths.
     #[must_use]
     pub fn adopt_roots(&self, home: &Path) -> Vec<PathBuf> {
-        self.adopt
+        self.adopt.iter().filter_map(|a| expand(home, a)).collect()
+    }
+
+    /// The `project_roots` folders as absolute paths.
+    #[must_use]
+    pub fn project_root_paths(&self, home: &Path) -> Vec<PathBuf> {
+        self.project_roots
             .iter()
-            .map(|a| match a.strip_prefix("~/") {
-                Some(rest) => home.join(rest),
-                None => PathBuf::from(a),
-            })
-            .filter(|p| p.is_absolute())
+            .filter_map(|a| expand(home, a))
             .collect()
+    }
+
+    /// `memory_store` as an absolute path.
+    #[must_use]
+    pub fn memory_store_path(&self, home: &Path) -> Option<PathBuf> {
+        self.memory_store.as_deref().and_then(|m| expand(home, m))
     }
 
     /// # Errors

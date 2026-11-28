@@ -83,9 +83,14 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
+/// Writes a file; `*.sh` files are made executable, as hook scripts are committed.
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
+    if path.extension().is_some_and(|e| e == "sh") {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }
 
 /// A repo made of `files`, committed; returns it as a release source.
@@ -166,6 +171,8 @@ impl World {
                 token: "t".into(),
                 machine: "box".into(),
                 adopt: vec![adopt.to_string_lossy().into_owned()],
+                project_roots: atlas_client::config::default_project_roots(),
+                memory_store: None,
             },
             state: State {
                 owner_keys: vec![key.owner()],
@@ -192,6 +199,7 @@ impl World {
             hub: HUB.into(),
             sources: self.sources.clone(),
             owner_keys: keys.iter().map(|k| k.owner()).collect(),
+            projects: Vec::new(),
         }
     }
 

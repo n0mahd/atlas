@@ -8,19 +8,21 @@
   <aside class="aside">
     <dl class="facts">
       <dt>Lives in</dt><dd>{{ v.lives_in }}</dd>
-      <dt>File</dt><dd class="mono">{{ v.path }}</dd>
-      {% if let Some(d) = v.declared_name %}<dt>Named</dt><dd class="warn">“{{ d }}” in its frontmatter</dd>{% endif %}
+      <dt>File</dt><dd class="mono">{{ crate::views::breakable(v.path)|safe }}</dd>
+      {% if let Some(d) = v.declared_name %}<dt>Named</dt><dd class="warn">“{{ d }}” in the skill's header</dd>{% endif %}
     </dl>
-    <h2 class="aside-head">Agents</h2>
-    <ul class="agent-states">
-      {% for a in v.agents %}<li class="agent-state {{ a.class }}" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</li>{% endfor %}
-    </ul>
-    {% for a in v.agents %}{% if a.needs_words() %}<p class="agent-note warn">{{ a.icon|safe }}{{ a.state }}</p>{% endif %}{% endfor %}
-    {% if !v.files.is_empty() %}
-    <h2 class="aside-head">Files</h2>
-    <pre class="ink-block">{% for f in v.files %}{{ f }}
-{% endfor %}</pre>
+    <h2 class="aside-head">Who gets it</h2>
+    {% include "skill_place.html" %}
+    {% if !differs.is_empty() %}
+    <details class="machine-diff">
+      <summary>On this machine: {{ differs|join("; ") }}</summary>
+      <ul class="agent-states">
+        {% for a in v.agents %}<li class="agent-state {{ a.class }}"><span class="agent-state-mark" role="img" aria-label="{{ a.name }}: {{ a.state }}" title="{{ a.name }}: {{ a.state }}">{{ a.icon|safe }}{{ a.badge()|safe }}</span></li>{% endfor %}
+      </ul>
+    </details>
     {% endif %}
+    {% include "skill_files.html" %}
+    {% if page.signed_in %}{% if let Some(href) = update_href %}<a class="link-cap" href="{{ href }}">Check for updates</a>{% endif %}{% endif %}
     <a class="link-cap" href="/skills">All skills</a>
   </aside>
 </div>

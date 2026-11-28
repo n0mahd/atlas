@@ -66,6 +66,108 @@ fn open(root: &Path) -> Result<Dir, LibraryError> {
     Ok(Dir::open_ambient_dir(root, ambient_authority())?)
 }
 
+/// Whether `path` is a real folder, not a link to one (the link itself is looked at).
+/// The one test for "a skill folder Atlas may read or count" everywhere.
+#[must_use]
+pub fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
+/// Whether `folder` holds a `SKILL.md` that is a regular file (not a link).
+#[must_use]
+pub fn has_skill_md(folder: &Path) -> bool {
+    std::fs::symlink_metadata(folder.join("SKILL.md")).is_ok_and(|m| m.is_file())
+}
+
+/// Whether a link at `link` resolves to somewhere inside `within` (both looked up on
+/// disk). A broken link resolves nowhere, so it doesn't.
+fn resolves_inside(link: &Path, within: &Path) -> bool {
+    let (Ok(target), Ok(root)) = (std::fs::canonicalize(link), std::fs::canonicalize(within))
+    else {
+        return false;
+    };
+    target.starts_with(&root)
+}
+
+/// The rule for anything Atlas installs from a repo (a skill folder, a subagent file, a
+/// hook's manifest and script): a regular file, or a link that resolves inside `within`,
+/// the item's own folder. `Err` says why not, for the machine's report.
+///
+/// # Errors
+/// Missing, not a regular file, or a link that leads out of `within`.
+pub fn installable_file(file: &Path, within: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(file) {
+        Err(_) => Err("it is missing".to_owned()),
+        Ok(m) if m.file_type().is_symlink() => {
+            if resolves_inside(file, within) && std::fs::metadata(file).is_ok_and(|m| m.is_file()) {
+                Ok(())
+            } else {
+                Err("it is a link to somewhere else".to_owned())
+            }
+        }
+        Ok(m) if m.is_file() => Ok(()),
+        Ok(_) => Err("it isn't a regular file".to_owned()),
+    }
+}
+
+/// The same rule for a whole folder Atlas links agents to (a skill): a real folder whose
+/// `required` file passes [`installable_file`], and no link anywhere inside it that leads
+/// out of the folder, since agents read through the folder's links. Bounded like
+/// [`read_tree`].
+///
+/// # Errors
+/// The first reason the folder can't be installed, naming the entry.
+pub fn installable_folder(folder: &Path, required: &str) -> Result<(), String> {
+    if !is_real_dir(folder) {
+        return Err("it is a link to somewhere else".to_owned());
+    }
+    installable_file(&folder.join(required), folder)
+        .map_err(|why| format!("its {required}: {why}"))?;
+    if let Some(rel) = links_in(folder)?
+        .into_iter()
+        .find(|rel| !resolves_inside(&folder.join(rel), folder))
+    {
+        return Err(format!(
+            "{} inside it is a link to somewhere else",
+            rel.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Every link under `folder` (none followed), relative to it, in name order; bounded
+/// like [`read_tree`]. Items whose content must be exactly what an update shows (hooks)
+/// refuse any of them; skills refuse those that lead out ([`installable_folder`]).
+///
+/// # Errors
+/// The folder can't be listed, or holds too many entries.
+pub fn links_in(folder: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![PathBuf::new()];
+    let mut seen = 0_usize;
+    while let Some(rel) = stack.pop() {
+        let entries: Vec<_> = std::fs::read_dir(folder.join(&rel))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        for entry in entries {
+            seen += 1;
+            if seen > MAX_ENTRIES {
+                return Err("it holds too many files".to_owned());
+            }
+            let path = rel.join(entry.file_name());
+            let ft = entry.file_type().map_err(|e| e.to_string())?;
+            if ft.is_symlink() {
+                out.push(path);
+            } else if ft.is_dir() && entry.file_name() != ".git" {
+                stack.push(path);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 /// One regular file of a folder, relative to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeFile {
@@ -255,6 +357,68 @@ fn refuse_links_on_the_way(dir: &Dir, rel: &Path) -> Result<(), LibraryError> {
     Ok(())
 }
 
+/// What a path inside a repo held before a change, kept so a failed change can be put
+/// back without git (whose index may be locked when the commit failed).
+#[derive(Clone, Debug)]
+pub enum Saved {
+    Missing,
+    File { bytes: Vec<u8>, executable: bool },
+    Folder(Tree),
+}
+
+/// Keeps what `rel` inside `root` holds now, within the [`read_tree`] limits. A link is
+/// refused: changes never go through one.
+///
+/// # Errors
+/// `rel` escapes or is a link, is too big, or can't be read.
+pub fn save_path(root: &Path, rel: &str) -> Result<Saved, LibraryError> {
+    let rel_p = check_rel(rel)?;
+    let dir = open(root)?;
+    refuse_links_on_the_way(&dir, rel_p)?;
+    let meta = match dir.symlink_metadata(rel_p) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Saved::Missing),
+        Err(e) => return Err(e.into()),
+        Ok(m) => m,
+    };
+    if meta.is_dir() {
+        return Ok(Saved::Folder(read_tree(&root.join(rel_p))?));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(LibraryError::TooBig);
+    }
+    let mut bytes = Vec::new();
+    let file = dir.open(rel_p)?;
+    let executable = file.metadata()?.permissions().mode() & 0o111 != 0;
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok(Saved::File { bytes, executable })
+}
+
+/// Puts `rel` back to exactly what [`save_path`] kept, whatever is there now.
+///
+/// # Errors
+/// A write or removal fails.
+pub fn put_back(root: &Path, rel: &str, saved: &Saved) -> Result<(), LibraryError> {
+    let rel_p = check_rel(rel)?;
+    let dir = open(root)?;
+    refuse_links_on_the_way(&dir, rel_p.parent().unwrap_or(Path::new("")))?;
+    match dir.symlink_metadata(rel_p) {
+        Ok(m) if m.is_dir() && !m.file_type().is_symlink() => dir.remove_dir_all(rel_p)?,
+        Ok(_) => dir.remove_file(rel_p)?,
+        Err(_) => {}
+    }
+    match saved {
+        Saved::Missing => Ok(()),
+        Saved::File { bytes, executable } => {
+            write_file(root, rel, bytes)?;
+            if *executable {
+                dir.set_permissions(rel_p, Permissions::from_mode(0o755))?;
+            }
+            Ok(())
+        }
+        Saved::Folder(tree) => write_tree(root, rel, tree),
+    }
+}
+
 /// Deletes folder `rel` inside `root` and everything in it. Refuses a link, so a
 /// deletion can't reach outside the repo.
 ///
@@ -388,6 +552,69 @@ pub fn write_placements(
     Ok(PLACEMENTS_FILE)
 }
 
+/// Adds `patterns` (such as `/CLAUDE.local.md`) to Atlas's block in `<root>/.git/info/exclude`
+/// (`atlas_harness::instructions::exclude_with`), keeping every other line. The only write
+/// Atlas makes inside `.git`: it touches nothing else there, and refuses a `.git` that is a
+/// file (a worktree) or a link anywhere on the way. Returns whether the file changed.
+///
+/// # Errors
+/// No `.git` folder, a link on the way, an exclude file over 1 MiB, or the write fails.
+pub fn add_to_git_exclude(root: &Path, patterns: &[&str]) -> Result<bool, LibraryError> {
+    const MAX_EXCLUDE: u64 = 1024 * 1024;
+    let dir = open(root)?;
+    match dir.symlink_metadata(".git") {
+        Ok(m) if m.is_dir() => {}
+        Ok(m) if m.file_type().is_symlink() => return Err(LibraryError::Symlink(".git".into())),
+        _ => {
+            return Err(LibraryError::Io(
+                "this checkout has no .git folder (a worktree keeps it elsewhere)".to_owned(),
+            ));
+        }
+    }
+    let git = dir.open_dir(".git")?;
+    match git.symlink_metadata("info") {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(LibraryError::Symlink(".git/info".into())),
+        Err(_) => git.create_dir("info")?,
+    }
+    let info = git.open_dir("info")?;
+    let current = match info.symlink_metadata("exclude") {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+        Ok(m) if !m.is_file() => return Err(LibraryError::Symlink(".git/info/exclude".into())),
+        Ok(_) => {
+            let mut text = String::new();
+            info.open("exclude")?
+                .take(MAX_EXCLUDE + 1)
+                .read_to_string(&mut text)?;
+            if text.len() as u64 > MAX_EXCLUDE {
+                return Err(LibraryError::TooBig);
+            }
+            text
+        }
+    };
+    let next = atlas_harness::instructions::exclude_with(&current, patterns);
+    if next == current {
+        return Ok(false);
+    }
+    let tmp = Path::new(".exclude.atlas-tmp");
+    remove_stale(&info, tmp)?;
+    let result = (|| -> Result<(), LibraryError> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let mut file = info.open_with(tmp, &options)?;
+        file.write_all(next.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        info.rename(tmp, &info, "exclude")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = info.remove_file(tmp);
+    }
+    result.map(|()| true)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -506,6 +733,26 @@ mod tests {
             fs::read_to_string(repo.path().join("notes.md")).unwrap(),
             "new\n"
         );
+    }
+
+    #[test]
+    fn the_exclude_block_is_the_only_write_inside_git() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(
+            add_to_git_exclude(repo.path(), &["/CLAUDE.local.md"]).is_err(),
+            "no .git"
+        );
+        fs::create_dir_all(repo.path().join(".git/info")).unwrap();
+        fs::write(repo.path().join(".git/info/exclude"), "*.swp\n").unwrap();
+        assert!(add_to_git_exclude(repo.path(), &["/CLAUDE.local.md"]).unwrap());
+        assert!(!add_to_git_exclude(repo.path(), &["/CLAUDE.local.md"]).unwrap());
+        assert_eq!(
+            fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap(),
+            "*.swp\n# atlas:begin\n/CLAUDE.local.md\n# atlas:end\n"
+        );
+        let worktree = tempfile::tempdir().unwrap();
+        fs::write(worktree.path().join(".git"), "gitdir: /elsewhere\n").unwrap();
+        assert!(add_to_git_exclude(worktree.path(), &["/x"]).is_err());
     }
 
     #[test]

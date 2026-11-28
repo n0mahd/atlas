@@ -137,8 +137,16 @@ fn finish(
     out
 }
 
+/// One bit per agent kind, for the search's bitmasks.
+const fn bit(kind: HarnessKind) -> u16 {
+    1 << kind as u16
+}
+
 /// Tries every set of folders (there are at most a dozen distinct ones) and returns the
 /// best that reaches every wanted agent, or `None` when there are too many to try.
+///
+/// Readers are bitmasks over agent kinds, worked out once per folder, so trying a set
+/// allocates nothing; a [`Solved`] is built only for a set that beats the best so far.
 fn search(
     present: &[&Layout],
     wanted: &BTreeSet<HarnessKind>,
@@ -157,42 +165,74 @@ fn search(
     if dirs.len() > 16 {
         return None;
     }
-    let needs: Vec<&Layout> = present
-        .iter()
-        .copied()
-        .filter(|l| wanted.contains(&l.kind) && !reach.dirs(l).is_empty())
-        .collect();
-    let mut best: Option<((usize, usize, usize, usize), Solved)> = None;
-    for mask in 0_u32..(1 << dirs.len()) {
-        let chosen: Vec<&'static str> = dirs
+    let readers_of = |d: &str| {
+        present
             .iter()
-            .enumerate()
-            .filter(|(i, _)| mask & (1 << i) != 0)
-            .map(|(_, d)| *d)
-            .collect();
+            .filter(|l| reach.dirs(l).contains(&d))
+            .fold(0_u16, |m, l| m | bit(l.kind))
+    };
+    let dir_readers: Vec<u16> = dirs.iter().map(|d| readers_of(d)).collect();
+    let own_readers = own.iter().fold(0_u16, |m, d| m | readers_of(d));
+    let unwanted = !wanted.iter().fold(0_u16, |m, k| m | bit(*k));
+    let switch = present
+        .iter()
+        .filter(|l| switchable(l.kind))
+        .fold(0_u16, |m, l| m | bit(l.kind));
+    // Per wanted agent with folders: which of `dirs` it reads, and how many `own` ones.
+    let needs: Vec<(u32, u32)> = present
+        .iter()
+        .filter(|l| wanted.contains(&l.kind) && !reach.dirs(l).is_empty())
+        .map(|l| {
+            let mut mask = 0_u32;
+            let mut owned = 0;
+            for d in reach.dirs(l) {
+                match dirs.iter().position(|x| x == d) {
+                    Some(i) => mask |= 1 << i,
+                    None => owned += u32::from(own.contains(d)),
+                }
+            }
+            (mask, owned)
+        })
+        .collect();
+
+    let mut best: Option<((u32, u32, u32, u32), u32)> = None;
+    for mask in 0_u32..(1 << dirs.len()) {
         let mut twice = 0;
         let mut all = true;
-        for l in &needs {
-            let seen = reach
-                .dirs(l)
-                .iter()
-                .filter(|d| chosen.contains(d) || own.contains(d))
-                .count();
+        for &(reads, owned) in &needs {
+            let seen = (reads & mask).count_ones() + owned;
             all &= seen > 0;
             twice += seen.saturating_sub(1);
         }
         if !all {
             continue;
         }
-        let n = chosen.len();
-        let solved = finish(chosen, present, wanted, reach, own, switchable);
-        let score = (solved.stuck_on.len(), solved.switch_off.len(), twice, n);
+        let reached = dir_readers
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .fold(own_readers, |m, (_, r)| m | r)
+            & unwanted;
+        let score = (
+            (reached & !switch).count_ones(),
+            (reached & switch).count_ones(),
+            twice,
+            mask.count_ones(),
+        );
         // Masks run in layout order, so on a tie the earlier folders win.
-        if best.as_ref().is_none_or(|(s, _)| score < *s) {
-            best = Some((score, solved));
+        if best.is_none_or(|(s, _)| score < s) {
+            best = Some((score, mask));
         }
     }
-    best.map(|(_, s)| s)
+    best.map(|(_, mask)| {
+        let chosen = dirs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .map(|(_, d)| *d)
+            .collect();
+        finish(chosen, present, wanted, reach, own, switchable)
+    })
 }
 
 fn simple_pass(
@@ -329,6 +369,64 @@ mod tests {
         assert_eq!(got.stuck_on, BTreeSet::from([Grok]));
     }
 
+    /// The search as first written, building every candidate: the oracle the bitmask
+    /// search must match exactly.
+    fn reference_search(
+        present: &[&Layout],
+        wanted: &BTreeSet<HarnessKind>,
+        reach: Reach,
+        own: &[&str],
+        switchable: &impl Fn(HarnessKind) -> bool,
+    ) -> Option<Solved> {
+        let mut dirs: Vec<&'static str> = Vec::new();
+        for l in present {
+            for d in reach.dirs(l) {
+                if !dirs.contains(d) && !own.contains(d) {
+                    dirs.push(d);
+                }
+            }
+        }
+        if dirs.len() > 16 {
+            return None;
+        }
+        let needs: Vec<&Layout> = present
+            .iter()
+            .copied()
+            .filter(|l| wanted.contains(&l.kind) && !reach.dirs(l).is_empty())
+            .collect();
+        let mut best: Option<((usize, usize, usize, usize), Solved)> = None;
+        for mask in 0_u32..(1 << dirs.len()) {
+            let chosen: Vec<&'static str> = dirs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, d)| *d)
+                .collect();
+            let mut twice = 0;
+            let mut all = true;
+            for l in &needs {
+                let seen = reach
+                    .dirs(l)
+                    .iter()
+                    .filter(|d| chosen.contains(d) || own.contains(d))
+                    .count();
+                all &= seen > 0;
+                twice += seen.saturating_sub(1);
+            }
+            if !all {
+                continue;
+            }
+            let n = chosen.len();
+            let solved = finish(chosen, present, wanted, reach, own, switchable);
+            let score = (solved.stuck_on.len(), solved.switch_off.len(), twice, n);
+            // Masks run in layout order, so on a tie the earlier folders win.
+            if best.as_ref().is_none_or(|(s, _)| score < *s) {
+                best = Some((score, solved));
+            }
+        }
+        best.map(|(_, s)| s)
+    }
+
     #[test]
     fn every_wanted_agent_sees_it_and_no_better_choice_exists() {
         let agents: Vec<&Layout> = layouts()
@@ -343,7 +441,7 @@ mod tests {
         ];
         for (reach, own) in cases {
             for pmask in 0_u32..(1 << agents.len()) {
-                if pmask.count_ones() > 4 {
+                if pmask.count_ones() > 5 {
                     continue;
                 }
                 let p: Vec<&Layout> = agents
@@ -363,7 +461,17 @@ mod tests {
                     for k in &wanted {
                         assert!(got.sees(*k, &p, reach, own), "{k:?} misses it: {got:?}");
                     }
-                    if let Some(best) = search(&p, &wanted, reach, own, &switchable) {
+                    let best = search(&p, &wanted, reach, own, &switchable);
+                    // The oracle is slow; up to four agents keeps the test quick (it
+                    // matched over every set of all eight when the search was rewritten).
+                    if p.len() <= 4 {
+                        assert_eq!(
+                            best,
+                            reference_search(&p, &wanted, reach, own, &switchable),
+                            "{wanted:?} of {p:?}"
+                        );
+                    }
+                    if let Some(best) = best {
                         assert!(
                             (got.stuck_on.len(), got.switch_off.len())
                                 <= (best.stuck_on.len(), best.switch_off.len()),

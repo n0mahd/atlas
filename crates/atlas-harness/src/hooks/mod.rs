@@ -1,9 +1,9 @@
 //! Hook configs: Atlas's managed hooks rendered into each harness's own hook file.
 //!
 //! Every function here is pure: current bytes plus the desired hooks give a
-//! [`Change`]. Only entries Atlas wrote are touched; everything else in the file keeps
-//! its place and value. Running a function on its own output gives
-//! [`Change::Unchanged`].
+//! [`Change`](crate::Change). Only entries Atlas wrote are touched; everything else in
+//! the file keeps its place and value. Running a function on its own output gives
+//! [`Change::Unchanged`](crate::Change::Unchanged).
 //!
 //! - Claude Code (`~/.claude/settings.json`) and Codex (`~/.codex/hooks.json`) share
 //!   one shape: `hooks → event → [matcher group] → hooks → [handler]`. Atlas's
@@ -12,6 +12,10 @@
 //!   its own, so a user's groups are never edited, only stripped of Atlas handlers.
 //! - Antigravity (`~/.gemini/config/hooks.json`) names each hook at the top level,
 //!   so Atlas's are the keys starting with `atlas:`.
+//! - A hook brought into Atlas from a hand-made entry names that entry's command in
+//!   [`ManagedHook::replaces`]. Claude Code and Codex then drop the hand-made handler
+//!   when it is identical (same event, matcher, command and timeout); a group left empty
+//!   goes too. Antigravity's hooks aren't brought in, so its format has no such rule.
 
 mod antigravity;
 mod grouped;
@@ -19,8 +23,6 @@ mod grouped;
 use atlas_core::catalog::HookEvent;
 use atlas_core::kernel::Slug;
 use serde_json::{Map, Value};
-
-use crate::change::{Change, FormatError};
 
 pub use antigravity::{antigravity_event, antigravity_hooks};
 pub use grouped::{claude_event, claude_settings, codex_event, codex_hooks};
@@ -36,6 +38,11 @@ pub struct ManagedHook {
     pub script: String,
     /// Seconds before the harness gives up on it.
     pub timeout: Option<u32>,
+    /// The hand-made command this hook was brought into Atlas from. A hand-made handler
+    /// with exactly this command, under the same event and matcher and with the same
+    /// timeout, is removed where the hook is written, so it doesn't run twice. Nothing
+    /// else of the owner's is touched.
+    pub replaces: Option<String>,
 }
 
 /// What follows the command in a handler Atlas wrote: a shell comment, so the harness
@@ -79,43 +86,6 @@ fn handler(hook: &ManagedHook, command: String) -> Value {
     Value::Object(h)
 }
 
-/// Parses a JSON object file. A missing or blank file is an empty object.
-fn parse_object(current: Option<&[u8]>) -> Result<Map<String, Value>, FormatError> {
-    match current {
-        Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
-            match serde_json::from_slice(bytes)? {
-                Value::Object(map) => Ok(map),
-                _ => Err(shape("the top level", "an object")),
-            }
-        }
-        _ => Ok(Map::new()),
-    }
-}
-
-fn shape(at: &str, expected: &'static str) -> FormatError {
-    FormatError::UnexpectedShape {
-        at: at.to_owned(),
-        expected,
-    }
-}
-
-/// Compares the edited object with the original and renders the outcome: two-space
-/// JSON with a trailing newline, the layout the harnesses write themselves.
-fn finish(
-    original: &Map<String, Value>,
-    edited: &Map<String, Value>,
-) -> Result<Change, FormatError> {
-    if edited == original {
-        return Ok(Change::Unchanged);
-    }
-    if edited.is_empty() {
-        return Ok(Change::Remove);
-    }
-    let mut bytes = serde_json::to_vec_pretty(edited)?;
-    bytes.push(b'\n');
-    Ok(Change::Write(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +97,7 @@ mod tests {
             matcher: None,
             script: script.into(),
             timeout: None,
+            replaces: None,
         }
     }
 

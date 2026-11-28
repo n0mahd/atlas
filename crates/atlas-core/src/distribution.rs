@@ -144,6 +144,45 @@ pub struct HarnessReport {
     pub agents_from_atlas: u32,
 }
 
+/// What one outside skill entry is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutsideKind {
+    /// A real folder of its own.
+    Folder,
+    /// A link to a folder Atlas doesn't manage.
+    Link,
+    /// A link whose target is gone.
+    Broken,
+}
+
+/// A skill in an agent's folder on a machine that isn't Atlas's, so the hub can show
+/// what each machine has outside Atlas (decision 0027).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OutsideSkill {
+    pub name: String,
+    /// The entry's path, home shown as `~`.
+    pub path: String,
+    pub kind: OutsideKind,
+    /// For a link: where it points, as written in it (home shown as `~`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// `Tree::exact_digest` of the folder (through a link too), when it holds only plain
+    /// files and folders within the limits: equal digests are the same skill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// A copy atlasd kept of a file or folder before it replaced or removed it, because
+/// what took its place doesn't hold the same bytes. Copying it back restores it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KeptCopy {
+    /// What was replaced or removed, home shown as `~`.
+    pub original: String,
+    /// Where the copy is, home shown as `~`.
+    pub copy: String,
+}
+
 /// What a client tells the hub after each run.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Report {
@@ -154,6 +193,14 @@ pub struct Report {
     pub harnesses: Vec<HarnessReport>,
     /// Things the client couldn't do, in words.
     pub problems: Vec<String>,
+    /// Skills seen in the agents' home folders that aren't Atlas's, at most a few hundred.
+    /// Absent in reports from older clients.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outside: Vec<OutsideSkill>,
+    /// Copies kept this run of what atlasd replaced or removed. Absent in reports from
+    /// older clients.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<KeptCopy>,
 }
 
 // ---------------------------------------------------------------- hub ↔ admin CLI messages

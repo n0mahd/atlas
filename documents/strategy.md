@@ -114,6 +114,17 @@ Then the standing items:
   group in `atlas-web::review` when they land.
 - `atlas-web::change` checks each touched path with its own `git status`; a bulk change of
   hundreds of skills would want one batched status call. Fine for tens.
+- Per-agent skill switches rely on marks in each agent's file (`atlas:` keys in Claude
+  Code's and Pi's JSON, comments in Codex's TOML and OpenCode's JSONC). If an agent
+  rewrites its file and drops the mark (Claude Code's `/skills` menu rewriting
+  `settings.local.json`, OpenCode saving an `opencode.json`), Atlas's "off" entries read as
+  the owner's and stay off. Not yet checked against those rewrites; the fix would be
+  atlasd remembering what it wrote.
+- The rule for what may be installed from a repo is written twice over two inputs: atlasd
+  checks files on disk (`atlas_fs::library::{installable_file, installable_folder,
+  links_in}`), the hub's check before sending checks git tree entries (`atlas-web::review`).
+  They agree today by tests on each side; one pure verdict over a list of entries (path,
+  kind, mode, where a link leads) in `atlas-core` would let both use it.
 
 ## Open decisions (the owner's)
 - Should machines fetch each update's files from the hub instead of from a git remote?

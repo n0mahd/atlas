@@ -181,6 +181,22 @@ impl Writer {
         Ok(())
     }
 
+    /// A fresh signed-in session for the crate's HTTP tests, as `(cookie header, CSRF
+    /// token)`. Only with the `testing` feature, which the hub binary never enables.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn test_session(&self) -> (String, String) {
+        let token = self.auth.sign_in("test-key", None);
+        let cookie = format!("{}={token}", auth::COOKIE);
+        let mut h = HeaderMap::new();
+        if let Ok(v) = cookie.parse() {
+            h.insert(axum::http::header::COOKIE, v);
+        }
+        let csrf = self.auth.session(&h).map_or_else(String::new, |s| s.csrf);
+        (cookie, csrf)
+    }
+
     /// The live session, if this is a same-origin request carrying the session's token.
     pub(crate) fn authorised(&self, headers: &HeaderMap, csrf: &str) -> bool {
         auth::same_origin(headers, &self.origin)
@@ -221,7 +237,8 @@ struct SignInPage {
     next: String,
     /// The Tailscale login on first run.
     login: String,
-    minutes_left: u64,
+    /// How long the first-run window stays open, as "11 h 56 min".
+    time_left: String,
     /// The setup link's token.
     token: String,
 }
@@ -286,7 +303,7 @@ async fn render_signin(
             mode,
             next,
             login: login(headers),
-            minutes_left: w.first_run_minutes_left(),
+            time_left: hours_minutes(w.first_run_minutes_left()),
             token,
         }
         .render()?,
@@ -765,7 +782,7 @@ pub(crate) async fn settings_page(
 ) -> Result<Response, AppError> {
     let w = writer(&s)?;
     if w.auth.session(&headers).is_none() {
-        return Ok(Redirect::to("/signin?next=/settings").into_response());
+        return Ok(Redirect::to(&auth::signin_href("/settings")).into_response());
     }
     let flash = match q.flash.as_str() {
         "saved" => "Settings saved.",
@@ -1122,7 +1139,7 @@ fn note_for(kind: &RepoKind, settings: &Settings) -> String {
 async fn show_edit(s: &AppState, headers: &HeaderMap, item: Item) -> Result<Response, AppError> {
     let w = writer(s)?;
     if w.auth.session(headers).is_none() {
-        return Ok(Redirect::to(&format!("/signin?next={}", item.edit)).into_response());
+        return Ok(Redirect::to(&auth::signin_href(&item.edit)).into_response());
     }
     let sources = Arc::clone(&s.sources);
     let target = item.target.clone();
@@ -1230,6 +1247,22 @@ pub(crate) fn wants_json(headers: &HeaderMap) -> bool {
         .is_some_and(|v| v.contains("application/json"))
 }
 
+/// The owner's sentence when a save's commit failed, saying whether the file is back to
+/// its committed text (`restored`) or still holds the new, uncommitted text.
+fn commit_failed(git_error: &str, restored: Result<(), String>, shown: &str) -> String {
+    let why = if git_error.contains("tell me who you are") || git_error.contains("empty ident") {
+        "This repo has no git name and email set, so git won't commit. Set user.name and user.email in it, then save again.".to_owned()
+    } else {
+        format!("The commit failed: {git_error}")
+    };
+    match restored {
+        Ok(()) => format!("{why} Nothing changed."),
+        Err(e) => format!(
+            "{why} Atlas also couldn't put the old text back ({e}), so {shown} now holds your new text without a commit. Your text is below; commit or discard it by hand."
+        ),
+    }
+}
+
 async fn save(
     s: &AppState,
     headers: &HeaderMap,
@@ -1243,6 +1276,13 @@ async fn save(
             headers.get(header::ORIGIN),
             w.auth.session(headers).is_some()
         );
+        if wants_json(headers) {
+            return Ok(crate::change::ChangeError::Refused(
+                "Your session ended. Sign in again in another tab; your text is still here, not saved."
+                    .to_owned(),
+            )
+            .into_response(headers));
+        }
         return Ok(forbidden(
             "Your session ended. Sign in again; your text wasn't saved.\n",
         ));
@@ -1284,15 +1324,9 @@ async fn save(
             Ok(sha) => sha,
             Err(atlas_git::GitError::NothingToCommit) => return Ok(Saved::Unchanged),
             Err(e) => {
-                // Nothing is lost: put the old text back so the file matches git again.
-                let _ = atlas_fs::edit::write_raw(&located, &before);
-                let text = e.to_string();
-                let msg = if text.contains("tell me who you are") || text.contains("empty ident") {
-                    "This repo has no git name and email set, so git won't commit. Set user.name and user.email in it, then save again. Nothing changed.".to_owned()
-                } else {
-                    format!("The commit failed, so nothing changed: {text}")
-                };
-                return Err(fail(msg));
+                // Put the old text back so the file matches git again.
+                let restored = atlas_fs::edit::write_raw(&located, &before).map_err(|e| e.to_string());
+                return Err(fail(commit_failed(&e.to_string(), restored, &located.shown)));
             }
         };
         let pushed = located.kind.may_push(push_setting).then(|| {
@@ -1327,6 +1361,9 @@ async fn save(
         }
         Ok(Saved::Unchanged) => Ok(done(format!("{}?unchanged=1", item.view), false)),
         Err(failed) => match *failed {
+            // The page script shows the reason in place, with the text still in the editor;
+            // answering it with a page would make it post the form again.
+            (msg, _) if json => Ok(crate::change::ChangeError::Refused(msg).into_response(headers)),
             (msg, Some(located)) => {
                 render_edit(s, headers, &item, &located, &form.text, &form.base, msg).await
             }
@@ -1394,8 +1431,25 @@ pub(crate) async fn save_instructions(
     save(&s, &headers, item, f).await
 }
 
+/// Minutes as people read them: "45 min", "2 h", "11 h 56 min".
+#[must_use]
+pub fn hours_minutes(minutes: u64) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn minutes_read_as_hours_and_minutes() {
+        assert_eq!(super::hours_minutes(716), "11 h 56 min");
+        assert_eq!(super::hours_minutes(120), "2 h");
+        assert_eq!(super::hours_minutes(1), "1 min");
+    }
+
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -1411,6 +1465,21 @@ mod tests {
 
     const ORIGIN: &str = "https://hub.test";
     const LOGIN: &str = "owner@github";
+
+    #[test]
+    fn a_failed_commit_says_whether_the_old_text_is_back() {
+        let back = super::commit_failed("lock held", Ok(()), "~/k/AGENTS.md");
+        assert!(back.ends_with("Nothing changed."), "{back}");
+        let stuck = super::commit_failed("lock held", Err("disk full".into()), "~/k/AGENTS.md");
+        assert!(
+            stuck.contains("couldn't put the old text back (disk full)")
+                && stuck.contains("~/k/AGENTS.md now holds your new text")
+                && !stuck.contains("Nothing changed"),
+            "{stuck}"
+        );
+        let who = super::commit_failed("Please tell me who you are", Ok(()), "x");
+        assert!(who.contains("no git name and email"), "{who}");
+    }
 
     #[test]
     fn days_are_civil_dates() {
@@ -1840,6 +1909,38 @@ mod tests {
             fs::read_to_string(hub.knowledge.join("AGENTS.md"))
                 .unwrap()
                 .contains("changed elsewhere")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_save_answers_the_page_script_in_json_so_it_never_posts_twice() {
+        let hub = hub();
+        let (_, _, page) = send(&hub, get(&hub, "/instructions/global/AGENTS.md/edit", true)).await;
+        let base = base_of(&page);
+        fs::write(hub.knowledge.join("AGENTS.md"), "# Rules\nelsewhere\n").unwrap();
+        git(&hub.knowledge, &["commit", "-qam", "elsewhere"]);
+        let mut req = post(
+            &hub,
+            "/instructions/global/AGENTS.md/edit",
+            &[("csrf", &hub.csrf), ("base", &base), ("text", "# Mine\n")],
+            ORIGIN,
+            true,
+        );
+        req.headers_mut()
+            .insert(header::ACCEPT, "application/json".parse().unwrap());
+        let (status, _, body) = send(&hub, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v: serde_json::Value = serde_json::from_str(&body).expect("JSON, not a page");
+        assert!(
+            v["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("changed since you opened it")),
+            "{body}"
+        );
+        assert!(
+            fs::read_to_string(hub.knowledge.join("AGENTS.md"))
+                .unwrap()
+                .contains("elsewhere")
         );
     }
 

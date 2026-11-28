@@ -411,6 +411,8 @@ mod tests {
             at,
             harnesses: Vec::new(),
             problems: problems.iter().map(|p| (*p).to_owned()).collect(),
+            outside: Vec::new(),
+            kept: Vec::new(),
         };
         let t = 1_000_000;
 

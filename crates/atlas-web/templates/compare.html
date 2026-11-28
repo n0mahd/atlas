@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="sections">
+  <section class="section">
+    <div class="section-head"><span class="num" aria-hidden="true">I</span><h2>Files</h2><span class="count">{{ v.files.len() }}</span></div>
+    <ul class="rows">
+      {% for f in v.files %}
+      <li><div class="row static"><span class="row-main"><span class="row-name mono-name">{{ f.name }}</span></span><span class="row-kind{% if f.state != "same" %} warn{% endif %}">{{ f.label }}</span></div></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% for t in v.texts %}
+  <section class="section">
+    <div class="section-head"><span class="num" aria-hidden="true">{{ t.num }}</span><h2 class="mono-name">{{ t.name }}</h2></div>
+    <div class="compare">
+      <div><p class="compare-label">{{ v.left }}</p><pre class="ink-block">{{ t.left }}</pre></div>
+      <div><p class="compare-label">{{ v.right }}</p><pre class="ink-block">{{ t.right }}</pre></div>
+    </div>
+  </section>
+  {% endfor %}
+  <div class="tidy-bar">
+    {% if let Some(key) = v.key %}
+    {% if page.signed_in %}
+    <form class="inline-form" method="post" action="/import/skill/theirs" data-send-on-save>
+      <input type="hidden" name="csrf" value="{{ page.csrf }}">
+      <input type="hidden" name="key" value="{{ key }}">
+      <button class="button-ink" type="submit">Take this machine's</button>
+    </form>
+    {% endif %}
+    <a class="button-plain" href="{{ v.back }}">Keep Atlas's</a>
+    {% else %}
+    <a class="button-plain" href="{{ v.back }}">Back to Tidy up</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

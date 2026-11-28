@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="split">
+  <article class="{% if html.is_empty() %}file-body{% else %}prose{% endif %}">
+    {% if script %}<p class="marginalia warn-note">A script. An agent using this skill may run it; Atlas never does.</p>{% endif %}
+    {% if !notice.is_empty() %}<p class="marginalia">{{ notice }}</p>{% endif %}
+    {% if !html.is_empty() %}{{ html|safe }}{% endif %}
+    {% if !text.is_empty() %}<pre class="ink-block file-text">{{ text }}</pre>{% endif %}
+  </article>
+  <aside class="aside">
+    <dl class="facts">
+      <dt>Skill</dt><dd><a href="{{ skill_href }}">{{ skill }}</a></dd>
+      <dt>File</dt><dd class="mono">{{ crate::views::breakable(shown)|safe }}</dd>
+    </dl>
+    <button class="button-plain copy" type="button" data-copy="{{ shown }}" hidden>Copy path</button>
+    <a class="link-cap" href="{{ skill_href }}">Back to the skill</a>
+  </aside>
+</div>
+{% endblock %}

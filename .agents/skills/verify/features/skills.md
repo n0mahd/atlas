@@ -6,6 +6,11 @@
 - `GET /skills/{home}/{name}`
 - `GET /skills/{home}/{name}/edit`
 - `POST /skills/{home}/{name}/edit`
+- `GET /skills/new`
+- `POST /skills/new`
+- `GET /skills/confirm`
+- `POST /skills/bulk`
+- `GET /skills/{home}/{name}/files/{*path}`
 - `POST /send/start`
 - `POST /send/finish`
 - `GET /static/{*path}`
@@ -27,6 +32,16 @@
 - Save refusals: the file has uncommitted hand edits; the file changed since the editor
   opened (text kept in the editor); saving identical text commits nothing.
 - Markdown sanitising: `<script>`, `on*=` handlers and `javascript:` links render inert.
+- Library (decision 0027): **New skill** (name, one-line description, Global or this
+  project; a taken or invalid name is refused in place), **Delete…** with a confirmation,
+  **Select** with a bulk bar (turn on or off for one or every agent, move to Global or a
+  project, delete), each one change through `/skills/confirm`; groups "From owner/repo"
+  for skills installed with `npx skills`; a **Conflict** mark for same-named skills with
+  different text; **Needs attention** with a reason per skill; a skill no machine will
+  install (a link out of its own folder) is flagged "Machines skip it" (a project's skill
+  "Not linked for every agent") with atlasd's reason.
+- File viewer: the skill page lists its files; a text file opens read only (bounded,
+  escaped); only files the catalog listed open, so `..`, links and made-up paths are 404.
 
 ## How to get to it (owner's view)
 Front page → rail **Skills** (or the Skills tile) → expand a row → **Read the skill** →
@@ -52,10 +67,12 @@ bare remote at the new commit after send, the Skills and shop remotes untouched,
 unrelated hand edit in Knowledge left uncommitted, and no commit after a refusal.
 
 ## Gaps
-- Not built (stubs in `skills_place.rs`, `skill_ops.rs`, with no UI): per-agent switches,
-  **Use in…** placement, create, delete, move between homes, bulk actions, **Tidy up**,
-  **Bring into Atlas** / **Bring all in**, Conflict and Needs-attention marks, Check for
-  updates. `change.rs` is only used by those stubs.
+- The library (new, delete, confirm, bulk, the file viewer, groups, Conflict, Needs
+  attention) is driven by HTTP tests through the router with real git
+  (`crates/atlas-web/tests/library.rs`) and by the review-hub walkthrough; its browser
+  journeys are being written on branch `feature-map`. Switches and "Use in…" are in
+  `placements.md`; Bring into Atlas and Tidy up in `import.md`; Check for updates in
+  `updates.md`.
 - The machine picker can't pick another machine: others are disabled until the hub reads
   them (needs Local Atlas).
 - Per-agent marks are only driven with no agents installed on the hub ("No agent has it");
@@ -67,6 +84,9 @@ unrelated hand edit in Knowledge left uncommitted, and no commit after a refusal
   that other files may change, and undo hand edits (`git checkout`).
 - The hub caches its store read for 3 s; after a hand edit wait `SNAPSHOT_TTL_MS` before
   loading a page. The editor itself reads the file fresh.
-- A refused save answers HTML 409, which Chrome logs as a console error: use
-  `allowConsole(owner, /409/)`. The page script then posts the form a second time.
+- A refused save answers 409, which Chrome logs as a console error: use
+  `allowConsole(owner, /409/)`. With the page script it answers JSON `{error}` and the
+  reason shows in place (posted once); a plain form post gets the HTML page.
+- The bulk bar's buttons are named `action`, which shadows `form.action`; the page script
+  posts to `getAttribute("action")`.
 - Skill pages have two `<h1>`s (masthead and the body's `# name`): use `header.masthead h1`.

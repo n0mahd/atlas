@@ -53,10 +53,13 @@ pub fn load_catalog(sources: &Sources) -> Catalog {
         r.load_hooks(&knowledge, &sources.knowledge, "hooks", &Scope::Global);
         match crate::library::read_placements(&sources.knowledge) {
             Ok((placements, _)) => r.catalog.placements = placements,
-            Err(e) => r.problem(
-                &sources.knowledge.join(atlas_core::catalog::PLACEMENTS_FILE),
-                e.to_string(),
-            ),
+            Err(e) => {
+                r.catalog.placements_error = Some(e.to_string());
+                r.problem(
+                    &sources.knowledge.join(atlas_core::catalog::PLACEMENTS_FILE),
+                    e.to_string(),
+                );
+            }
         }
     }
     if let Some(public) = &sources.public_skills
@@ -289,8 +292,32 @@ impl Reader<'_> {
             let (fm, body): (SkillFrontmatter, String) = self.parse_front(&skill_md, &text);
             let declared_name = fm.name.filter(|n| n != slug.as_str());
             let mut files = Vec::new();
-            self.walk(&folder, &shown, "", 0, MAX_LISTED_FILES, &mut files);
+            self.walk(
+                &folder,
+                &shown,
+                "",
+                0,
+                (MAX_LISTED_FILES, false),
+                &mut files,
+            );
             files.retain(|f| f != "SKILL.md");
+            // The same rule atlasd applies before installing, so the hub never shows as
+            // fine a skill that no machine will get.
+            // A project's own skill is read in place by agents that read `.agents/skills`;
+            // only the links Atlas makes for the others are skipped.
+            let skipped = crate::library::installable_folder(&shown, "SKILL.md")
+                .err()
+                .map(|why| match home {
+                    SkillHome::Project(_) => format!(
+                        "Atlas won't link this skill for agents that need a link (such as Claude Code): {why}."
+                    ),
+                    SkillHome::Private | SkillHome::Public => {
+                        format!("Machines skip this skill: {why}.")
+                    }
+                });
+            if let Some(why) = &skipped {
+                self.problem(&shown, why.clone());
+            }
             self.catalog.skills.push(Skill {
                 name: slug,
                 home: home.clone(),
@@ -298,6 +325,7 @@ impl Reader<'_> {
                 declared_name,
                 path: self.sources.display(&skill_md),
                 files,
+                skipped,
                 body: Untrusted::new(Markdown(body)),
             });
         }
@@ -320,7 +348,8 @@ impl Reader<'_> {
             root.join(rel)
         };
         let mut files = Vec::new();
-        self.walk(&memory, &base, "", 0, MAX_MEMORY_PAGES, &mut files);
+        // Notes may be links: the read follows a link and flags one to a hidden file.
+        self.walk(&memory, &base, "", 0, (MAX_MEMORY_PAGES, true), &mut files);
         if files.len() >= MAX_MEMORY_PAGES {
             self.problem(
                 &base,
@@ -461,14 +490,16 @@ impl Reader<'_> {
         out
     }
 
-    /// Collects regular files under `dir`, as paths relative to where the walk began.
+    /// Collects regular files under `dir`, as paths relative to where the walk began, at
+    /// most `limit`; with `md_links`, also links named `*.md`, so the read that follows
+    /// decides about them (it follows a link and flags one to a hidden file).
     fn walk(
         &mut self,
         dir: &Dir,
         shown: &Path,
         prefix: &str,
         depth: usize,
-        limit: usize,
+        (limit, md_links): (usize, bool),
         out: &mut Vec<String>,
     ) {
         for (name, kind) in self.list(dir, shown) {
@@ -482,10 +513,15 @@ impl Reader<'_> {
             };
             match kind {
                 EntryKind::File => out.push(rel),
+                EntryKind::Symlink
+                    if md_links && Path::new(&name).extension().is_some_and(|e| e == "md") =>
+                {
+                    out.push(rel);
+                }
                 EntryKind::Dir if depth + 1 < MAX_DEPTH => {
                     let sub_shown: PathBuf = shown.join(&name);
                     if let Some(sub) = self.open_sub(dir, shown, &name) {
-                        self.walk(&sub, &sub_shown, &rel, depth + 1, limit, out);
+                        self.walk(&sub, &sub_shown, &rel, depth + 1, (limit, md_links), out);
                     }
                 }
                 EntryKind::Dir | EntryKind::Symlink => {}

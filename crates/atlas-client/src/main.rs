@@ -15,10 +15,12 @@ use atlas_core::distribution::PairRequest;
 
 const USAGE: &str = "\
 usage:
-  atlasd pair <hub-url> <code> [--machine NAME] [--adopt DIR]...
+  atlasd pair <hub-url> <code> [--machine NAME] [--adopt DIR]... [--memory-store DIR]
                                                   pair this login with the hub; --adopt lets
                                                   atlasd take over links an older script made
-                                                  into DIR (such as ~/Knowledge)
+                                                  into DIR (such as ~/Knowledge);
+                                                  --memory-store names your own checkout of
+                                                  the knowledge repo for memory links
   atlasd run [--dry-run | --summary]              apply the latest signed update; --dry-run
                                                   shows what would change, --summary says
                                                   what changed in two or three lines
@@ -43,16 +45,20 @@ fn main() -> ExitCode {
             ["pair", hub, code, rest @ ..] => {
                 let mut machine = None;
                 let mut adopt = Vec::new();
+                let mut memory_store = None;
                 let mut opts = rest.iter();
                 loop {
                     match (opts.next(), opts.next()) {
                         (None, _) => break,
                         (Some(&"--machine"), Some(name)) => machine = Some(*name),
                         (Some(&"--adopt"), Some(dir)) => adopt.push((*dir).to_owned()),
+                        (Some(&"--memory-store"), Some(dir)) => {
+                            memory_store = Some((*dir).to_owned());
+                        }
                         _ => return Err(USAGE.to_owned()),
                     }
                 }
-                pair(&paths, hub, code, machine, adopt)
+                pair(&paths, hub, code, machine, adopt, memory_store)
             }
             ["run"] => run(&paths, Mode::Full),
             ["run", "--dry-run"] => run(&paths, Mode::DryRun),
@@ -119,6 +125,7 @@ fn pair(
     code: &str,
     machine: Option<&str>,
     adopt_dirs: Vec<String>,
+    memory_store: Option<String>,
 ) -> Result<ExitCode, String> {
     let (origin, _) = release::origin_and_rp(hub)?;
     let request = PairRequest {
@@ -137,8 +144,10 @@ fn pair(
     if resp.owner_keys.is_empty() {
         return Err("the hub has no owner passkey yet, so no update could be trusted".to_owned());
     }
-    // Folders to take over: those given now, plus any from an earlier pairing.
-    let mut adopt = Config::load(&paths.config).map_or_else(|_| Vec::new(), |c| c.adopt);
+    // Folders to take over: those given now, plus any from an earlier pairing, whose
+    // project roots and memory store are kept too.
+    let earlier = Config::load(&paths.config).ok();
+    let mut adopt = earlier.as_ref().map_or_else(Vec::new, |c| c.adopt.clone());
     for dir in adopt_dirs {
         if !adopt.contains(&dir) {
             adopt.push(dir);
@@ -150,6 +159,12 @@ fn pair(
         token: resp.token,
         machine: request.machine.clone(),
         adopt,
+        project_roots: earlier
+            .as_ref()
+            .map_or_else(atlas_client::config::default_project_roots, |c| {
+                c.project_roots.clone()
+            }),
+        memory_store: memory_store.or_else(|| earlier.and_then(|c| c.memory_store)),
     }
     .save(&paths.config)?;
     State {

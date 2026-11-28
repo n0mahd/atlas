@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use atlas_harness::instructions::{
     InstructionAction, InstructionConflict, InstructionFile, plan_claude_md, plan_instruction_link,
 };
-use atlas_harness::skills::{Entry, SkillConflict, SkillOp, SkillPlan, plan_skill_links};
+use atlas_harness::skills::{
+    Entry, SkillConflict, SkillOp, SkillPlan, plan_skill_links, plan_skill_links_adopting,
+};
 
 const FOLDER: &str = "/u/.claude/skills";
 const STORE: &str = "/srv/knowledge";
@@ -147,13 +149,81 @@ fn unmanaged_entries_without_a_desired_skill_are_ignored() {
     assert_eq!(out, SkillPlan::default());
 }
 
+#[test]
+fn an_exact_copy_is_replaced_by_the_link_and_anything_else_stays() {
+    let current: BTreeMap<_, _> = [
+        ("copy", Entry::DirDigest("d-copy".into())),
+        ("edited", Entry::DirDigest("d-edited".into())),
+        ("unchecked", Entry::Dir),
+        ("stray", Entry::DirDigest("d-stray".into())),
+        ("unwanted", Entry::DirDigest("d-unwanted".into())),
+    ]
+    .into_iter()
+    .map(|(n, e)| (n.to_owned(), e))
+    .collect();
+    let desired: BTreeMap<_, _> = [
+        ("copy", "/srv/skills/copy"),
+        ("edited", "/srv/skills/edited"),
+        ("unchecked", "/srv/skills/unchecked"),
+        ("stray", "/tmp/stray"),
+    ]
+    .into_iter()
+    .map(|(n, s)| (n.to_owned(), p(s)))
+    .collect();
+    let digests: BTreeMap<_, _> = [
+        ("copy", "d-copy"),
+        ("edited", "d-source"),
+        ("unchecked", "d-unchecked"),
+        ("stray", "d-stray"),
+    ]
+    .into_iter()
+    .map(|(n, d)| (n.to_owned(), d.to_owned()))
+    .collect();
+    let out = plan_skill_links_adopting(Path::new(FOLDER), &current, &desired, &digests, &roots());
+    assert_eq!(
+        out.ops,
+        [SkillOp::AdoptDir {
+            name: "copy".into(),
+            target: p("/srv/skills/copy"),
+            digest: "d-copy".into(),
+        }]
+    );
+    assert_eq!(
+        out.conflicts,
+        [
+            SkillConflict::NotALink {
+                name: "edited".into()
+            },
+            SkillConflict::NotALink {
+                name: "stray".into()
+            },
+            SkillConflict::NotALink {
+                name: "unchecked".into()
+            },
+            SkillConflict::SourceOutsideRoots {
+                name: "stray".into(),
+                source: p("/tmp/stray"),
+            },
+        ],
+        "an edited copy, a source outside Atlas and an unchecked folder all stay"
+    );
+    assert_eq!(
+        plan_skill_links(Path::new(FOLDER), &current, &desired, &roots()).ops,
+        [],
+        "nothing is adopted without the source's digest"
+    );
+}
+
 const AGENTS: &str = "/srv/knowledge/AGENTS.md";
+/// The store's `AGENTS.md` text in these tests.
+const GLOBAL_TEXT: &str = "# Global\nBe brief.\n";
 
 fn link_plan(current: &InstructionFile) -> InstructionAction {
     plan_instruction_link(
         Path::new("/u/.codex/AGENTS.md"),
         current,
         Path::new(AGENTS),
+        GLOBAL_TEXT,
         &[p(STORE)],
     )
 }
@@ -196,6 +266,7 @@ fn claude_plan(current: &InstructionFile) -> InstructionAction {
         Path::new("/u/.claude/CLAUDE.md"),
         current,
         Path::new(AGENTS),
+        GLOBAL_TEXT,
         &[],
         Path::new("/u"),
     )
@@ -257,6 +328,7 @@ fn claude_md_cases() {
             Path::new("/u/.claude/CLAUDE.md"),
             &InstructionFile::Missing,
             Path::new("/srv/my knowledge/AGENTS.md"),
+            GLOBAL_TEXT,
             &[],
             Path::new("/u"),
         ),
@@ -272,6 +344,7 @@ fn claude_md_repoints_an_import_from_an_adopted_folder() {
             Path::new("/u/.claude/CLAUDE.md"),
             &InstructionFile::File(text.to_owned()),
             Path::new(AGENTS),
+            GLOBAL_TEXT,
             &[p("/u/Knowledge")],
             Path::new("/u"),
         )

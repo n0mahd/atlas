@@ -275,6 +275,8 @@ export function seedHostile(world) {
   fs.symlinkSync("../../outside", path.join(k, "skills/outside"));
   fs.mkdirSync(path.join(k, "skills/dotenv"));
   fs.symlinkSync("../../.env", path.join(k, "skills/dotenv/SKILL.md"));
+  fs.mkdirSync(path.join(k, "skills/outfile"));
+  fs.symlinkSync("../../../outside/SKILL.md", path.join(k, "skills/outfile/SKILL.md"));
   fs.symlinkSync("../.env", path.join(k, "memory/leak.md"));
   // A link to a tracked, non-hidden file inside the repo is followed (debt register).
   write(path.join(k, "docs/kept.md"), "---\nname: kept\ndescription: A skill kept in docs\n---\nKept in docs.\n");

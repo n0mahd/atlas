@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// A fresh hidden name next to `path`, for a temp file or link.
-fn temp_beside(path: &Path) -> io::Result<PathBuf> {
+/// A fresh hidden name next to `path`, for a temp file, link or folder.
+pub fn temp_beside(path: &Path) -> io::Result<PathBuf> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("path has no folder"))?;
@@ -60,7 +60,8 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Points the link at `path` to `target` in one step: a temp link, then a rename over
-/// the old one. The caller has checked that `path` is a link.
+/// the old one. The caller has checked that `path` is a link, or a file it means to
+/// replace with one.
 pub fn replace_link(path: &Path, target: &Path) -> io::Result<()> {
     let tmp = temp_beside(path)?;
     symlink(target, &tmp)?;

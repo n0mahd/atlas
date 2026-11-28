@@ -379,6 +379,22 @@ pub fn same_secret(a: &str, b: &str) -> bool {
 /// Only plain URL characters are allowed, and the path must still be local once any
 /// percent-encoding is decoded, so a browser can't read it as another site's address.
 #[must_use]
+/// The sign-in page's address that comes back to `next` (kept on this site) afterwards,
+/// with `next` encoded so its own query string survives the trip.
+pub fn signin_href(next: &str) -> String {
+    let next = safe_next(next);
+    let mut out = String::from("/signin?next=");
+    for b in next.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            out.push(char::from(b));
+        } else {
+            use std::fmt::Write as _;
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
+}
+
 pub fn safe_next(next: &str) -> String {
     if is_local_path(next) {
         next.to_owned()
@@ -465,6 +481,29 @@ mod tests {
         assert!(restarted.session(&headers).is_some());
         restarted.sign_out(&headers);
         assert!(Auth::open(dir.path()).session(&headers).is_none());
+    }
+
+    #[test]
+    fn signin_links_keep_the_whole_next_address() {
+        assert_eq!(signin_href("/settings"), "/signin?next=/settings");
+        assert_eq!(
+            signin_href("/skills/updates?scope=x&open=a"),
+            "/signin?next=/skills/updates%3Fscope%3Dx%26open%3Da"
+        );
+        assert_eq!(signin_href("//evil.test"), "/signin?next=/");
+    }
+
+    #[test]
+    fn next_stays_on_this_site() {
+        assert_eq!(safe_next("/skills?scope=x"), "/skills?scope=x");
+        for bad in [
+            "//evil.example",
+            "https://evil.example",
+            "/\\evil",
+            "javascript:x",
+        ] {
+            assert_eq!(safe_next(bad), "/");
+        }
     }
 
     #[test]

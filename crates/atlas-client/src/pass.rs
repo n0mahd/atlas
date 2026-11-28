@@ -5,13 +5,14 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use atlas_core::distribution::Report;
-use atlas_core::release::{SignedRelease, SourceId};
+use atlas_core::distribution::{KeptCopy, Report};
+use atlas_core::release::{Manifest, SignedRelease, SourceId};
 
 use crate::config::{Config, HOW_TO_PAIR, Paths, State};
+use crate::keep::Keeper;
 use crate::plan::Action;
 use crate::sources::Copies;
-use crate::{desired, display, plan, release, report, sources};
+use crate::{checkout, desired, display, plan, project, release, report, sources};
 
 /// What asking the hub for its latest release gave.
 #[derive(Clone, Debug)]
@@ -108,7 +109,14 @@ pub fn run(
                     }
                     Ok(copies) => {
                         let before = out.lines.len();
-                        let ok = apply_release(paths, config, &copies, n, dry_run, &mut out);
+                        let ok = apply_release(
+                            paths,
+                            config,
+                            &copies,
+                            &checked.manifest,
+                            (dry_run, now),
+                            &mut out,
+                        );
                         // An idle run (the same update, nothing to change) prints nothing, so a
                         // run every minute doesn't fill the log.
                         let changed = out.lines.len() > before || state.last_applied != Some(n);
@@ -130,11 +138,15 @@ pub fn run(
         },
     }
 
+    let mut managed = vec![paths.sources.clone()];
+    managed.extend(config.adopt_roots(&paths.home));
     let report = Report {
         release: next.last_applied,
         at: now,
         harnesses: report::harnesses(&paths.home, &paths.sources),
         problems: out.problems.clone(),
+        outside: report::outside(&paths.home, &managed),
+        kept: out.kept,
     };
     Pass {
         lines: out.lines,
@@ -153,6 +165,8 @@ struct Outcome {
     problems: Vec<String>,
     left_alone: Vec<String>,
     summary: Vec<String>,
+    /// Originals atlasd copied before replacing them, for the report.
+    kept: Vec<KeptCopy>,
 }
 
 /// Plans from the copies and, unless a dry run, applies. False when a change failed.
@@ -160,10 +174,11 @@ fn apply_release(
     paths: &Paths,
     config: &Config,
     copies: &Copies,
-    number: u64,
-    dry_run: bool,
+    manifest: &Manifest,
+    (dry_run, now): (bool, u64),
     out: &mut Outcome,
 ) -> bool {
+    let number = manifest.number;
     out.problems.extend(copies.problems.iter().cloned());
     let knowledge = copies.dirs.get(&SourceId::Knowledge);
     if dry_run && knowledge.is_none() {
@@ -184,7 +199,9 @@ fn apply_release(
 
     let mut roots = vec![paths.sources.clone()];
     roots.extend(config.adopt_roots(&paths.home));
-    let plan = plan::plan(&paths.home, &desired, &roots);
+    let machine = machine(paths, config, manifest, &mut out.lines);
+    let plan = plan::plan_machine(&paths.home, &desired, &roots, &machine);
+    out.lines.extend(plan.notes.iter().cloned());
     out.problems.extend(plan.conflicts.iter().cloned());
     out.left_alone.extend(plan.conflicts.iter().cloned());
 
@@ -195,24 +212,67 @@ fn apply_release(
         out.lines.extend(
             plan.actions
                 .iter()
-                .map(|a| format!("would {}", a.describe(&paths.home))),
+                .map(|a| format!("would {}", a.describe(&paths.home, &paths.replaced))),
         );
         return true;
     }
-    let (done, errors) = crate::apply::apply(&plan, &paths.home);
-    out.lines
-        .extend(done.iter().map(|a| a.describe(&paths.home)));
+    let keeper = Keeper::new(&paths.replaced, &paths.home, now);
+    let applied = crate::apply::apply(&plan, &paths.home, &keeper);
+    out.lines.extend(
+        applied
+            .done
+            .iter()
+            .map(|a| a.describe(&paths.home, &paths.replaced)),
+    );
+    let mut kept_shown = Vec::new();
+    for (original, copy) in &applied.kept {
+        let copy = KeptCopy {
+            original: display(&paths.home, original),
+            copy: display(&paths.home, copy),
+        };
+        out.lines.push(format!(
+            "Kept a copy of {} as {}; copy it back to restore it.",
+            copy.original, copy.copy
+        ));
+        kept_shown.push(copy.original.clone());
+        out.kept.push(copy);
+    }
     out.summary = summarise(
         &paths.home,
         &paths.sources,
         number,
-        &done,
-        plan.conflicts.len(),
-        !errors.is_empty(),
+        &applied.done,
+        (plan.conflicts.len(), &kept_shown),
+        !applied.failed.is_empty(),
     );
-    let ok = errors.is_empty();
-    out.problems.extend(errors);
+    let ok = applied.failed.is_empty();
+    out.problems.extend(applied.failed);
     ok
+}
+
+/// This machine's checkouts of the update's projects, and where memory links go.
+fn machine(
+    paths: &Paths,
+    config: &Config,
+    manifest: &Manifest,
+    lines: &mut Vec<String>,
+) -> plan::Machine {
+    let (checkouts, notes) =
+        checkout::find(&config.project_root_paths(&paths.home), &manifest.projects);
+    lines.extend(notes);
+    let memory = if checkouts.is_empty() {
+        plan::MemoryStore::None
+    } else {
+        project::memory_store(
+            config.memory_store_path(&paths.home),
+            &config.adopt_roots(&paths.home),
+            &paths.home,
+            manifest
+                .source(&SourceId::Knowledge)
+                .map(|s| s.remote.as_str()),
+        )
+    };
+    plan::Machine { checkouts, memory }
 }
 
 /// "a, b and c".
@@ -228,13 +288,33 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// The summary's "what" clause: what was linked, and whether hooks were updated.
+fn what_was_done(skills: usize, subagents: usize, instructions: bool, hooks: bool) -> String {
+    let mut linked = Vec::new();
+    if skills > 0 {
+        linked.push(plural(skills, "skill", "skills"));
+    }
+    if subagents > 0 {
+        linked.push(plural(subagents, "subagent", "subagents"));
+    }
+    if instructions {
+        linked.push("the global instructions".to_owned());
+    }
+    match (linked.is_empty(), hooks) {
+        (true, false) => "everything was already in place".to_owned(),
+        (true, true) => "updated Atlas's hooks".to_owned(),
+        (false, false) => format!("linked {}", and_list(&linked)),
+        (false, true) => format!("linked {}, and updated Atlas's hooks", and_list(&linked)),
+    }
+}
+
 /// The `--summary` lines, from the actions that were carried out.
 fn summarise(
     home: &Path,
     sources: &Path,
     number: u64,
     done: &[&Action],
-    left_alone: usize,
+    (left_alone, kept): (usize, &[String]),
     partly: bool,
 ) -> Vec<String> {
     let agents: Vec<_> = plan::present(home)
@@ -299,34 +379,40 @@ fn summarise(
                 imports.push(display(home, path));
             }
             Action::WriteFile { .. } | Action::RemoveFile { .. } => hooks = true,
+            // A folder that was an exact copy of what Atlas holds, now its link.
+            Action::AdoptDir { path, .. } => {
+                if in_one(path, &skill_dirs) {
+                    skills.insert(name(path));
+                }
+                replaced.push(format!("{} (a copy of Atlas's)", display(home, path)));
+            }
+            // An agent's own instruction file, all of it in Global, now its link.
+            Action::FileToLink { path, .. } => {
+                instructions = true;
+                replaced.push(format!("{} (all of it is in Global)", display(home, path)));
+            }
+            Action::WriteInstruction { path, .. } => {
+                instructions = true;
+                imports.push(display(home, path));
+            }
             Action::RemoveLink { .. } | Action::CreateDir(_) => {}
         }
     }
 
     let names: Vec<String> = agents.iter().map(|l| l.kind.to_string()).collect();
-    let mut linked = Vec::new();
-    if !skills.is_empty() {
-        linked.push(plural(skills.len(), "skill", "skills"));
-    }
-    if !subagents.is_empty() {
-        linked.push(plural(subagents.len(), "subagent", "subagents"));
-    }
-    if instructions {
-        linked.push("the global instructions".to_owned());
-    }
-    let what = match (linked.is_empty(), hooks) {
-        (true, false) => "everything was already in place".to_owned(),
-        (true, true) => "updated Atlas's hooks".to_owned(),
-        (false, false) => format!("linked {}", and_list(&linked)),
-        (false, true) => format!("linked {}, and updated Atlas's hooks", and_list(&linked)),
-    };
+    let what = what_was_done(skills.len(), subagents.len(), instructions, hooks);
     let applied = if partly { "Partly applied" } else { "Applied" };
     let mut lines = vec![format!(
         "{applied} update {number} for {}: {what}.",
         and_list(&names)
     )];
 
-    lines.extend(yours_lines(&replaced, &removed, &imports, left_alone));
+    lines.extend(yours_lines(
+        &replaced,
+        &removed,
+        &imports,
+        (left_alone, kept),
+    ));
     lines
 }
 
@@ -336,7 +422,7 @@ fn yours_lines(
     replaced: &[String],
     removed: &[String],
     imports: &[String],
-    left_alone: usize,
+    (left_alone, kept): (usize, &[String]),
 ) -> Vec<String> {
     let first = |items: &[String]| {
         let shown: Vec<String> = items.iter().take(3).cloned().collect();
@@ -378,6 +464,12 @@ fn yours_lines(
             plural(left_alone, "thing", "things"),
             if left_alone == 1 { "it" } else { "them" },
             if left_alone == 1 { "it" } else { "them" },
+        ));
+    }
+    if !kept.is_empty() {
+        lines.push(format!(
+            "Copies of {} are kept in ~/.local/state/atlas-client/replaced; copy one back to restore it.",
+            first(kept)
         ));
     }
     lines

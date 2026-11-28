@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<dl class="facts update-facts">
+  <dt>Source</dt><dd class="mono">{{ source }}</dd>
+  <dt>Now</dt><dd>{{ state }}</dd>
+</dl>
+{% if !checked %}
+<p class="marginalia">Not checked yet.</p>
+{% include "updates_button.html" %}
+{% else if can_apply %}
+<form class="update-form" method="post" action="{{ action }}"{% if send_on_save %} data-send-on-save{% endif %}>
+  <input type="hidden" name="csrf" value="{{ page.csrf }}">
+  <input type="hidden" name="local" value="{{ local_pin }}">
+  <input type="hidden" name="upstream" value="{{ upstream_pin }}">
+  <ol class="update-files">
+    {% for f in files %}
+    <li class="update-file{% if f.clash %} clash{% endif %}">
+      <div class="update-file-head"><span class="mono update-path">{{ crate::views::breakable(f.path)|safe }}</span><span class="row-meta">{{ f.change }}</span><span class="{% if f.clash %}row-flag{% else %}row-meta{% endif %}">{{ f.fate }}</span></div>
+      {% if f.clash %}
+      <fieldset class="update-choice">
+        <legend class="sr">Choose for {{ f.path }}</legend>
+        <input type="hidden" name="p{{ f.n }}" value="{{ f.path }}">
+        <label><input type="radio" name="c{{ f.n }}" value="mine" required> Keep my edits</label>
+        <label><input type="radio" name="c{{ f.n }}" value="theirs" required> Use the new version</label>
+      </fieldset>
+      {% endif %}
+      {% if !f.note.is_empty() %}<p class="empty">{{ f.note }}</p>{% endif %}
+      {% if !f.lines.is_empty() %}<pre class="ink-block diff" aria-label="Changes to {{ f.path }}">{% for l in f.lines %}<span class="{{ l.class }}">{{ l.text }}</span>
+{% endfor %}</pre>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <button class="button-ink" type="submit" aria-describedby="update-why">Update</button>
+  <details class="info"><summary aria-label="What Update does">i</summary><p id="update-why">Nothing is written until you press Update. {{ lock_note }}</p></details>
+</form>
+{% endif %}
+<p><a class="link-cap" href="/skills/updates">All updates</a></p>
+{% endblock %}

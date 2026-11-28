@@ -177,14 +177,33 @@
     var form = event.target;
     if (!form.matches("form[data-send-on-save]") || form.dataset.plain || !window.PublicKeyCredential || !window.fetch) return;
     event.preventDefault();
-    var button = form.querySelector('[type="submit"]');
+    // A form with several actions (the Skills bulk bar and its group "All on/All off")
+    // names them on its buttons; carry the pressed one, which FormData(form) and
+    // form.submit() never include. Disabling a button doesn't change its name or value,
+    // so the pressed one is the one disabled while the change is saved.
+    var submitter = event.submitter;
+    var button = submitter || form.querySelector('[type="submit"]');
     if (button) button.disabled = true;
-    var plain = function () { form.dataset.plain = "1"; form.submit(); };
-    fetch(form.action, {
+    var plain = function () {
+      form.dataset.plain = "1";
+      if (submitter && submitter.name) {
+        var carry = document.createElement("input");
+        carry.type = "hidden";
+        carry.name = submitter.name;
+        carry.value = submitter.value;
+        form.appendChild(carry);
+      }
+      form.submit();
+    };
+    var data = new FormData(form);
+    if (submitter && submitter.name) data.append(submitter.name, submitter.value);
+    // getAttribute, not form.action: a control named "action" (the bulk bar's buttons,
+    // the confirm page's field) shadows the property and would post to "[object …]".
+    fetch(form.getAttribute("action") || location.pathname, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Accept": "application/json" },
-      body: new URLSearchParams(new FormData(form))
+      body: new URLSearchParams(data)
     }).then(function (res) {
       var json = (res.headers.get("content-type") || "").includes("application/json");
       // A refused change answers {error}: show it here; posting again would retry it.

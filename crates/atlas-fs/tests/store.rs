@@ -123,6 +123,29 @@ fn problems_are_reported_not_hidden() {
 }
 
 #[test]
+fn an_invalid_placements_file_is_a_problem_and_says_why() {
+    let (_tmp, sources) = fixture();
+    let c = load_catalog(&sources);
+    assert_eq!(
+        c.placements_error, None,
+        "no file is the default, not an error"
+    );
+    write(
+        &sources.knowledge.join("atlas/placements.toml"),
+        "[global.deploy]\noff = [\"nobody\"]\n",
+    );
+    let c = load_catalog(&sources);
+    let why = c.placements_error.expect("an invalid file is reported");
+    assert!(why.contains("invalid"), "{why}");
+    assert!(
+        c.problems
+            .iter()
+            .any(|p| p.path.ends_with("atlas/placements.toml"))
+    );
+    assert_eq!(c.placements, atlas_core::catalog::Placements::default());
+}
+
+#[test]
 fn reads_memory_instructions_and_hooks() {
     let (_tmp, sources) = fixture();
     let catalog = load_catalog(&sources);
@@ -294,7 +317,8 @@ fn accepts_what_harnesses_accept() {
         &k.join("memory/hosts/box/prefixed.md"),
         "---\nname: box-prefixed\ndescription: d\nmetadata:\n  type: project\n  host: box\n---\n",
     );
-    // A project skill linking to a file elsewhere in the same repo is fine.
+    // A project skill linking to a file elsewhere in the same repo is read, but atlasd
+    // links only what stays inside the skill's own folder, so the hub says so.
     let repo = &sources.projects[0].root;
     write(
         &repo.join("docs/skill.md"),
@@ -320,13 +344,19 @@ fn accepts_what_harnesses_accept() {
         .find(|s| s.name.as_str() == "linked")
         .unwrap();
     assert_eq!(linked.description, "From docs");
+    assert!(
+        linked
+            .skipped
+            .as_deref()
+            .is_some_and(|w| w.starts_with("Atlas won't link this skill")),
+        "{:?}",
+        linked.skipped
+    );
     assert!(catalog.memory.iter().any(|m| m.name == "box-prefixed"));
     let noisy: Vec<_> = catalog
         .problems
         .iter()
-        .filter(|p| {
-            p.path.contains("colons") || p.path.contains("linked") || p.path.contains("prefixed")
-        })
+        .filter(|p| p.path.contains("colons") || p.path.contains("prefixed"))
         .collect();
     assert!(noisy.is_empty(), "{noisy:#?}");
 }
@@ -355,6 +385,72 @@ fn links_to_hidden_files_in_a_repo_are_refused() {
         "{:#?}",
         catalog.problems
     );
+}
+
+#[test]
+fn a_skill_machines_would_skip_is_listed_with_their_reason() {
+    let (_tmp, sources) = fixture();
+    let k = &sources.knowledge;
+    // A SKILL.md linked to a plain file elsewhere in the repo: the hub can read it, but
+    // atlasd installs only what stays inside the skill's own folder.
+    write(
+        &k.join("docs/kept.md"),
+        "---\nname: kept\ndescription: Kept\n---\n",
+    );
+    fs::create_dir_all(k.join("skills/kept")).unwrap();
+    symlink("../../docs/kept.md", k.join("skills/kept/SKILL.md")).unwrap();
+
+    let catalog = load_catalog(&sources);
+    let kept = catalog
+        .skills
+        .iter()
+        .find(|s| s.name.as_str() == "kept")
+        .unwrap();
+    assert_eq!(
+        kept.skipped.as_deref(),
+        Some("Machines skip this skill: its SKILL.md: it is a link to somewhere else.")
+    );
+    assert!(
+        catalog
+            .problems
+            .iter()
+            .any(|p| p.path.ends_with("skills/kept") && p.message.starts_with("Machines skip")),
+        "{:#?}",
+        catalog.problems
+    );
+    let deploy = catalog
+        .skills
+        .iter()
+        .find(|s| s.name.as_str() == "deploy")
+        .unwrap();
+    assert_eq!(deploy.skipped, None, "a plain skill installs");
+}
+
+#[test]
+fn a_memory_note_that_links_to_a_hidden_file_is_flagged_not_silently_skipped() {
+    let (_tmp, sources) = fixture();
+    let k = &sources.knowledge;
+    write(&k.join(".secret"), "TOKEN=hunter2\n");
+    fs::create_dir_all(k.join("memory")).unwrap();
+    symlink("../.secret", k.join("memory/leak.md")).unwrap();
+    write(
+        &k.join("memory/plain.md"),
+        "---\nname: plain\n---\nA note.\n",
+    );
+    symlink("plain.md", k.join("memory/alias.md")).unwrap();
+
+    let catalog = load_catalog(&sources);
+    assert!(!format!("{catalog:?}").contains("hunter2"));
+    assert!(
+        catalog
+            .problems
+            .iter()
+            .any(|p| p.path.ends_with("leak.md") && p.message.contains("hidden file")),
+        "{:#?}",
+        catalog.problems
+    );
+    // A link to another note is read like the note.
+    assert!(catalog.memory.iter().filter(|m| m.name == "plain").count() >= 1);
 }
 
 #[test]

@@ -306,6 +306,19 @@ adapted to the hub and many machines. See `documents/skills.md`.
   switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
   repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
   one change; public skills are committed and never pushed (0016), not refused.
+- **Switch identity** (Gemini review of the integrated branch): a switch target is a
+  skill's name plus the `SKILL.md` path its agent loads (`switches::SwitchOff`), not a name,
+  because Codex's one home file holds every project's switches; Codex tells Atlas's tables
+  apart by that exact path. `render_switches` lost its unused `atlas_before` and
+  `skill_dir` arguments. OpenCode's `opencode.jsonc` is edited before `opencode.json`,
+  matching OpenCode's own precedence.
+- **Bringing things in, details** (import work): Claude Code's notes are copied byte for
+  byte (atlasd's memory link compares bytes); host and project are recorded beside them in
+  `memory/projects/<project>/index.md` and the folder name, never added to the notes. An
+  imported hook's `hook.toml` gains `replaces` (the hand-made command), and the Claude Code
+  and Codex formats drop the identical hand-made handler where they write the hook. Hooks
+  for Grok Build and Muse, commands that look like they hold a secret, links into tools'
+  folders and built-in or plugin skills are not imported. See `documents/skills.md`.
 
 ## 0028 · 2026-11-27 · atlasd links Claude Code's subagents
 atlasd links each `<knowledge>/agents/<name>.md` in an update's pinned knowledge copy into
@@ -321,6 +334,31 @@ manifest needs no change: it already pins the whole knowledge tree. This replace
 subagent part of `link-agents`, which must stop linking `~/.claude/agents` on machines
 running atlasd.
 
+## 0029 · 2026-11-27 · Instruction files: who reads what, Use Global instead
+Atlas matches the owner's T3 Code instructions work (skills series part 3). One table in
+`atlas_harness::readers` says which project and home files each agent reads and how it
+picks among them; the Instructions page applies it to the hub's machine. "Use Global
+instead" appends an agent's own text to Global; atlasd replaces that agent's file with the
+link or import only when every non-blank line is already in Global, re-checked at apply
+time, so nothing is lost (0027's exact-copy rule for files). Text moved between files is
+appended under an HTML comment `<!-- atlas: from <where> -->` (invisible when rendered,
+says where it came from) and skipped when the target already holds every line. Claude
+Code's AGENTS.md option (`pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`)
+is the owner's choice in `atlas/placements.toml [instructions]`, written by atlasd only
+when set. A new `CLAUDE.local.md` is kept out of git through Atlas's `.git/info/exclude`
+block, the only write Atlas makes inside `.git`.
+
+## 0030 · 2026-11-27 · Checking skills from GitHub for updates
+The hub compares skills installed with the `skills` CLI (`npx skills`) against their GitHub
+source only when the owner presses **Check for updates**, never on a timer. It reads
+GitHub's public trees and blobs API without signing in, using `reqwest` with rustls (atlasd
+already depends on it), with timeouts, size caps, redirects only to the API's own origin (scheme, host and port), and every file
+checked against its git SHA; archive paths are sanitised and links refused. Keeping the
+owner's edits is a three-way line merge with `diffy` (MIT/Apache, no default
+dependencies); clashing files are the owner's choice. The CLI's lock is updated only when
+it sits in a repo Atlas commits; a global lock outside every repo is left alone, so an
+edited global skill shows as updatable again (the preview says so). One lock reader,
+`atlas_fs::lock`, serves updates and the skill library.
 ## 0031 · 2026-11-27 · Managing machines from a workstation CLI and the Machines page
 An always-on hub often cannot SSH into every machine the owner can reach from their daily
 workstation, and the static `machines` list in `hub.toml` couldn't be edited without editing
@@ -350,6 +388,26 @@ config on the hub.
   `margin-block` instead of `margin` shorthands so banners align cleanly with the masthead on
   wide screens.
 
+## 0044 · 2026-11-27 · atlasd on each machine: projects, memory links, update format
+- **Update format stays 1.** `Manifest::projects` (name and remote) is added last and left
+  out when empty, so a manifest without projects keeps its exact signed bytes, and older
+  clients, whose manifest type doesn't refuse unknown fields, ignore it and simply link no
+  project. A format bump would have made every older client refuse every update.
+- **Project remotes go out without credentials** (`release::without_credentials`), and
+  machines match checkouts by `release::remote_key`, read from `.git/config` and
+  `.git/index` directly, so atlasd starts no git process in the owner's repos.
+- **Memory links point into the owner's own knowledge checkout** (`memory_store`, else an
+  adopted folder inside one, verified by its `origin`), never Atlas's local copy, which
+  every pass resets to the signed commit and would delete new notes from. Without such a
+  checkout no memory folder is linked and the pass says why.
+- **In a checkout Atlas removes only links its exclude block lists**, and never writes a
+  path git tracks; the block is add-only (shared with the hub).
+- **One reader for `atlas/placements.toml` on machines**: skills and `[instructions]` come
+  from one `read_placements`; only a missing file means defaults, and any other fault is
+  one problem that changes no skill link, switch or Claude Code setting.
+- **Codex's switches for home and project skills are rendered once per pass**; Codex's
+  format holds one Atlas switch per skill name, so a second same-named skill off is
+  reported. `atlas_before` isn't kept: every format marks its entries in the file.
 ## 0032 · 2026-11-27 · The hub is an installable web app
 The hub page links a web app manifest (`/static/manifest.webmanifest`: name Atlas,
 `start_url` and `scope` `/`, standalone, 192 and 512 px icons made from
@@ -403,6 +461,49 @@ Through systemd rather than running `atlasd run` directly: the run gets the same
 as every later one, its output goes to the journal, systemd never runs it twice at once,
 and `--no-block` keeps the install (and an install over SSH) from waiting for it.
 
+## 0045 · 2026-11-27 · No "missing" flags before an update reaches this machine
+Before anything was sent, every skill row said "Not in Codex and Pi" or "No agent has it"
+and Instructions said "Not read by …": a flag on every row, which is no flag. Agents get
+skills and Global through links atlasd makes, so until it has applied an update a missing
+link means "not sent yet", which Home's "Nothing has been sent to your machines yet" line
+already says. Now these flags, their Needs attention reasons and Home's "Claude can't use N
+of X's skills" appear only when the hub's machine has applied everything the owner saved
+(`distribute::delivered`: an update exists, a client on the machine named like the hub
+reported applying the latest one, and no saved change waits to be sent). After that a
+skill row flags only agents the owner wants to have it (`Placement::wants`) that lack it;
+an agent switched off, or a skill used only in some projects, isn't flagged in the home
+folders. The hub can't tell "not applied yet" from "applied, then changed by hand" while a
+newer update is pending; it shows nothing then, as before the first send.
+
+## 0046 · 2026-11-27 · One count for "outside Atlas"
+Home counted importable outside skills (exact copies included), the Skills page's offer
+counted "things" (outside skills without exact copies, plus project items), the Outside
+Atlas header counted every outside row (tools' and broken links too) and the Tidy page
+counted what could be brought in or compared: four numbers for one idea. Now one rule,
+`import::actionable` (can be brought in or compared), drives the Outside Atlas section on
+the Skills and Tidy pages; tools' and broken links and copies Atlas already has go under the
+folded **Built in and others**. Home and the Skills page show the same sentence
+(`tidy::offer`): "N skills on this machine aren't in Atlas", and, when the projects have
+something to tidy, "; M project skills could be tidier".
+
+## 0047 · 2026-11-28 · atlasd keeps a copy of what it replaces
+atlasd may replace a file or folder whose content is all in Atlas without being the same
+bytes: a machine's own `AGENTS.md` whose every line is in Global (but in another order,
+with repeats or other line endings) becomes the link, Claude's `CLAUDE.md` becomes just
+the import, a strict JSON settings file in its own layout is laid out again, a memory
+folder whose notes differ only in an execute bit becomes the link. Before any of these,
+atlasd copies the original to `~/.local/state/atlas-client/replaced/<UTC date>/<path in
+the home>` (`abs/<path>` for a path outside it), in a private folder (0700). The copy is
+written first, atomically, never through a link and within the `atlas_fs::library` limits;
+if it can't be made, the original stays and the pass reports it. An earlier copy with
+other content is never overwritten: the new one gets `.1`, `.2` … The plan decides which
+actions keep a copy (`keep` on the action, so `atlasd run --dry-run` says so) and apply
+copies (`atlas-client::keep`); the report sent to the hub lists each copy (`Report::kept`,
+absent in older clients' reports), and atlasd prints it. Nothing is kept when the result
+holds the original byte for byte: an exact skill copy adopted as a link, the import added
+to a `CLAUDE.md` whose lines stay as written, a rewrite of a JSON file already in Atlas's
+layout, TOML and JSONC edits made in place, links. Restoring is copying the file back.
+Copies are not pruned; the owner deletes them.
 ## 0040 · 2026-11-28 · The owner sees hook changes before signing
 An update pins whole commits of Knowledge and public skills, so it can carry changes the
 owner never made in Atlas: an agent writing to the knowledge repo, or a sync from another
