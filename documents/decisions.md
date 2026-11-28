@@ -305,3 +305,10 @@ adapted to the hub and many machines. See `documents/skills.md`.
   switches project skills off from its home `config.toml` (keyed by path), and OpenCode's
   repo `opencode.json` is never written (it is usually tracked); bulk delete and move are
   one change; public skills are committed and never pushed (0016), not refused.
+- **Bringing things in, details** (import work): Claude Code's notes are copied byte for
+  byte (atlasd's memory link compares bytes); host and project are recorded beside them in
+  `memory/projects/<project>/index.md` and the folder name, never added to the notes. An
+  imported hook's `hook.toml` gains `replaces` (the hand-made command), and the Claude Code
+  and Codex formats drop the identical hand-made handler where they write the hook. Hooks
+  for Grok Build and Muse, commands that look like they hold a secret, links into tools'
+  folders and built-in or plugin skills are not imported. See `documents/skills.md`.
