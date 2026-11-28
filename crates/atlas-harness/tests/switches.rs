@@ -418,3 +418,16 @@ fn claudes_two_reaches_share_the_format() {
         );
     }
 }
+
+#[test]
+fn names_that_arent_skill_names_are_never_written() {
+    for (kind, current) in [
+        (ClaudeCode, None),
+        (Codex, None),
+        (OpenCode, None),
+        (Pi, None),
+    ] {
+        let odd = render(kind, Home, current, &["*", "two\nlines", "Caps", ""]).unwrap();
+        assert_eq!(odd, Change::Unchanged, "{kind}");
+    }
+}

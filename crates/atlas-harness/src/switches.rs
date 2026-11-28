@@ -41,7 +41,7 @@ mod pi;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use atlas_core::kernel::HarnessKind;
+use atlas_core::kernel::{HarnessKind, Slug};
 use serde_json::{Map, Value};
 
 use crate::placement::Reach;
@@ -108,7 +108,10 @@ pub const fn can_switch_off(kind: HarnessKind, reach: Reach) -> bool {
 /// - `skill_dir` maps a name to the folder the agent loads it from, for formats keyed by
 ///   path (Codex); a link into the skill's folder is fine. At `Reach::Project` a name it
 ///   doesn't map is skipped, since a name entry would also switch off a global skill.
-/// - `Change::Remove` only when Atlas created the file and nothing else is left in it.
+/// - Only names that are slugs (Atlas's skill names) are written: Atlas's marks hold the
+///   name, and a slug can't make a wildcard (`OpenCode`) or end a comment early.
+/// - `Change::Remove` only when nothing is left but what Atlas made: an empty object or
+///   table, or the file Atlas created with no entries in it.
 ///
 /// # Errors
 /// The current file can't be parsed, or holds the setting in a shape Atlas doesn't edit;
@@ -125,6 +128,12 @@ pub fn render_switches(
     if !can_switch_off(kind, reach) {
         return Ok(Change::Unchanged);
     }
+    let off: BTreeSet<String> = off
+        .iter()
+        .filter(|n| Slug::new(n.as_str()).is_ok())
+        .cloned()
+        .collect();
+    let off = &off;
     match kind {
         HarnessKind::ClaudeCode => claude::render(current, off),
         HarnessKind::Codex => codex::render(current, off, reach, skill_dir),

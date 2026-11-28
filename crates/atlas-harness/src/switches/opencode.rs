@@ -176,16 +176,9 @@ pub(super) fn render(
         }
         _ => SKELETON.to_owned(),
     };
-    // A name with `*` or `?` would be a pattern matching other skills too.
-    let off: BTreeSet<String> = off
-        .iter()
-        .filter(|n| !n.contains(['*', '?']))
-        .cloned()
-        .collect();
-
     let mut text = original.clone();
     let mut removed = false;
-    while remove_one(&mut text, &off)? {
+    while remove_one(&mut text, off)? {
         removed = true;
     }
     if removed {
