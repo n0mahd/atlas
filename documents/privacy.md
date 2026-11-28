@@ -33,7 +33,7 @@ All on the hub, under its state folder (default `~/.local/state/atlas-hub`) unle
 | --- | --- | --- | --- | --- |
 | `atlas-hub` (tracing to stderr) | Start-up, passkey enrolled (key name), CLI token created (name), update signed/sent, pairing (machine name, OS user), SSH install target and failure text, push/save failures | Machine names, OS user names, SSH targets. Never tokens, keys or passkey material | systemd user journal of the hub account | journald default |
 | `atlas-hub setup` / `pair` (terminal) | One-time setup link / QR code, SSH output | The setup link is a short-lived secret, shown only on the owner's terminal | Owner's terminal | Not stored |
-| `atlasd` | What it linked or wrote, problems found | Local paths | systemd user journal on each machine | journald default |
+| `atlasd` | What it linked or wrote, problems found | Local paths | systemd user journal on Linux; `~/Library/Logs/atlasd.log` (0600) on macOS | journald default; the macOS file grows until deleted |
 
 ## Client-side storage
 
