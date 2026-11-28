@@ -399,6 +399,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
   .choices { margin-left: 0; flex-basis: 100%; }
   fieldset.choice-row > legend { float: none; }
   .input-small { width: 100%; }
+}
 
 /* placement: per-agent switches and "Use in…" (decision 0027). The switches are submit
    buttons with role="switch", so they work as plain form posts without script. */
@@ -490,6 +491,7 @@ fieldset.choice-row > legend { float: left; padding: 0; margin-right: 12px; }
 .instr-error { flex: 1 1 100%; }
 @media (max-width: 640px) {
   .instr-go { display: none; }
+}
 
 /* library */
 
