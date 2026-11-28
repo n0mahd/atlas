@@ -15,6 +15,9 @@ use crate::{AppError, AppState};
 const ARCHES: [&str; 2] = ["x86_64", "aarch64"];
 const SERVICE: &str = include_str!("../../../deploy/atlasd.service");
 const TIMER: &str = include_str!("../../../deploy/atlasd.timer");
+const PLIST: &str = include_str!("../../../deploy/atlasd.plist");
+/// Operating systems atlasd is built for, as they appear in build names (`atlasd-<os>-<arch>`).
+const OSES: [&str; 2] = ["linux", "macos"];
 
 fn dist(s: &AppState) -> Result<std::path::PathBuf, AppError> {
     Ok(s.writer
@@ -42,10 +45,12 @@ pub(crate) async fn script(State(s): State<AppState>) -> Result<Response, AppErr
         .as_ref()
         .map_or_else(String::new, |w| w.origin().to_owned());
     let mut sums = String::new();
-    for arch in ARCHES {
-        if let Ok(bytes) = tokio::fs::read(dir.join(format!("atlasd-linux-{arch}"))).await {
-            use std::fmt::Write as _;
-            let _ = writeln!(sums, "  {arch}) sum={} ;;", sha256_hex(&bytes));
+    for os in OSES {
+        for arch in ARCHES {
+            if let Ok(bytes) = tokio::fs::read(dir.join(format!("atlasd-{os}-{arch}"))).await {
+                use std::fmt::Write as _;
+                let _ = writeln!(sums, "  {os}-{arch}) sum={} ;;", sha256_hex(&bytes));
+            }
         }
     }
     if sums.is_empty() {
@@ -60,7 +65,7 @@ pub(crate) async fn script(State(s): State<AppState>) -> Result<Response, AppErr
         .into_response())
 }
 
-/// The install script for a hub at `origin`; `sums` holds one `  <arch>) sum=<hex> ;;`
+/// The install script for a hub at `origin`; `sums` holds one `  <os>-<arch>) sum=<hex> ;;`
 /// line per atlasd build. It must run under any POSIX `sh`, macOS's bash 3.2 included.
 fn script_text(origin: &str, sums: &str) -> String {
     format!(
@@ -76,7 +81,8 @@ fi
 code="$1"
 hub="{origin}"
 case "$(uname -s)" in
-  Linux) ;;
+  Linux) os=linux ;;
+  Darwin) os=macos ;;
   *) echo "atlasd isn't available for $(uname -s) yet." >&2; exit 1 ;;
 esac
 case "$(uname -m)" in
@@ -84,15 +90,19 @@ case "$(uname -m)" in
   aarch64|arm64) arch=aarch64 ;;
   *) echo "atlasd isn't available for $(uname -m) yet." >&2; exit 1 ;;
 esac
-case "$arch" in
-{sums}  *) echo "This hub has no atlasd build for $arch." >&2; exit 1 ;;
+case "$os-$arch" in
+{sums}  *) echo "This hub has no atlasd build for $os on $arch." >&2; exit 1 ;;
 esac
 
-echo "Downloading atlasd for $arch…"
+echo "Downloading atlasd for $os on $arch…"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-curl -fsSL "$hub/install/atlasd-linux-$arch" -o "$tmp"
-echo "$sum  $tmp" | sha256sum -c --quiet -
+curl -fsSL "$hub/install/atlasd-$os-$arch" -o "$tmp"
+if command -v sha256sum >/dev/null 2>&1; then
+  echo "$sum  $tmp" | sha256sum -c --quiet -
+else
+  echo "$sum  $tmp" | shasum -a 256 -c --quiet -
+fi
 mkdir -p "$HOME/.local/bin"
 install -m 755 "$tmp" "$HOME/.local/bin/atlasd"
 
@@ -102,6 +112,23 @@ for dir in "$HOME/Knowledge" "$HOME/Skills"; do
   [ -d "$dir" ] && set -- "$@" --adopt "$dir"
 done
 "$HOME/.local/bin/atlasd" pair "$hub" "$code" "$@"
+
+if [ "$os" = macos ]; then
+  # A launchd agent for this login runs atlasd every 10 minutes (atlasd.timer on Linux).
+  agents="$HOME/Library/LaunchAgents"
+  mkdir -p "$agents" "$HOME/Library/Logs"
+  cat <<'PLIST' | sed "s|__HOME__|$HOME|g" > "$agents/atlasd.plist"
+{PLIST}PLIST
+  uid="$(id -u)"
+  launchctl bootout "gui/$uid/atlasd" 2>/dev/null || launchctl bootout "user/$uid/atlasd" 2>/dev/null || true
+  # gui/ is the logged-in desktop session; over SSH with nobody logged in, only user/ exists.
+  launchctl bootstrap "gui/$uid" "$agents/atlasd.plist" 2>/dev/null ||
+    launchctl bootstrap "user/$uid" "$agents/atlasd.plist"
+  echo
+  echo "Done. atlasd checks for changes every 10 minutes (log: ~/Library/Logs/atlasd.log)."
+  echo "To see what it would change now: ~/.local/bin/atlasd run --dry-run"
+  exit 0
+fi
 
 units="${{XDG_CONFIG_HOME:-$HOME/.config}}/systemd/user"
 mkdir -p "$units"
@@ -121,16 +148,20 @@ echo "To see what it would change now: atlasd run --dry-run"
     )
 }
 
-/// A client build, by architecture.
+/// A client build, by operating system and architecture.
 pub(crate) async fn binary(
     State(s): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Response, AppError> {
-    let arch = name
-        .strip_prefix("atlasd-linux-")
-        .filter(|a| ARCHES.contains(a))
-        .ok_or(AppError::NotFound)?;
-    let bytes = tokio::fs::read(dist(&s)?.join(format!("atlasd-linux-{arch}")))
+    let known = OSES.iter().any(|os| {
+        ARCHES
+            .iter()
+            .any(|arch| name == format!("atlasd-{os}-{arch}"))
+    });
+    if !known {
+        return Err(AppError::NotFound);
+    }
+    let bytes = tokio::fs::read(dist(&s)?.join(&name))
         .await
         .map_err(|_| AppError::NotFound)?;
     Ok((
@@ -150,7 +181,10 @@ mod tests {
     use std::process::Command;
 
     fn script() -> String {
-        script_text("https://hub.example.ts.net:7443", "  x86_64) sum=00 ;;\n")
+        script_text(
+            "https://hub.example.ts.net:7443",
+            "  linux-x86_64) sum=00 ;;\n  macos-aarch64) sum=00 ;;\n",
+        )
     }
 
     /// macOS's /bin/sh (bash 3.2) treats an apostrophe inside `${...}` as an open quote and
