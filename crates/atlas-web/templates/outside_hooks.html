@@ -26,9 +26,11 @@
           <span class="mono muted">{{ f.config }}{% if !f.timeout.is_empty() %} · times out after {{ f.timeout }}{% endif %}</span>
           {% if f.importable %}
           <pre class="ink-block">{{ f.command }}</pre>
-          {% if page.signed_in %}
           <p class="drawer-note">Atlas keeps it as <span class="mono">hooks/&lt;name&gt;/</span> with this command as its script, for {{ f.harness }} only. Hooks run commands, so it reaches your machines only in an update you sign; then atlasd's entry takes this one's place.</p>
+          {% endif %}
+          {% if page.signed_in %}
           <div class="row-actions">
+            {% if f.importable %}
             <form class="inline-form" method="post" action="/import/hook" data-send-on-save>
               <input type="hidden" name="csrf" value="{{ page.csrf }}">
               <input type="hidden" name="key" value="{{ f.key }}">
@@ -36,15 +38,15 @@
               <input id="hook-name-{{ loop.index }}" class="input-small mono" type="text" name="name" value="{{ f.name }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required autocomplete="off" spellcheck="false">
               <button class="button-ink button-small" type="submit">Bring into Atlas</button>
             </form>
+            {% endif %}
             <form class="inline-form" method="post" action="/import/keep" data-send-on-save>
               <input type="hidden" name="csrf" value="{{ page.csrf }}">
               <input type="hidden" name="key" value="{{ f.key }}">
               <button class="button-plain button-small" type="submit">Leave it outside</button>
             </form>
           </div>
-          {% else if page.can_sign_in %}
+          {% else if page.can_sign_in && f.importable %}
           <a class="link-cap" href="/signin?next=/hooks">Sign in to bring it in</a>
-          {% endif %}
           {% endif %}
         </div>
       </details>
