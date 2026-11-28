@@ -104,11 +104,6 @@ test("links to hidden files or out of the repo are not followed, and are flagged
 });
 
 test("a memory note that links to a hidden file is flagged like a skill", async ({ owner }) => {
-  test.fail();
-  test.info().annotations.push({
-    type: "bug",
-    description: "A memory note that is a symlink (memory/leak.md -> ../.env) is skipped without a problem in Needs a look; skills report the same case.",
-  });
   await owner.goto("/");
   await expect(owner.getByText("~/Knowledge/memory/leak.md")).toBeVisible({ timeout: 3000 });
 });
@@ -129,6 +124,7 @@ test("a machine never installs the escaping hook or the linked-out skills", asyn
   await sendNow(owner);
   const m = await pairedMachine(world, "laptop", await pairCodeFromUi(owner));
   const r = await atlasd(m, "run");
+  test.info().attach("atlasd run", { body: r.out, contentType: "text/plain" });
   test.info().annotations.push({ type: "atlasd", description: r.out.split("\n").filter((l) => /escape|outside|dotenv|problem/.test(l)).join(" | ") });
   expect(r.out).toMatch(/escape/);
   expect(r.out).toMatch(/must name a file in the hook's folder/);
@@ -140,3 +136,25 @@ test("a machine never installs the escaping hook or the linked-out skills", asyn
   machineLaptop = m;
 });
 
+
+test("a machine doesn't install a skill whose SKILL.md links to a hidden file", async () => {
+  test.info().annotations.push({
+    type: "bug",
+    description:
+      "atlasd links ~/.claude/skills/dotenv although its SKILL.md is a link to the repo's .env; the hub skips and flags the same link. The agent then reads .env as a skill.",
+  });
+  const m = machineLaptop;
+  const reads = m.exists(".claude/skills/dotenv/SKILL.md") ? m.read(".claude/skills/dotenv/SKILL.md") : "";
+  test.info().annotations.push({ type: "evidence", description: `~/.claude/skills/dotenv -> ${m.link(".claude/skills/dotenv")}; SKILL.md holds the .env sentinel: ${reads.includes(SENTINEL.repoEnv)}` });
+  expect(m.link(".claude/skills/dotenv")).toBeNull();
+  expect(reads).not.toContain(SENTINEL.repoEnv);
+});
+
+test("a machine skips a SKILL.md linked out of the repo and names both skips", async () => {
+  const m = machineLaptop;
+  expect(m.link(".claude/skills/outfile")).toBeNull();
+  const status = await atlasd(m, "run");
+  test.info().attach("atlasd run (second pass)", { body: status.out, contentType: "text/plain" });
+  for (const name of ["dotenv", "outfile"])
+    expect(status.out).toMatch(new RegExp(`skill ${name} skipped: its SKILL.md: it is a link to somewhere else`));
+});
