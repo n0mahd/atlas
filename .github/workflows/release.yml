@@ -5,6 +5,8 @@ name: release
 
 on:
   push:
+    branches:
+      - release-builds
     tags:
       - "v*"
   workflow_dispatch:
