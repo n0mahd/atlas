@@ -870,3 +870,22 @@ fn only_plain_top_level_markdown_files_are_subagents() {
     }
     assert_eq!(d.problems.len(), 3, "{:?}", d.problems);
 }
+
+/// OpenCode reads both ~/.claude/skills and ~/.agents/skills, where the same three skills
+/// are linked; the hub's Machines page showed it with six.
+#[test]
+fn an_agent_reading_two_folders_counts_each_skill_once() {
+    let key = Key::new(1, "Laptop");
+    let mut w = World::new(&key);
+    fs::create_dir_all(w.home().join(".config/opencode")).unwrap();
+    let pass = w.run(&signed(&w.manifest(1, &[&key]), &key), false);
+    assert!(!pass.failed, "{:?}", pass.problems);
+    let opencode = pass
+        .report
+        .harnesses
+        .iter()
+        .find(|h| h.kind == HarnessKind::OpenCode)
+        .unwrap();
+    assert!(opencode.present);
+    assert_eq!(opencode.skills_from_atlas, 3);
+}
