@@ -82,8 +82,12 @@ pub const fn switch_file(kind: HarnessKind, reach: Reach) -> Option<SwitchFile> 
         },
         (HarnessKind::Codex, _) => home(&[".codex/config.toml"]),
         (HarnessKind::OpenCode, Reach::Home) => home(&[
-            ".config/opencode/opencode.jsonc",
+            // Whichever exists is edited; with neither, `.jsonc` is created, because
+            // OpenCode rewrites a `.json` with JSON.stringify when it saves settings,
+            // which would drop Atlas's comment marks and leave its entries looking like
+            // the owner's.
             ".config/opencode/opencode.json",
+            ".config/opencode/opencode.jsonc",
         ]),
         (HarnessKind::Pi, Reach::Home) => home(&[".pi/agent/settings.json"]),
         _ => return None,
