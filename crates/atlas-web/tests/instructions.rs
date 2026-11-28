@@ -481,3 +481,177 @@ async fn refusals_change_nothing() {
     assert_eq!(commits(&h.project), 1);
     assert_eq!(commits(&h.knowledge), 1);
 }
+
+/// atlasd's copy of Global on a hub machine that also runs atlasd.
+const ATLASD_GLOBAL: &str = ".local/share/atlas/sources/knowledge/AGENTS.md";
+
+#[tokio::test]
+async fn use_global_instead_drops_atlasds_import_too() {
+    let h = hub(&[("AGENTS.md", "# Shop\n")]);
+    let copy = h.home.join(ATLASD_GLOBAL);
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::write(&copy, GLOBAL).unwrap();
+    fs::write(
+        h.home.join(".claude/CLAUDE.md"),
+        format!("@~/{ATLASD_GLOBAL}\nPrefer rg.\n"),
+    )
+    .unwrap();
+    let res = confirm(&h, "/instructions/global/claude-code/use-global", &[]).await;
+    assert_committed(&res);
+    assert_eq!(
+        read(&h.knowledge.join("AGENTS.md")),
+        format!("{GLOBAL}\n<!-- atlas: from ~/.claude/CLAUDE.md -->\n\nPrefer rg.\n"),
+        "Global never gains an import of itself"
+    );
+}
+
+#[tokio::test]
+async fn move_to_global_drops_every_import_of_global() {
+    // Imports of Global by atlasd's copy and through a link to the knowledge repo.
+    let h = hub(&[("README.md", "Shop.\n")]);
+    let copy = h.home.join(ATLASD_GLOBAL);
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::write(&copy, GLOBAL).unwrap();
+    std::os::unix::fs::symlink(&h.knowledge, h.home.join("K")).unwrap();
+    fs::write(
+        h.project.join("AGENTS.md"),
+        format!("@~/{ATLASD_GLOBAL}\n@~/K/AGENTS.md\nUse pnpm.\n"),
+    )
+    .unwrap();
+    git(&h.project, &["add", "-A"]);
+    git(&h.project, &["commit", "-q", "-m", "agents"]);
+    let res = confirm(&h, "/instructions/shop/AGENTS.md/to-global", &[]).await;
+    assert_committed(&res);
+    assert_eq!(
+        read(&h.knowledge.join("AGENTS.md")),
+        format!("{GLOBAL}\n<!-- atlas: from shop/AGENTS.md -->\n\nUse pnpm.\n")
+    );
+}
+
+#[tokio::test]
+async fn moving_a_claude_local_md_that_imports_global_removes_it() {
+    let h = hub(&[("AGENTS.md", "# Shop\n")]);
+    fs::write(h.project.join(".git/info/exclude"), "/CLAUDE.local.md\n").unwrap();
+    fs::write(
+        h.project.join("CLAUDE.local.md"),
+        "@~/Knowledge/AGENTS.md\nOnly mine.\n",
+    )
+    .unwrap();
+    let res = confirm(&h, "/instructions/shop/CLAUDE.local.md/to-global", &[]).await;
+    assert_committed(&res);
+    assert!(!res.location.contains("kept=1"), "{}", res.location);
+    assert!(!h.project.join("CLAUDE.local.md").exists());
+    assert_eq!(
+        read(&h.knowledge.join("AGENTS.md")),
+        format!("{GLOBAL}\n<!-- atlas: from shop/CLAUDE.local.md -->\n\nOnly mine.\n")
+    );
+    // The next page reads the project as it now is.
+    let list = get(&h, "/instructions?scope=shop").await;
+    assert!(
+        !list
+            .body
+            .contains(r#"href="/instructions/shop/CLAUDE.local.md""#),
+        "{}",
+        list.body
+    );
+    assert!(list.body.contains("New CLAUDE.local.md"));
+}
+
+#[tokio::test]
+async fn nothing_is_read_or_planned_before_the_session_is_checked() {
+    let h = hub(&[("AGENTS.md", "# Shop\n"), ("CLAUDE.md", "Rules.\n")]);
+    let path = "/instructions/shop/CLAUDE.md/to-agents";
+    // A stale base used to answer 409, and a plan that fails 400, before the session
+    // check: both mean the files were read and git ran for a stranger.
+    let res = post(&h, path, &[("csrf", &h.csrf), ("base", "stale")], false).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    let res = post(
+        &h,
+        "/instructions/shop/CLAUDE.local.md/to-global",
+        &[("csrf", &h.csrf)],
+        false,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    // Cross-origin, with the session cookie.
+    let req = Request::post(path)
+        .header("tailscale-user-login", LOGIN)
+        .header(header::ORIGIN, "https://elsewhere.test")
+        .header(header::COOKIE, &h.cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf={}&base=stale", h.csrf)))
+        .unwrap();
+    assert_eq!(send(&h, req).await.status, StatusCode::FORBIDDEN);
+    // Claude's option: an unknown value is refused only after the session check.
+    let res = post(
+        &h,
+        "/instructions/claude-agents-md",
+        &[("csrf", "nope"), ("value", "sometimes")],
+        true,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(read(&h.project.join("CLAUDE.md")), "Rules.\n");
+    assert_eq!((commits(&h.project), commits(&h.knowledge)), (1, 1));
+}
+
+#[tokio::test]
+async fn a_confirmation_without_a_session_goes_to_sign_in() {
+    let h = hub(&[("CLAUDE.md", "Rules.\n")]);
+    let req = Request::get("/instructions/shop/CLAUDE.md/to-agents")
+        .header("tailscale-user-login", LOGIN)
+        .body(Body::empty())
+        .unwrap();
+    let res = send(&h, req).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location,
+        "/signin?next=/instructions/shop/CLAUDE.md/to-agents"
+    );
+}
+
+#[tokio::test]
+async fn turning_claudes_option_on_offers_to_send() {
+    let h = hub(&[
+        ("AGENTS.md", "# Shop\n"),
+        ("CLAUDE.md", "Run the tests.\n"),
+        (".gitignore", "CLAUDE.local.md\n"),
+    ]);
+    fs::write(h.project.join("CLAUDE.local.md"), "Mine.\n").unwrap();
+    let page = get(&h, "/instructions/shop/CLAUDE.md/to-agents").await;
+    assert!(page.body.contains("Also let Claude"), "{}", page.body);
+    assert!(
+        page.body.contains("data-send-on-save"),
+        "the option commits to the knowledge repo, which can be sent: {}",
+        page.body
+    );
+    // Without the offer the change stays in the project, so there is nothing to send.
+    fs::remove_file(h.project.join("CLAUDE.local.md")).unwrap();
+    let page = get(&h, "/instructions/shop/CLAUDE.md/to-agents").await;
+    assert!(!page.body.contains("Also let Claude"), "{}", page.body);
+    assert!(!page.body.contains("data-send-on-save"), "{}", page.body);
+}
+
+#[tokio::test]
+async fn the_list_reads_this_machine_once_per_snapshot() {
+    let h = hub(&[("AGENTS.md", "# Shop\n")]);
+    let local = r#"href="/instructions/shop/CLAUDE.local.md""#;
+    let first = get(&h, "/instructions?scope=shop").await;
+    assert!(!first.body.contains(local));
+    // Made outside Atlas: the next page within the snapshot's few seconds reuses the
+    // facts read with it rather than reading every file and running git again.
+    fs::write(h.project.join("CLAUDE.local.md"), "Mine.\n").unwrap();
+    let again = get(&h, "/instructions?scope=shop").await;
+    assert!(!again.body.contains(local), "{}", again.body);
+    // A save drops the snapshot and its facts together.
+    let res = post(
+        &h,
+        "/instructions/claude-agents-md",
+        &[("csrf", &h.csrf), ("value", "never")],
+        true,
+    )
+    .await;
+    assert_committed(&res);
+    let after = get(&h, "/instructions?scope=shop").await;
+    assert!(after.body.contains(local), "{}", after.body);
+}

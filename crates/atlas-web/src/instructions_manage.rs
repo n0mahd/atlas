@@ -14,6 +14,11 @@
 //! The hub sees only its own machine's home files. "Use Global instead" adds the text to
 //! Global; atlasd then replaces the agent's file on each machine only where every line of
 //! it is in Global (`atlas_harness::instructions::contained`).
+//!
+//! Facts about this machine ([`read_facts`]) cover the agents' home files and one
+//! project at most, the one shown or changed, since a project's facts can cost git runs
+//! (through `atlas_git`, never a bare `git`). The pages keep them with the snapshot
+//! ([`FactsSlot`]); a change checks the session first, then reads them fresh.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -141,6 +146,21 @@ fn is_global(path: &Path, globals: &[PathBuf]) -> bool {
     fs::canonicalize(path).is_ok_and(|c| globals.contains(&c))
 }
 
+/// `text` without its lines importing Global by any path [`globals`] knows (the knowledge
+/// repo's `AGENTS.md`, atlasd's copy, a link to either): moved into Global, such a line
+/// would make Global import itself.
+fn without_global_imports(text: &str, dir: &Path, home: &Path, globals: &[PathBuf]) -> String {
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !imports_path(l, dir, home).is_some_and(|p| is_global(&p, globals)))
+        .collect();
+    let mut out = kept.join("\n");
+    if !out.is_empty() && text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 fn home_file(
     sources: &Sources,
     path: &Path,
@@ -174,6 +194,8 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
     let mut facts = ProjectFacts::default();
     let canonical_root = fs::canonicalize(root).ok();
     let names = atlas_harness::readers::project_names();
+    // Opened only when a local file is there to ask git about.
+    let mut repo: Option<Option<atlas_git::Repo>> = None;
     for name in &names {
         let path = root.join(name);
         let Ok(meta) = fs::symlink_metadata(&path) else {
@@ -210,7 +232,10 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
             }
         }
         if name.contains("local") {
-            f.ignored = git_ignores(root, name);
+            let repo = repo.get_or_insert_with(|| atlas_git::Repo::open(root).ok());
+            f.ignored = repo
+                .as_ref()
+                .is_some_and(|r| r.is_ignored(Path::new(name)).unwrap_or(false));
         }
         if *name == "CLAUDE.md" && f.links_to.as_deref() == Some("AGENTS.md") {
             facts.claude_points_at_agents = true;
@@ -220,19 +245,16 @@ fn project_facts(sources: &Sources, root: &Path) -> ProjectFacts {
     facts
 }
 
-fn git_ignores(root: &Path, name: &str) -> bool {
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["check-ignore", "-q", "--", name])
-        .status()
-        .is_ok_and(|s| s.success())
-}
-
-/// Reads everything the Instructions pages show about this machine. Blocking. `placed`
-/// is the owner's Claude choice from the snapshot's placements.
+/// Reads what the Instructions pages show about this machine: the agents' home files,
+/// Claude's AGENTS.md option, and the files of `project` only (none for Global), since
+/// a project's facts cost a git run. Blocking. `placed` is the owner's Claude choice from
+/// the snapshot's placements.
 #[must_use]
-pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> InstructionFacts {
+pub fn read_facts(
+    sources: &Sources,
+    placed: Option<ClaudeAgentsMd>,
+    project: Option<&Slug>,
+) -> InstructionFacts {
     let globals = globals(sources);
     let mut out = InstructionFacts::default();
     for layout in atlas_harness::layouts() {
@@ -259,7 +281,7 @@ pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> Instruct
         }
         out.homes.insert(layout.kind, agent);
     }
-    for p in &sources.projects {
+    for p in sources.projects.iter().filter(|p| Some(&p.name) == project) {
         out.projects
             .insert(p.name.clone(), project_facts(sources, &p.root));
     }
@@ -271,12 +293,31 @@ pub fn read_facts(sources: &Sources, placed: Option<ClaudeAgentsMd>) -> Instruct
     out
 }
 
-async fn facts(s: &AppState, snap: &views::Snapshot) -> Result<InstructionFacts, AppError> {
+/// [`read_facts`] results kept with one snapshot ([`AppState::snapshot`]'s cache), by the
+/// project they cover (`None`: Global only), so the pages read them once per snapshot and
+/// a save, which drops the snapshot, drops them too.
+pub(crate) type FactsSlot = Arc<tokio::sync::Mutex<BTreeMap<Option<Slug>, Arc<InstructionFacts>>>>;
+
+/// The snapshot and the facts for the scope `scope_key` names, read once per snapshot.
+async fn facts(
+    s: &AppState,
+    scope_key: &str,
+) -> Result<(Arc<views::Snapshot>, Arc<InstructionFacts>), AppError> {
+    let (snap, slot) = s.cached().await?;
+    let project = views::resolve_scope(&snap, scope_key).project().cloned();
+    let mut slot = slot.lock().await;
+    if let Some(f) = slot.get(&project) {
+        return Ok((snap, Arc::clone(f)));
+    }
     let sources = Arc::clone(&s.sources);
     let placed = snap.catalog.placements.instructions.claude_reads_agents_md;
-    tokio::task::spawn_blocking(move || read_facts(&sources, placed))
+    let p = project.clone();
+    let f = tokio::task::spawn_blocking(move || read_facts(&sources, placed, p.as_ref()))
         .await
-        .map_err(|_| AppError::Internal)
+        .map(Arc::new)
+        .map_err(|_| AppError::Internal)?;
+    slot.insert(project, Arc::clone(&f));
+    Ok((snap, f))
 }
 
 // ---------------------------------------------------------------- pages
@@ -348,8 +389,7 @@ pub(crate) async fn list(
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> PageResult {
-    let snap = s.snapshot().await?;
-    let facts = facts(&s, &snap).await?;
+    let (snap, facts) = facts(&s, &q.scope).await?;
     let scope = views::resolve_scope(&snap, &q.scope);
     let v = views::instructions(&snap, &scope, &facts);
     let mut page = s.page(
@@ -372,8 +412,7 @@ pub(crate) async fn detail(
     Query(q): Query<ListQuery>,
     Query(extra): Query<Extra>,
 ) -> PageResult {
-    let snap = s.snapshot().await?;
-    let facts = facts(&s, &snap).await?;
+    let (snap, facts) = facts(&s, &scope_key).await?;
     let v =
         views::instruction_detail(&snap, &scope_key, &file, &facts).ok_or(AppError::NotFound)?;
     let scope = views::resolve_scope(&snap, &scope_key);
@@ -457,6 +496,15 @@ enum Write {
     ClaudeAlongside,
 }
 
+/// A file removed once Global holds its text.
+struct RemoveAfter {
+    path: PathBuf,
+    /// The file as the change read it; a file edited since is kept.
+    text: String,
+    /// What Global gained from it: `text` without its imports of Global.
+    own: String,
+}
+
 /// A change worked out from the files as they are now.
 struct Planned {
     confirm: Confirm,
@@ -466,7 +514,7 @@ struct Planned {
     inputs: Vec<PathBuf>,
     /// `CLAUDE.local.md` moved to Global: removed after Global's commit, when its text is
     /// there (git can't restore it, so it never goes before that).
-    remove_after: Option<(PathBuf, String)>,
+    remove_after: Option<RemoveAfter>,
     next: String,
 }
 
@@ -568,7 +616,7 @@ fn plan_use_global(
         .ok_or("That agent has no home file.")?;
     let path = sources.home.join(home.shared);
     let dir = path.parent().unwrap_or(&sources.home);
-    let own = without_imports_of(&own, &global, dir, &sources.home);
+    let own = without_global_imports(&own, dir, &sources.home, &globals(sources));
     let current = global_text(&global)?;
     let joined = append_section(&current, &agent.shown, &own);
     check_size(&joined, "Global")?;
@@ -670,6 +718,9 @@ fn plan_to_agents(
                 "Make it AGENTS.md"
             }
             .to_owned(),
+            // Ticking the offer commits atlas/placements.toml in the knowledge repo, which
+            // Save may then send; `change::respond` asks only when that commit happened.
+            sends: !offer_claude.is_empty(),
             offer_claude,
             ..Confirm::default()
         },
@@ -710,7 +761,7 @@ fn plan_to_global(
     let path = root.join(file);
     let text = need(read_text(&path), file)?;
     let current = global_text(&global)?;
-    let own = without_imports_of(&text, &global, &root, &sources.home);
+    let own = without_global_imports(&text, &root, &sources.home, &globals(sources));
     let from = format!("{project}/{file}");
     let joined = append_section(&current, &from, &own);
     check_size(&joined, "Global")?;
@@ -723,7 +774,11 @@ fn plan_to_global(
     }];
     let mut remove_after = None;
     if local {
-        remove_after = Some((path.clone(), text));
+        remove_after = Some(RemoveAfter {
+            path: path.clone(),
+            text,
+            own: own.clone(),
+        });
     } else {
         // Global gains the text first, so a failure part way leaves a copy, not a loss.
         repos.push(project_change(
@@ -914,7 +969,13 @@ async fn planned(s: &AppState, op: Op, text: String) -> Result<Planned, AppError
         .instructions
         .claude_reads_agents_md;
     tokio::task::spawn_blocking(move || {
-        let facts = read_facts(&sources, placed);
+        // Read fresh, not from the snapshot's cache: the plan moves this text. Only
+        // CLAUDE.md to AGENTS.md needs a project's facts.
+        let project = match &op {
+            Op::ToAgents(p) => Some(p),
+            _ => None,
+        };
+        let facts = read_facts(&sources, placed, project);
         plan(&sources, &facts, &op, &text)
     })
     .await
@@ -941,9 +1002,9 @@ pub(crate) async fn confirm(
         return Err(AppError::NotFound);
     }
     if !page.signed_in {
-        return Ok(Redirect::to(&format!(
-            "/signin?next=/instructions/{scope}/{file}/{action}"
-        ))
+        return Ok(Redirect::to(&crate::auth::signin_href(&format!(
+            "/instructions/{scope}/{file}/{action}"
+        )))
         .into_response());
     }
     let p = planned(&s, op, String::new()).await?;
@@ -983,6 +1044,10 @@ pub(crate) async fn run(
     UrlPath((scope, file, action)): UrlPath<(String, String, String)>,
     Form(form): Form<ChangeForm>,
 ) -> Response {
+    // Before any file is read or git runs for the plan.
+    if let Err(e) = authorised(&s, &headers, &form.csrf) {
+        return e.into_response(&headers);
+    }
     let Some(op) = parse(&s.sources, &scope, &file, &action) else {
         return AppError::NotFound.into_response();
     };
@@ -1023,7 +1088,7 @@ pub(crate) async fn run(
         Err(e) => return e.into_response(&headers),
     };
     let mut next = p.next;
-    if let Some((path, was)) = p.remove_after {
+    if let Some(r) = p.remove_after {
         // Git can't restore CLAUDE.local.md, so it goes only once Global has its text.
         let sources = Arc::clone(&s.sources);
         let removed = tokio::task::spawn_blocking(move || {
@@ -1031,15 +1096,17 @@ pub(crate) async fn run(
                 .ok()
                 .flatten()
                 .unwrap_or_default();
-            let still = read_text(&path).ok().flatten();
-            if still.as_deref() == Some(was.as_str()) && contained(&was, &global, |_| false) {
-                fs::remove_file(&path).is_ok()
+            let still = read_text(&r.path).ok().flatten();
+            if still.as_deref() == Some(r.text.as_str()) && contained(&r.own, &global, |_| false) {
+                fs::remove_file(&r.path).is_ok()
             } else {
                 false
             }
         })
         .await
         .unwrap_or(false);
+        // commit_change cleared the cache before the file went; the next page reads again.
+        s.invalidate().await;
         if !removed {
             next.push_str(if next.contains('?') {
                 "&kept=1"
@@ -1055,6 +1122,17 @@ pub(crate) async fn run(
     change::respond(&s, &headers, &outcome, &next)
 }
 
+/// A change's session check, done before the change reads anything.
+/// [`change::commit_change`] checks again under its own rules.
+fn authorised(s: &AppState, headers: &HeaderMap, csrf: &str) -> Result<(), ChangeError> {
+    let w = s.writer.as_ref().ok_or(ChangeError::ReadOnly)?;
+    if w.authorised(headers, csrf) {
+        Ok(())
+    } else {
+        Err(ChangeError::Forbidden)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct ClaudeForm {
     csrf: String,
@@ -1067,6 +1145,9 @@ pub(crate) async fn claude_option(
     headers: HeaderMap,
     Form(form): Form<ClaudeForm>,
 ) -> Response {
+    if let Err(e) = authorised(&s, &headers, &form.csrf) {
+        return e.into_response(&headers);
+    }
     let Some(choice) = ClaudeAgentsMd::from_id(&form.value) else {
         return AppError::Bad("Unknown choice.".to_owned()).into_response();
     };
@@ -1136,6 +1217,31 @@ pub fn home_words(access: &Access, agent: &AgentHome) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn facts_cover_only_the_project_asked_for() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = |name: &str| {
+            let root = tmp.path().join(name);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+            atlas_fs::Project {
+                name: Slug::new(name).unwrap(),
+                root,
+            }
+        };
+        let sources = Sources {
+            home: tmp.path().to_path_buf(),
+            knowledge: tmp.path().join("k"),
+            public_skills: None,
+            projects: vec![project("shop"), project("blog")],
+        };
+        assert!(read_facts(&sources, None, None).projects.is_empty());
+        let shop = Slug::new("shop").unwrap();
+        let facts = read_facts(&sources, None, Some(&shop));
+        assert_eq!(facts.projects.keys().collect::<Vec<_>>(), [&shop]);
+        assert!(facts.projects[&shop].present.contains_key("AGENTS.md"));
+    }
 
     #[test]
     fn only_known_actions_parse() {

@@ -194,6 +194,32 @@ fn pathspec_magic_is_taken_literally() {
 }
 
 #[test]
+fn ignored_names_what_git_ignores() {
+    let dir = fixture();
+    let p = dir.path();
+    fs::write(p.join(".gitignore"), "*.local.md\na.md\n").unwrap();
+    fs::write(p.join(".git/info/exclude"), "/notes.txt\n").unwrap();
+    for f in ["CLAUDE.local.md", "notes.txt", "kept.md"] {
+        fs::write(p.join(f), "x\n").unwrap();
+    }
+    fs::create_dir_all(p.join(".claude")).unwrap();
+    fs::write(p.join(".claude/CLAUDE.local.md"), "x\n").unwrap();
+    let repo = Repo::open(p).unwrap();
+    let ignored = |rel: &str| repo.is_ignored(Path::new(rel)).unwrap();
+    assert!(ignored("CLAUDE.local.md"));
+    assert!(ignored(".claude/CLAUDE.local.md"));
+    assert!(ignored("notes.txt"));
+    assert!(!ignored("kept.md"));
+    assert!(!ignored("missing.md"));
+    // Tracked, so not ignored although a pattern matches it.
+    assert!(!ignored("a.md"));
+    assert!(matches!(
+        repo.is_ignored(Path::new("../x")),
+        Err(GitError::InvalidPath(_))
+    ));
+}
+
+#[test]
 fn repo_hooks_never_run() {
     let dir = fixture();
     let p = dir.path();
