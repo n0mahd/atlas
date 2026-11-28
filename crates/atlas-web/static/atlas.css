@@ -336,8 +336,8 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .field .search { width: 100%; flex: none; text-transform: none; letter-spacing: normal; }
 .field.grow { flex: 1 1 220px; width: auto; }
 .setting-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 8px; }
-.setting-row .row-desc { white-space: normal; }
-.switch { display: flex; align-items: center; gap: 12px; flex: 1 1 300px; cursor: pointer; }
+.setting-row .row-name, .setting-row .row-desc { white-space: normal; overflow-wrap: anywhere; }
+.switch { display: flex; align-items: center; gap: 12px; flex: 1 1 300px; min-width: 0; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .switch-track { flex: none; width: 34px; height: 18px; border: 1px solid var(--ink); position: relative; background: transparent; }
 .switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: var(--muted); transition: left 0.12s; }
