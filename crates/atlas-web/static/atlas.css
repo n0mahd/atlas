@@ -114,7 +114,7 @@ details[open] > summary .row-desc { white-space: normal; }
 :root[data-rail="collapsed"] .rail-foot { justify-content: center; padding: 8px 0; }
 
 main { flex: 1 1 auto; min-width: 0; padding: 14px 28px 48px; }
-main > * { max-width: 1180px; margin-inline: auto; }
+.page-inner { max-width: 1180px; margin-inline: auto; }
 
 /* ------------------------------------------------------------ masthead */
 
@@ -153,8 +153,8 @@ h1 { margin: 0; font-family: var(--display); font-weight: 900; font-size: 28px; 
 .section-head .mark { align-self: center; }
 h2 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; }
 .section-head .count { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-.empty { margin: 10px 0 0; color: var(--muted); font-style: italic; }
-.marginalia { margin: 8px 0 0; padding: 7px 12px; border-left: 3px solid var(--gilt-orn); background: var(--ground-deep); font-style: italic; color: var(--ink-soft); }
+.empty { margin-block: 10px 0; color: var(--muted); font-style: italic; }
+.marginalia { margin-block: 8px 0; padding: 7px 12px; border-left: 3px solid var(--gilt-orn); background: var(--ground-deep); font-style: italic; color: var(--ink-soft); }
 
 .rows { list-style: none; margin: 0; padding: 0; }
 .rows > li { border-bottom: 1px solid var(--hair); }
@@ -216,7 +216,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 
 /* ------------------------------------------------------------ front page */
 
-.frontispiece { display: flex; align-items: center; gap: 22px; margin: 6px 0 18px; }
+.frontispiece { display: flex; align-items: center; gap: 22px; margin-block: 6px 18px; }
 .emblem { width: 96px; height: 96px; flex: none; display: block; border: 1px solid var(--gilt-orn); border-radius: 2px; }
 .wordmark { font-size: 54px; letter-spacing: 0.08em; line-height: 1; }
 .lede { margin: 4px 0 0; font-style: italic; font-size: 18px; color: var(--ink-soft); }
@@ -315,7 +315,7 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 .button-ink { background: var(--ink); color: var(--ground); box-shadow: inset 0 0 0 2px var(--ink), inset 0 0 0 3px var(--gilt-orn); }
 .button-plain { background: transparent; color: var(--ink); }
 .button-ink:disabled, .button-plain:disabled { opacity: 0.5; cursor: progress; }
-.flash { margin: 0 0 12px; }
+.flash { margin-block: 0 12px; }
 .flash .button-plain { margin-left: 10px; min-height: 28px; padding: 0 12px; vertical-align: middle; font-style: normal; }
 .warn-note { border-left-color: var(--oxblood); color: var(--oxblood); }
 
@@ -350,3 +350,9 @@ details[open] > summary .chev::before { transform: rotate(45deg); }
 :root[data-rail="collapsed"] .rail-foot { align-items: center; }
 
 .client-row { border-top: 1px solid var(--hair); }
+.ledger-actions { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
+.inline-form { margin: 0; display: inline-flex; }
+.button-sm { min-height: 28px; padding: 0 10px; font-size: 11px; }
+.code-row { display: flex; align-items: stretch; gap: 8px; margin-top: 6px; }
+.code-row .ink-block { flex: 1 1 auto; min-width: 0; }
+.copy-btn { flex: none; align-self: center; }
