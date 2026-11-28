@@ -378,3 +378,81 @@ fn upstream_and_waiting_commits() {
     assert_eq!(repo.commits_since(&one).unwrap(), Some(1));
     assert_eq!(repo.commits_since(&"0".repeat(40)).unwrap(), None);
 }
+
+#[test]
+fn restore_puts_paths_back_as_head_has_them() {
+    let dir = fixture();
+    let p = dir.path();
+    fs::create_dir_all(p.join("skills/kept")).unwrap();
+    fs::write(p.join("skills/kept/SKILL.md"), "kept\n").unwrap();
+    sh(p, &["add", "."]);
+    sh(p, &["commit", "--quiet", "-m", "add kept"]);
+    // A half-done change: a tracked folder deleted, a new one written and staged.
+    fs::remove_dir_all(p.join("skills/kept")).unwrap();
+    fs::create_dir_all(p.join("skills/new")).unwrap();
+    fs::write(p.join("skills/new/SKILL.md"), "new\n").unwrap();
+    sh(p, &["add", "skills/new"]);
+    fs::write(p.join("b.md"), "b dirty\n").unwrap();
+
+    let repo = Repo::open(p).unwrap();
+    repo.restore_paths(&[Path::new("skills/kept"), Path::new("skills/new")])
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(p.join("skills/kept/SKILL.md")).unwrap(),
+        "kept\n"
+    );
+    assert!(!p.join("skills/new").exists());
+    assert_eq!(sh(p, &["status", "--porcelain"]), " M b.md\n");
+}
+
+#[test]
+fn commits_a_folder_move_as_one_commit_and_leaves_the_rest() {
+    let dir = fixture();
+    let p = dir.path();
+    fs::create_dir_all(p.join("skills/old")).unwrap();
+    fs::write(p.join("skills/old/SKILL.md"), "old\n").unwrap();
+    sh(p, &["add", "."]);
+    sh(p, &["commit", "--quiet", "-m", "add old"]);
+    // Move skills/old to skills/new, with unrelated staged and unstaged changes around.
+    fs::create_dir_all(p.join("skills/new")).unwrap();
+    fs::rename(p.join("skills/old/SKILL.md"), p.join("skills/new/SKILL.md")).unwrap();
+    fs::remove_dir(p.join("skills/old")).unwrap();
+    fs::write(p.join("b.md"), "b dirty\n").unwrap();
+    fs::write(p.join("c.md"), "c staged\n").unwrap();
+    sh(p, &["add", "c.md"]);
+
+    let repo = Repo::open(p).unwrap();
+    repo.commit_paths(
+        &[Path::new("skills/old"), Path::new("skills/new")],
+        "Move old",
+        Some("main"),
+    )
+    .unwrap();
+
+    let files = sh(
+        p,
+        &["show", "--no-renames", "--name-only", "--format=", "HEAD"],
+    );
+    assert!(
+        files.contains("skills/old/SKILL.md") && files.contains("skills/new/SKILL.md"),
+        "{files}"
+    );
+    assert!(
+        !files.contains("b.md") && !files.contains("c.md"),
+        "{files}"
+    );
+    let status = sh(p, &["status", "--porcelain"]);
+    assert!(
+        status.contains(" M b.md") && status.contains("M  c.md"),
+        "{status}"
+    );
+    assert!(matches!(
+        repo.commit_paths(&[Path::new("skills/new")], "again", None),
+        Err(GitError::NothingToCommit)
+    ));
+    assert!(matches!(
+        repo.commit_paths(&[Path::new("../x")], "bad", None),
+        Err(GitError::InvalidPath(_))
+    ));
+}

@@ -189,6 +189,109 @@ impl Repo {
         Ok(trimmed(&out.stdout))
     }
 
+    /// Commits exactly the working-tree state of `paths` (files or folders, including
+    /// additions and deletions under them) as one commit. Other changes in the repo stay
+    /// as they were and are not part of the commit. For changes that span files, such as
+    /// creating, moving or deleting a skill folder.
+    ///
+    /// # Errors
+    /// `InvalidPath`, `WrongBranch` (checked before anything is changed),
+    /// `NothingToCommit` if none of `paths` changed, or git failures (the index is then
+    /// put back as it was for those paths).
+    pub fn commit_paths(
+        &self,
+        paths: &[&Path],
+        message: &str,
+        require_branch: Option<&str>,
+    ) -> Result<String, GitError> {
+        if paths.is_empty() {
+            return Err(GitError::NothingToCommit);
+        }
+        for rel in paths {
+            check_rel(rel)?;
+        }
+        if let Some(expected) = require_branch {
+            let actual = self.current_branch()?;
+            if actual.as_deref() != Some(expected) {
+                return Err(GitError::WrongBranch {
+                    expected: expected.to_owned(),
+                    actual,
+                });
+            }
+        }
+        let mut changed = false;
+        for rel in paths {
+            changed |= !self.status_of(rel)?.is_empty();
+        }
+        if !changed {
+            return Err(GitError::NothingToCommit);
+        }
+        let with_paths = |head: &[&'static str]| -> Vec<&OsStr> {
+            head.iter()
+                .map(|s| os(s))
+                .chain(paths.iter().map(|p| p.as_os_str()))
+                .collect()
+        };
+        self.git(&with_paths(&["add", "-A", "--"]), LOCAL_TIMEOUT)?;
+        let mut commit: Vec<&OsStr> = ["commit", "--no-verify", "--quiet", "-m"]
+            .iter()
+            .map(|s| os(s))
+            .collect();
+        commit.push(os(message));
+        commit.push(os("--"));
+        commit.extend(paths.iter().map(|p| p.as_os_str()));
+        if let Err(err) = self.git(&commit, LOCAL_TIMEOUT) {
+            if self.head_exists()? {
+                let _ = self.run(&with_paths(&["reset", "-q", "HEAD", "--"]), LOCAL_TIMEOUT);
+            }
+            return Err(err);
+        }
+        let out = self.git(&["rev-parse", "HEAD"], LOCAL_TIMEOUT)?;
+        Ok(trimmed(&out.stdout))
+    }
+
+    /// Puts `paths` back exactly as HEAD has them: tracked files restored, files git
+    /// doesn't track removed, the index for them reset. Only for paths that were clean
+    /// before a change began, so nothing of the owner's is lost.
+    ///
+    /// # Errors
+    /// `InvalidPath`, or git failures.
+    pub fn restore_paths(&self, paths: &[&Path]) -> Result<(), GitError> {
+        for rel in paths {
+            check_rel(rel)?;
+        }
+        let head = self.head_exists()?;
+        for rel in paths {
+            if head {
+                let _ = self.run(
+                    &[os("reset"), os("-q"), os("HEAD"), os("--"), rel.as_os_str()],
+                    LOCAL_TIMEOUT,
+                );
+                let listed = self.git(
+                    &[
+                        os("ls-tree"),
+                        os("--name-only"),
+                        os("HEAD"),
+                        os("--"),
+                        rel.as_os_str(),
+                    ],
+                    LOCAL_TIMEOUT,
+                )?;
+                if !listed.stdout.is_empty() {
+                    self.git(
+                        &[os("checkout"), os("HEAD"), os("--"), rel.as_os_str()],
+                        LOCAL_TIMEOUT,
+                    )?;
+                }
+            }
+            self.git(
+                &[os("clean"), os("-fdq"), os("--"), rel.as_os_str()],
+                LOCAL_TIMEOUT,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Clones `remote` into `dir` (no checkout) the first time; afterwards opens the clone
     /// and points `origin` at `remote`. For a client's local copies of release sources.
     ///

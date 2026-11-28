@@ -5,6 +5,9 @@
 //! only logins in [`Access`] get in. Changes also need a passkey session ([`edit`]).
 
 mod auth;
+// Used by the skills, instructions and import pages as they land (decision 0027).
+#[allow(dead_code)]
+mod change;
 pub mod clients;
 mod distribute;
 mod edit;

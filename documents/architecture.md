@@ -90,7 +90,7 @@ Display or Serialize; zeroed on drop), `Plan`, `ScopedPath`, `Untrusted<Markdown
 - Pairing: the Machines page (or `atlas-hub pair-code`) issues a one-time code and shows
   `curl <hub>/install | sh -s -- <code>`. With a passkey session the hub can also run it
   on a machine itself over SSH (`atlas_web::remote`, used by the page and by
-  `atlas-hub add-machine`; decision 0025).
+  `atlas-hub add-machine`; decision 0027).
 
 ## Local Atlas
 - Edits local files. Global edits go to the hub as proposals the user signs.
@@ -115,7 +115,7 @@ cargo-deny, a committed `Cargo.lock`, CI actions pinned by SHA, signed release b
 |---|---|
 | Hub compromise | Hub cannot sign releases; keys stay in the keystore and are never shown. |
 | Another tailnet device | Tailscale WhoIs plus passkey sign-in; per-login client tokens. |
-| Hub web process starting SSH sessions | Only behind a passkey session and CSRF; the target is checked strictly and passed after `--`, never through a shell (decision 0025). |
+| Hub web process starting SSH sessions | Only behind a passkey session and CSRF; the target is checked strictly and passed after `--`, never through a shell (decision 0027). |
 | Poisoned content (skills, memory, hooks) | Scanner flags; `Untrusted<Markdown>`; sanitised rendering. |
 | Secret leaks | `Secret<T>`; secrets never in git or logs. |
 | Bad client writes | Pure plans, dry runs, managed entries only, atomic writes. |
